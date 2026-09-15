@@ -76,12 +76,17 @@ export default function Sidebar({
           <div className="user-copy">
             <strong>Alex Morgan</strong>
             <span>VisionIQ operator</span>
+            <div className="user-avatar">U</div>
+
+            <div className="user-copy">
+              <strong>Alex Morgan</strong>
+              <span>VisionIQ operator</span>
+            </div>
+            <ChevronDown size={16} />
           </div>
-          <ChevronDown size={16} />
         </div>
-      </div>
     </aside>
-  )
+  );
 }
 
 function ProjectsSection({
