@@ -1,4 +1,15 @@
-import { Check, ChevronDown, Eye, FolderKanban, HelpCircle, Plug, Plus, Trash2 } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  FileSpreadsheet,
+  FolderKanban,
+  HelpCircle,
+  Plug,
+  Plus,
+  Sparkles,
+  Trash2,
+  Upload,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { navigation } from '../data/navigation'
@@ -6,20 +17,40 @@ import { projects } from '../data/projects'
 
 const storedProjectsKey = 'vision-iq-created-projects'
 
-export default function Sidebar({ connectedProject, onProjectConnect, onProjectDisconnect }) {
+export default function Sidebar({
+  connectedProject,
+  onProjectConnect,
+  onProjectDisconnect,
+  onImport,
+  fileName,
+  hasImportedFile,
+  rows = [],
+  importError,
+  onLoadSampleData,
+}) {
   return (
     <aside className="sidebar">
       <div className="brand-lockup">
         <div className="brand-mark" aria-hidden="true">
-          <Eye size={25} strokeWidth={2.1} />
+          <Sparkles size={22} strokeWidth={2} />
         </div>
-        <div>
-          <p className="brand-name">VisionIQ</p>
-          <p className="brand-caption">See Smarter<br />Safer Tomorrow</p>
+        <div className="brand-text">
+          <p className="brand-name">VISION IQ</p>
+          <p className="brand-caption">{connectedProject?.name || 'Platform A'}</p>
         </div>
       </div>
 
-      <ProjectsSection connectedProject={connectedProject} onProjectConnect={onProjectConnect} onProjectDisconnect={onProjectDisconnect} />
+      <ProjectsSection
+        connectedProject={connectedProject}
+        fileName={fileName}
+        hasImportedFile={hasImportedFile}
+        importError={importError}
+        onImport={onImport}
+        onLoadSampleData={onLoadSampleData}
+        onProjectConnect={onProjectConnect}
+        onProjectDisconnect={onProjectDisconnect}
+        rows={rows}
+      />
 
       <nav className="main-nav" aria-label="Primary navigation">
         <p className="nav-eyebrow">Workspace</p>
@@ -37,27 +68,40 @@ export default function Sidebar({ connectedProject, onProjectConnect, onProjectD
 
       <div className="sidebar-footer">
         <button className="utility-item" type="button">
-          <HelpCircle size={17} />
-          Help center
+          <HelpCircle size={18} strokeWidth={1.8} />
+          <span>Help center</span>
         </button>
         <div className="user-card">
           <div className="user-avatar">AM</div>
+<<<<<<< HEAD
           <div className="user-copy">
             <strong>Alex Morgan</strong>
             <span>VisionIQ operator</span>
           <div className="user-avatar">U</div>
+=======
+>>>>>>> e66e48b (Added Query Part)
           <div className="user-copy">
-            <strong>User</strong>
-            <span>VisionIQ User</span>
+            <strong>Alex Morgan</strong>
+            <span>VisionIQ operator</span>
           </div>
-          <ChevronDown size={15} />
+          <ChevronDown size={16} />
         </div>
       </div>
     </aside>
   )
 }
 
-function ProjectsSection({ connectedProject, onProjectConnect, onProjectDisconnect }) {
+function ProjectsSection({
+  connectedProject,
+  onProjectConnect,
+  onProjectDisconnect,
+  onImport,
+  fileName,
+  hasImportedFile,
+  rows = [],
+  importError,
+  onLoadSampleData,
+}) {
   const [projectList, setProjectList] = useState(() => {
     try {
       const storedProjects = JSON.parse(localStorage.getItem(storedProjectsKey) || '[]')
@@ -114,6 +158,8 @@ function ProjectsSection({ connectedProject, onProjectConnect, onProjectDisconne
   }
 
   const connected = connectedProject?.key === selectedProject.key
+  const uniqueCameras = new Set(rows.map((r) => r.camera).filter(Boolean)).size
+  const uniqueLocations = new Set(rows.map((r) => r.location).filter(Boolean)).size
 
   return (
     <section className="projects-section" aria-labelledby="projects-heading">
@@ -145,7 +191,7 @@ function ProjectsSection({ connectedProject, onProjectConnect, onProjectDisconne
                 <strong>{project.name}</strong>
                 <small>{project.caption}</small>
               </span>
-              {selectedProject.name === project.name && <Check className="project-check" size={14} />}
+              {selectedProject.name === project.name && <Check className="project-check" size={16} strokeWidth={2.2} />}
             </button>
           ))}
         </div>
@@ -160,17 +206,17 @@ function ProjectsSection({ connectedProject, onProjectConnect, onProjectDisconne
         ) : (
           <button className="create-project-button" onClick={() => setShowCreate(true)} type="button">
             <Plus size={14} />
-            Create project
+            <span>Create project</span>
           </button>
         )}
         <div className="selected-project-panel">
           <div className="selected-project-header">
-            <div>
-              <span>Selected project</span>
-              <strong>{selectedProject.name}</strong>
-            </div>
-            <span className={`project-state ${connected ? 'connected' : ''}`}>{selectedProject.comingSoon ? 'Coming soon' : connected ? 'Connected' : selectedProject.status}</span>
+            <span className="selected-project-label">Selected project</span>
+            <span className={`project-state ${connected ? 'connected' : ''}`}>
+              {selectedProject.comingSoon ? 'Coming soon' : connected ? 'Connected' : selectedProject.status}
+            </span>
           </div>
+          <strong className="selected-project-title">{selectedProject.name}</strong>
           {selectedProject.comingSoon && !selectedProject.created ? (
             <>
               <p className="project-coming-soon">This project will be available in a future phase.</p>
@@ -181,14 +227,57 @@ function ProjectsSection({ connectedProject, onProjectConnect, onProjectDisconne
             </>
           ) : (
             <>
+              {/* Connected File Upload / Active File Status */}
+              {connected && (
+                <div className="project-file-import-section">
+                  {hasImportedFile ? (
+                    <div className="project-imported-card">
+                      <div className="project-file-info">
+                        <FileSpreadsheet className="file-pill-icon" size={16} />
+                        <div className="file-pill-copy">
+                          <strong>{fileName}</strong>
+                          <span>{rows.length} records active</span>
+                        </div>
+                      </div>
+                      <label className="project-change-file-btn" title="Upload another CSV file">
+                        <Upload size={12} />
+                        <span>Change CSV</span>
+                        <input accept=".csv,text/csv" onChange={onImport} style={{ display: 'none' }} type="file" />
+                      </label>
+                    </div>
+                  ) : (
+                    <div className="project-upload-prompt">
+                      <label className="project-upload-btn">
+                        <Upload size={14} />
+                        <span>Upload CSV File</span>
+                        <input accept=".csv,text/csv" onChange={onImport} style={{ display: 'none' }} type="file" />
+                      </label>
+                      {onLoadSampleData && (
+                        <button className="project-sample-quick-btn" onClick={onLoadSampleData} type="button">
+                          <Sparkles size={12} />
+                          <span>Load Sample Data</span>
+                        </button>
+                      )}
+                      <span className="project-upload-hint">Upload CSV to activate Ontology, Graph & Dashboards</span>
+                    </div>
+                  )}
+                  {importError && <p className="sidebar-import-error">{importError}</p>}
+                </div>
+              )}
+
               <div className="project-build-summary">
-                <span>{selectedProject.modules}</span>
-                <span>{selectedProject.dashboards}</span>
-                <span>{selectedProject.data}</span>
+                <span>{hasImportedFile ? `${rows.length} records` : '0 records'}</span>
+                <span>{hasImportedFile ? `${uniqueCameras} cameras` : '0 cameras'}</span>
+                <span>{hasImportedFile ? `${uniqueLocations} locations` : 'No CSV data'}</span>
               </div>
-              <button className={`project-connect-button ${connected ? 'connected' : ''}`} onClick={() => connected ? onProjectDisconnect() : onProjectConnect(selectedProject)} type="button">
-                {connected ? <Check size={14} /> : <Plug size={14} />}
-                {connected ? 'Disconnect project' : 'Connect project'}
+
+              <button
+                className={`project-connect-button ${connected ? 'connected' : ''}`}
+                onClick={() => connected ? onProjectDisconnect() : onProjectConnect(selectedProject)}
+                type="button"
+              >
+                {connected ? <Check size={14} strokeWidth={2.2} /> : <Plug size={14} />}
+                <span>{connected ? 'Disconnect project' : 'Connect project'}</span>
               </button>
               {selectedProject.created && (
                 <button className="project-delete-button" onClick={deleteProject} type="button">

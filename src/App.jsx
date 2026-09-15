@@ -3,37 +3,52 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import DashboardDetail from './components/DashboardDetail'
 import DashboardHub from './components/DashboardHub'
+import OntologyPage from './components/ontology/OntologyPage'
 import DocumentIntelligence from './components/DocumentIntelligence'
 import ProjectComingSoon from './components/ProjectComingSoon'
 import ProjectConnectionRequired from './components/ProjectConnectionRequired'
-import OntologyPage from './components/ontology/OntologyPage'
+import ProjectComingSoon from './components/ProjectComingSoon'
 
 import PlaceholderPage from './components/PlaceholderPage'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 
-import { normalizeTrafficData, parseTrafficCsv, projectDatasets, sampleTrafficData } from './data/dashboardData'
+import {
+  normalizeTrafficData,
+  parseTrafficCsv,
+  sampleTrafficData,
+} from './data/dashboardData'
+
+import { normalizeTrafficData, parseTrafficCsv, projectDatasets } from './data/dashboardData'
 import { routePaths } from './data/navigation'
 import { projects } from './data/projects'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [connectedProject, setConnectedProject] = useState(projects[0])
-  const [trafficData, setTrafficData] = useState(projectDatasets[projects[0].key] || sampleTrafficData)
+  const [trafficData, setTrafficData] = useState(projectDatasets[projects[0].key])
   const [fileName, setFileName] = useState('Sample traffic data')
   const [importError, setImportError] = useState('')
+
+  const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
+
+  function handleLoadSampleData() {
+    setTrafficData(sampleTrafficData)
+    setFileName('sample_traffic_feed.csv')
+    setImportError('')
+  }
 
   function handleProjectConnect(project) {
     if (project.comingSoon && !project.created) return
     setConnectedProject(project)
-    setTrafficData(projectDatasets[project.key] || [])
-    setFileName(`${project.name} sample data`)
+    setTrafficData([])
+    setFileName('')
     setImportError('')
   }
 
   function handleProjectDisconnect() {
     setTrafficData([])
-    setFileName('No project connected')
+    setFileName('')
     setImportError('')
   }
 
@@ -42,8 +57,13 @@ export default function App() {
     if (!file) return
 
     try {
-      const importedRows = await parseTrafficCsv(file)
-      setTrafficData(normalizeTrafficData(importedRows))
+      const importedRows =
+        await parseTrafficCsv(file)
+
+      setTrafficData(
+        normalizeTrafficData(importedRows)
+      )
+
       setFileName(file.name)
       setImportError('')
     } catch (error) {
@@ -56,32 +76,50 @@ export default function App() {
   return (
     <div className="app-shell">
 
-      <Sidebar
-        connectedProject={connectedProject}
-        onProjectConnect={handleProjectConnect}
-        onProjectDisconnect={handleProjectDisconnect}
-      />
+      <Sidebar connectedProject={connectedProject} onProjectConnect={handleProjectConnect} onProjectDisconnect={handleProjectDisconnect} />
 
       <main className="main-content">
-
-        <Topbar
-          searchOpen={searchOpen}
-          setSearchOpen={setSearchOpen}
-        />
+        <Topbar searchOpen={searchOpen} setSearchOpen={setSearchOpen} />
 
         <section className="content-wrap">
-
           <Routes>
 
+            {/* HOME */}
+
+            {/* ONTOLOGY */}
             <Route
               path="/"
-              element={<Navigate to="/home" replace />}
+              element={
+                <Navigate
+                  to="/home"
+                  replace
+                />
+              }
             />
 
+            {/* ONTOLOGY */}
+
             <Route
-              path="/ontology"
-              element={<OntologyPage />}
+              path="/query"
+              element={
+                !connectedProject ? (
+                  <ProjectConnectionRequired />
+                ) : connectedProject.comingSoon ? (
+                  <ProjectComingSoon projectName={connectedProject.name} />
+                ) : !hasImportedFile ? (
+                  <DataImportRequired
+                    featureName="Traffic Query Engine"
+                    onImport={handleImport}
+                    onLoadSample={handleLoadSampleData}
+                    projectName={connectedProject.name}
+                  />
+                ) : (
+                  <QueryPage fileName={fileName} rows={trafficData} />
+                )
+              }
             />
+
+            {/* DASHBOARD CENTER */}
 
             <Route
               path="/dashboards"
@@ -90,6 +128,13 @@ export default function App() {
                   <ProjectConnectionRequired />
                 ) : connectedProject.comingSoon ? (
                   <ProjectComingSoon projectName={connectedProject.name} />
+                ) : !hasImportedFile ? (
+                  <DataImportRequired
+                    featureName="Dashboards Analytics"
+                    onImport={handleImport}
+                    onLoadSample={handleLoadSampleData}
+                    projectName={connectedProject.name}
+                  />
                 ) : (
                   <DashboardHub
                     fileName={fileName}
@@ -109,6 +154,13 @@ export default function App() {
                   <ProjectConnectionRequired />
                 ) : connectedProject.comingSoon ? (
                   <ProjectComingSoon projectName={connectedProject.name} />
+                ) : !hasImportedFile ? (
+                  <DataImportRequired
+                    featureName="Dashboard View"
+                    onImport={handleImport}
+                    onLoadSample={handleLoadSampleData}
+                    projectName={connectedProject.name}
+                  />
                 ) : (
                   <DashboardDetail
                     fileName={fileName}
@@ -128,6 +180,13 @@ export default function App() {
                   <ProjectConnectionRequired />
                 ) : connectedProject.comingSoon ? (
                   <ProjectComingSoon projectName={connectedProject.name} />
+                ) : !hasImportedFile ? (
+                  <DataImportRequired
+                    featureName="Document Intelligence"
+                    onImport={handleImport}
+                    onLoadSample={handleLoadSampleData}
+                    projectName={connectedProject.name}
+                  />
                 ) : (
                   <DocumentIntelligence
                     fileName={fileName}
@@ -139,15 +198,14 @@ export default function App() {
             />
 
             {/* OTHER PLATFORM PAGES */}
-
             {routePaths
-              .filter((path) => path !== '/dashboards' && path !== '/ontology' && path !== '/document-intelligence')
+              .filter(
+                (path) =>
+                  path !== '/dashboards' &&
+                  path !== '/ontology'
+              )
               .map((path) => (
-                <Route
-                  element={<PlaceholderPage />}
-                  key={path}
-                  path={path}
-                />
+                <Route element={<PlaceholderPage />} key={path} path={path} />
               ))}
 
             <Route

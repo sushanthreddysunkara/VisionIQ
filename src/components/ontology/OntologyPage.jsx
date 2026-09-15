@@ -14,33 +14,38 @@ import OntologySidebar from './OntologySidebar'
 import OntologyDetails from './OntologyDetails'
 
 import {
+  generateOntologyFromRows,
   ontologyNodes,
   ontologyRelationships,
 } from '../../data/ontologyData'
 
-export default function OntologyPage() {
+export default function OntologyPage({ rows = [], fileName = 'Dataset' }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [activeCategory, setActiveCategory] = useState('')
   const [selectedNode, setSelectedNode] = useState(null)
   const [graphControls, setGraphControls] = useState(null)
   const [showDetails, setShowDetails] = useState(false)
 
+  const { nodes, relationships } = useMemo(() => {
+    return generateOntologyFromRows(rows)
+  }, [rows])
+
   const visibleNodes = useMemo(() => {
     if (!activeCategory) {
-      return ontologyNodes
+      return nodes
     }
 
-    return ontologyNodes.filter(
+    return nodes.filter(
       (node) => node.category === activeCategory
     )
-  }, [activeCategory])
+  }, [nodes, activeCategory])
 
   const selectedNodeData = useMemo(
     () =>
-      ontologyNodes.find(
+      nodes.find(
         (node) => node.id === selectedNode
       ),
-    [selectedNode]
+    [nodes, selectedNode]
   )
 
   return (
@@ -48,14 +53,14 @@ export default function OntologyPage() {
       <div className="ontology-topbar">
         <div>
           <div className="ontology-kicker">
-            KNOWLEDGE MODEL
+            KNOWLEDGE MODEL · {fileName.toUpperCase()}
           </div>
 
           <h1>Ontology</h1>
 
           <p>
             Explore entities, properties, datatypes and
-            relationships in the VisionIQ ontology.
+            relationships derived from <strong>{fileName}</strong> ({rows.length} records).
           </p>
         </div>
 
@@ -63,14 +68,14 @@ export default function OntologyPage() {
           <Network size={18} />
 
           <div>
-            <strong>{ontologyNodes.length}</strong>
+            <strong>{nodes.length}</strong>
             <span>Nodes</span>
           </div>
 
           <div className="ontology-stat-divider" />
 
           <div>
-            <strong>{ontologyRelationships.length}</strong>
+            <strong>{relationships.length}</strong>
             <span>Relationships</span>
           </div>
         </div>
@@ -134,7 +139,7 @@ export default function OntologyPage() {
           <div className="ontology-graph-wrapper">
             <OntologyGraph
               nodes={visibleNodes}
-              relationships={ontologyRelationships}
+              relationships={relationships}
               selectedNode={selectedNode}
               searchTerm={searchTerm}
               onNodeSelect={(nodeId) => {
@@ -155,14 +160,14 @@ export default function OntologyPage() {
             <div className="ontology-graph-info">
               {visibleNodes.length} nodes
               {' · '}
-              {ontologyRelationships.length} relationships
+              {relationships.length} relationships
             </div>
           </div>
         </div>
 
         <OntologySidebar
-          nodes={ontologyNodes}
-          relationships={ontologyRelationships}
+          nodes={nodes}
+          relationships={relationships}
           activeCategory={activeCategory}
           setActiveCategory={setActiveCategory}
           selectedNode={selectedNode}
@@ -181,7 +186,7 @@ export default function OntologyPage() {
 
           <OntologyDetails
             node={selectedNodeData}
-            relationships={ontologyRelationships}
+            relationships={relationships}
           />
         </div>
       )}
