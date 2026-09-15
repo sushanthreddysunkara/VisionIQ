@@ -1,5 +1,4 @@
-import { Bell, CircleHelp, Search, Settings2 } from 'lucide-react'
-import { Bell, CalendarDays, ChevronDown, Menu, Search } from 'lucide-react'
+import { Bell, CalendarDays, CircleHelp, Menu, Search, Settings2 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { navigation } from '../data/navigation'
 
@@ -13,6 +12,7 @@ export default function Topbar({ searchOpen, setSearchOpen }) {
         <span>VisionIQ workspace</span>
         <i>/</i>
         <strong>{activeItem}</strong>
+      </div>
       <div className="topbar-heading">
         <button aria-label="Toggle navigation" className="topbar-menu icon-button" type="button"><Menu size={21} /></button>
         <div className="welcome-copy">
@@ -47,7 +47,6 @@ export default function Topbar({ searchOpen, setSearchOpen }) {
         <span className="status-dot" />
         <span className="system-status">All systems operational</span>
         <div className="topbar-profile"><span className="topbar-avatar">AM</span><span><strong>Alex Morgan</strong><small>Operator</small></span></div>
-        <div className="topbar-profile"><div className="topbar-avatar">U</div><div><strong>User</strong><span>VisionIQ User</span></div><ChevronDown size={15} /></div>
         <div className="topbar-date"><CalendarDays size={16} /><div><strong>Tuesday, 10 Sep 2025</strong><span>09:24 AM</span></div></div>
       </div>
     </header>

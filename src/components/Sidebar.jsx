@@ -73,13 +73,6 @@ export default function Sidebar({
         </button>
         <div className="user-card">
           <div className="user-avatar">AM</div>
-<<<<<<< HEAD
-          <div className="user-copy">
-            <strong>Alex Morgan</strong>
-            <span>VisionIQ operator</span>
-          <div className="user-avatar">U</div>
-=======
->>>>>>> e66e48b (Added Query Part)
           <div className="user-copy">
             <strong>Alex Morgan</strong>
             <span>VisionIQ operator</span>

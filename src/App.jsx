@@ -4,10 +4,12 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import DashboardDetail from './components/DashboardDetail'
 import DashboardHub from './components/DashboardHub'
 import OntologyPage from './components/ontology/OntologyPage'
+import KnowledgeGraphPage from './components/knowledgeGraph/KnowledgeGraphPage'
 import DocumentIntelligence from './components/DocumentIntelligence'
-import ProjectComingSoon from './components/ProjectComingSoon'
 import ProjectConnectionRequired from './components/ProjectConnectionRequired'
 import ProjectComingSoon from './components/ProjectComingSoon'
+import DataImportRequired from './components/DataImportRequired'
+import QueryPage from './components/QueryPage'
 
 import PlaceholderPage from './components/PlaceholderPage'
 import Sidebar from './components/Sidebar'
@@ -18,16 +20,14 @@ import {
   parseTrafficCsv,
   sampleTrafficData,
 } from './data/dashboardData'
-
-import { normalizeTrafficData, parseTrafficCsv, projectDatasets } from './data/dashboardData'
 import { routePaths } from './data/navigation'
 import { projects } from './data/projects'
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [connectedProject, setConnectedProject] = useState(projects[0])
-  const [trafficData, setTrafficData] = useState(projectDatasets[projects[0].key])
-  const [fileName, setFileName] = useState('Sample traffic data')
+  const [trafficData, setTrafficData] = useState([])
+  const [fileName, setFileName] = useState('')
   const [importError, setImportError] = useState('')
 
   const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
@@ -47,6 +47,7 @@ export default function App() {
   }
 
   function handleProjectDisconnect() {
+    setConnectedProject(null)
     setTrafficData([])
     setFileName('')
     setImportError('')
@@ -57,13 +58,8 @@ export default function App() {
     if (!file) return
 
     try {
-      const importedRows =
-        await parseTrafficCsv(file)
-
-      setTrafficData(
-        normalizeTrafficData(importedRows)
-      )
-
+      const importedRows = await parseTrafficCsv(file)
+      setTrafficData(normalizeTrafficData(importedRows))
       setFileName(file.name)
       setImportError('')
     } catch (error) {
@@ -75,30 +71,69 @@ export default function App() {
 
   return (
     <div className="app-shell">
-
-      <Sidebar connectedProject={connectedProject} onProjectConnect={handleProjectConnect} onProjectDisconnect={handleProjectDisconnect} />
+      <Sidebar
+        connectedProject={connectedProject}
+        fileName={fileName}
+        hasImportedFile={hasImportedFile}
+        importError={importError}
+        onImport={handleImport}
+        onLoadSampleData={handleLoadSampleData}
+        onProjectConnect={handleProjectConnect}
+        onProjectDisconnect={handleProjectDisconnect}
+        rows={trafficData}
+      />
 
       <main className="main-content">
         <Topbar searchOpen={searchOpen} setSearchOpen={setSearchOpen} />
 
         <section className="content-wrap">
           <Routes>
-
             {/* HOME */}
+            <Route path="/" element={<Navigate replace to="/home" />} />
 
             {/* ONTOLOGY */}
             <Route
-              path="/"
+              path="/ontology"
               element={
-                <Navigate
-                  to="/home"
-                  replace
-                />
+                !connectedProject ? (
+                  <ProjectConnectionRequired />
+                ) : connectedProject.comingSoon ? (
+                  <ProjectComingSoon projectName={connectedProject.name} />
+                ) : !hasImportedFile ? (
+                  <DataImportRequired
+                    featureName="Ontology Knowledge Model"
+                    onImport={handleImport}
+                    onLoadSample={handleLoadSampleData}
+                    projectName={connectedProject.name}
+                  />
+                ) : (
+                  <OntologyPage fileName={fileName} rows={trafficData} />
+                )
               }
             />
 
-            {/* ONTOLOGY */}
+            {/* KNOWLEDGE GRAPH */}
+            <Route
+              path="/knowledge-graph"
+              element={
+                !connectedProject ? (
+                  <ProjectConnectionRequired />
+                ) : connectedProject.comingSoon ? (
+                  <ProjectComingSoon projectName={connectedProject.name} />
+                ) : !hasImportedFile ? (
+                  <DataImportRequired
+                    featureName="Knowledge Graph Network"
+                    onImport={handleImport}
+                    onLoadSample={handleLoadSampleData}
+                    projectName={connectedProject.name}
+                  />
+                ) : (
+                  <KnowledgeGraphPage fileName={fileName} rows={trafficData} />
+                )
+              }
+            />
 
+            {/* QUERY ENGINE */}
             <Route
               path="/query"
               element={
@@ -119,8 +154,7 @@ export default function App() {
               }
             />
 
-            {/* DASHBOARD CENTER */}
-
+            {/* DASHBOARDS HUB */}
             <Route
               path="/dashboards"
               element={
@@ -147,6 +181,7 @@ export default function App() {
               }
             />
 
+            {/* DASHBOARD DETAIL */}
             <Route
               path="/dashboards/:kind"
               element={
@@ -173,6 +208,7 @@ export default function App() {
               }
             />
 
+            {/* DOCUMENT INTELLIGENCE */}
             <Route
               path="/document-intelligence"
               element={
@@ -202,23 +238,20 @@ export default function App() {
               .filter(
                 (path) =>
                   path !== '/dashboards' &&
-                  path !== '/ontology'
+                  path !== '/ontology' &&
+                  path !== '/knowledge-graph' &&
+                  path !== '/query' &&
+                  path !== '/document-intelligence'
               )
               .map((path) => (
                 <Route element={<PlaceholderPage />} key={path} path={path} />
               ))}
 
-            <Route
-              path="*"
-              element={<Navigate to="/home" replace />}
-            />
-
+            {/* UNKNOWN URL */}
+            <Route path="*" element={<Navigate replace to="/home" />} />
           </Routes>
-
         </section>
-
       </main>
-
     </div>
   )
 }
