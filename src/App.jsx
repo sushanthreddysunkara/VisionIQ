@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import DashboardDetail from './components/DashboardDetail'
 import DashboardHub from './components/DashboardHub'
@@ -11,6 +11,8 @@ import ProjectComingSoon from './components/ProjectComingSoon'
 import DataImportRequired from './components/DataImportRequired'
 import QueryPage from './components/QueryPage'
 import RulesEventsPage from './components/RulesEventsPage'
+import ProfilePage from './components/ProfilePage'
+import SettingsPage from './components/SettingsPage'
 
 import PlaceholderPage from './components/PlaceholderPage'
 import ProjectMainBar from './components/ProjectMainBar'
@@ -347,6 +349,10 @@ export default function App() {
             {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
             <Route path="/rules-events" element={<RulesEventsPage />} />
 
+            {/* ACCOUNT */}
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+
             {/* OTHER PLATFORM PAGES */}
             {routePaths
               .filter(
@@ -356,7 +362,9 @@ export default function App() {
                   path !== '/knowledge-graph' &&
                   path !== '/query' &&
                   path !== '/document-intelligence' &&
-                  path !== '/rules-events'
+                  path !== '/rules-events' &&
+                  path !== '/profile' &&
+                  path !== '/settings'
               )
               .map((path) => (
                 <Route element={<PlaceholderPage />} key={path} path={path} />

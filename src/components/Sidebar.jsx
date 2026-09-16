@@ -3,13 +3,17 @@ import {
   ChevronDown,
   FolderKanban,
   HelpCircle,
+  LogOut,
   Plus,
+  Settings2,
   Sparkles,
+  UserCircle,
 } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { navigation } from '../data/navigation'
 import { projects as defaultProjects } from '../data/projects'
+import { useAuth } from '../context/AuthContext'
 
 export default function Sidebar({
   projectList = defaultProjects,
@@ -18,9 +22,12 @@ export default function Sidebar({
   onSelectProject,
   onCreateProject,
 }) {
+  const { user, logout } = useAuth()
   const [expanded, setExpanded] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
+  const [accountOpen, setAccountOpen] = useState(false)
+  const initials = (user?.displayName || user?.username || 'VI').slice(0, 2).toUpperCase()
 
   function handleCreateSubmit(e) {
     e.preventDefault()

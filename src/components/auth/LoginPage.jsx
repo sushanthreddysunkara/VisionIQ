@@ -1,4 +1,4 @@
-import { Eye, EyeOff, LockKeyhole, Mail, Sparkles } from 'lucide-react'
+import { ArrowUpRight, Eye, EyeOff, LockKeyhole, Mail, Radar, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
@@ -43,7 +43,7 @@ export default function LoginPage() {
           <span>VISION IQ</span>
         </div>
         <div className="login-heading">
-          <span className="login-kicker">Intelligence workspace</span>
+          <span className="login-kicker"><span className="login-kicker-dot" /> Intelligence workspace</span>
           <h1 id="login-title">Welcome back.</h1>
           <p>Sign in to continue to your VisionIQ workspace.</p>
         </div>
@@ -64,14 +64,17 @@ export default function LoginPage() {
           {error && <p aria-live="polite" className="login-error">{error}</p>}
           <button className="login-submit" disabled={submitting} type="submit">
             {submitting ? 'Signing in...' : 'Sign in'}
+            {!submitting && <ArrowUpRight size={18} />}
           </button>
         </form>
-        <p className="login-footer">Authorized VisionIQ users only</p>
+        <div className="login-footer"><span><LockKeyhole size={13} /> Secure workspace access</span><span>Authorized users only</span></div>
       </section>
       <aside className="login-side-note">
-        <span>VISION IQ / 01</span>
-        <strong>See the road<br />with clarity.</strong>
+        <div className="login-side-topline"><span>VISION IQ / 01</span><span className="login-live-pill"><span /> LIVE SYSTEM</span></div>
+        <div className="login-side-copy"><span className="login-side-label">TRAFFIC INTELLIGENCE PLATFORM</span><strong>See the road<br />with clarity.</strong>
         <p>One workspace for connected traffic intelligence, ontology, and operational decisions.</p>
+        </div>
+        <div className="login-side-metrics"><div><Radar size={17} /><span>Live signals</span><strong>24/7</strong></div><div><Sparkles size={17} /><span>Connected workspace</span><strong>01</strong></div></div>
       </aside>
     </main>
   )
