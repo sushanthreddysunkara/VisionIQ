@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import DashboardDetail from './components/DashboardDetail'
 import DashboardHub from './components/DashboardHub'
@@ -10,10 +10,15 @@ import ProjectConnectionRequired from './components/ProjectConnectionRequired'
 import ProjectComingSoon from './components/ProjectComingSoon'
 import DataImportRequired from './components/DataImportRequired'
 import QueryPage from './components/QueryPage'
+import ProfilePage from './components/ProfilePage'
+import SettingsPage from './components/SettingsPage'
 
 import PlaceholderPage from './components/PlaceholderPage'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
+import LoginPage from './components/auth/LoginPage'
+import ProtectedRoute from './components/auth/ProtectedRoute'
+import { useAuth } from './context/AuthContext'
 
 import {
   normalizeTrafficData,
@@ -24,6 +29,8 @@ import { routePaths } from './data/navigation'
 import { projects } from './data/projects'
 
 export default function App() {
+  const { isAuthenticated, loading } = useAuth()
+  const { pathname } = useLocation()
   const [searchOpen, setSearchOpen] = useState(false)
   const [connectedProject, setConnectedProject] = useState(projects[0])
   const [trafficData, setTrafficData] = useState([])
@@ -31,6 +38,15 @@ export default function App() {
   const [importError, setImportError] = useState('')
 
   const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
+
+  if (loading) return <div className="auth-loading">Checking your session...</div>
+  if (!isAuthenticated || pathname === '/login') {
+    return (
+      <Routes>
+        <Route path="*" element={isAuthenticated ? <Navigate replace to="/home" /> : <LoginPage />} />
+      </Routes>
+    )
+  }
 
   function handleLoadSampleData() {
     setTrafficData(sampleTrafficData)
@@ -70,7 +86,8 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <ProtectedRoute>
+      <div className="app-shell">
       <Sidebar
         connectedProject={connectedProject}
         fileName={fileName}
@@ -233,6 +250,9 @@ export default function App() {
               }
             />
 
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+
             {/* OTHER PLATFORM PAGES */}
             {routePaths
               .filter(
@@ -241,7 +261,9 @@ export default function App() {
                   path !== '/ontology' &&
                   path !== '/knowledge-graph' &&
                   path !== '/query' &&
-                  path !== '/document-intelligence'
+                  path !== '/document-intelligence' &&
+                  path !== '/profile' &&
+                  path !== '/settings'
               )
               .map((path) => (
                 <Route element={<PlaceholderPage />} key={path} path={path} />
@@ -252,6 +274,7 @@ export default function App() {
           </Routes>
         </section>
       </main>
-    </div>
+      </div>
+    </ProtectedRoute>
   )
 }

@@ -4,16 +4,20 @@ import {
   FileSpreadsheet,
   FolderKanban,
   HelpCircle,
+  LogOut,
   Plug,
   Plus,
   Sparkles,
+  Settings2,
   Trash2,
   Upload,
+  UserCircle,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { navigation } from '../data/navigation'
 import { projects } from '../data/projects'
+import { useAuth } from '../context/AuthContext'
 
 const storedProjectsKey = 'vision-iq-created-projects'
 
@@ -28,6 +32,10 @@ export default function Sidebar({
   importError,
   onLoadSampleData,
 }) {
+  const { user, logout } = useAuth()
+  const [accountOpen, setAccountOpen] = useState(false)
+  const initials = user?.username?.slice(0, 2).toUpperCase() || 'VI'
+
   return (
     <aside className="sidebar">
       <div className="brand-lockup">
@@ -71,13 +79,22 @@ export default function Sidebar({
           <HelpCircle size={18} strokeWidth={1.8} />
           <span>Help center</span>
         </button>
-        <div className="user-card">
-          <div className="user-avatar">AM</div>
-          <div className="user-copy">
-            <strong>Alex Morgan</strong>
-            <span>VisionIQ operator</span>
-          </div>
-          <ChevronDown size={16} />
+        <div className="account-menu-wrap">
+          <button aria-expanded={accountOpen} aria-haspopup="menu" className="user-card" onClick={() => setAccountOpen((value) => !value)} type="button">
+            <div className="user-avatar">{user?.profilePhoto ? <img alt="" src={user.profilePhoto} /> : initials}</div>
+            <div className="user-copy">
+              <strong>{user?.displayName || user?.username || 'VisionIQ user'}</strong>
+              <span>{user?.role || 'Operator'} · Account</span>
+            </div>
+            <ChevronDown className={accountOpen ? 'account-chevron open' : 'account-chevron'} size={16} />
+          </button>
+          {accountOpen && (
+            <div className="account-menu" role="menu">
+              <NavLink onClick={() => setAccountOpen(false)} role="menuitem" to="/profile"><UserCircle size={16} /> Profile</NavLink>
+              <NavLink onClick={() => setAccountOpen(false)} role="menuitem" to="/settings"><Settings2 size={16} /> Settings</NavLink>
+              <button onClick={logout} role="menuitem" type="button"><LogOut size={16} /> Log out</button>
+            </div>
+          )}
         </div>
       </div>
     </aside>
