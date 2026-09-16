@@ -10,6 +10,7 @@ import ProjectConnectionRequired from './components/ProjectConnectionRequired'
 import ProjectComingSoon from './components/ProjectComingSoon'
 import DataImportRequired from './components/DataImportRequired'
 import QueryPage from './components/QueryPage'
+import RulesEventsPage from './components/RulesEventsPage'
 
 import PlaceholderPage from './components/PlaceholderPage'
 import ProjectMainBar from './components/ProjectMainBar'
@@ -307,6 +308,9 @@ export default function App() {
               }
             />
 
+            {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
+            <Route path="/rules-events" element={<RulesEventsPage />} />
+
             {/* OTHER PLATFORM PAGES */}
             {routePaths
               .filter(
@@ -315,7 +319,8 @@ export default function App() {
                   path !== '/ontology' &&
                   path !== '/knowledge-graph' &&
                   path !== '/query' &&
-                  path !== '/document-intelligence'
+                  path !== '/document-intelligence' &&
+                  path !== '/rules-events'
               )
               .map((path) => (
                 <Route element={<PlaceholderPage />} key={path} path={path} />
