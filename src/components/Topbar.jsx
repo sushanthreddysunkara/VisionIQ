@@ -1,10 +1,20 @@
 import { Bell, CalendarDays, CircleHelp, Menu, Search, Settings2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { navigation } from '../data/navigation'
 
 export default function Topbar({ searchOpen, setSearchOpen }) {
   const { pathname } = useLocation()
+  const [now, setNow] = useState(() => new Date())
   const activeItem = navigation.find(({ path }) => path === pathname)?.label ?? 'Home'
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const dateLabel = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
+  const timeLabel = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
   return (
     <header className="topbar">
@@ -46,8 +56,7 @@ export default function Topbar({ searchOpen, setSearchOpen }) {
         <div className="topbar-divider" />
         <span className="status-dot" />
         <span className="system-status">All systems operational</span>
-        <div className="topbar-profile"><span className="topbar-avatar">AM</span><span><strong>Alex Morgan</strong><small>Operator</small></span></div>
-        <div className="topbar-date"><CalendarDays size={16} /><div><strong>Tuesday, 10 Sep 2025</strong><span>09:24 AM</span></div></div>
+        <div className="topbar-date"><CalendarDays size={16} /><div><strong>{dateLabel}</strong><span>{timeLabel}</span></div></div>
       </div>
     </header>
   )
