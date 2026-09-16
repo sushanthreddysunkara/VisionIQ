@@ -26,6 +26,8 @@ import {
 } from 'lucide-react'
 import VehicleBadge from './VehicleBadge'
 import { getVehicleMeta } from '../data/vehicleTypes'
+import VehicleImageThumbnail from './VehicleImageThumbnail'
+import MediaPreviewModal from './MediaPreviewModal'
 
 function escapeCsvValue(value) {
   const text = String(value ?? '')
@@ -34,52 +36,40 @@ function escapeCsvValue(value) {
 
 function downloadCsv(rows, projectName) {
   const headers = [
-    'observation_id',
-    'camera_id',
-    'junction_id',
-    'road_name',
-    'date',
-    'time',
-    'timezone',
-    'camera_direction',
-    'object_type',
-    'number_plate',
-    'traffic_signal_state',
-    'object_latitude',
-    'object_longitude',
-    'bbox_x',
-    'bbox_y',
-    'bbox_width',
-    'bbox_height',
-    'detection_confidence',
-    'estimated_distance_m',
-    'weather',
+    'ID',
+    'Timestamp (IST)',
+    'Vehicle Type',
+    'Vehicle Number Plate',
+    'Plate Confidence',
+    'Vehicle Image',
+    'Speed (km/h)',
+    'Speed Limit (km/h)',
+    'Over Speed',
+    'Latitude',
+    'Longitude',
+    'Video Clip Path',
+    'Vehicle Image Path',
+    'Plate Image Path',
   ]
 
   const csv = [
     headers.join(','),
     ...rows.map((r) =>
       [
-        escapeCsvValue(r.observationId || 'OBS-0001'),
-        escapeCsvValue(r.camera || 'CAM-01'),
-        escapeCsvValue(r.junctionId || 'JNC-01'),
-        escapeCsvValue(r.roadName || r.location || 'Main Road'),
-        escapeCsvValue(r.date || '2026-09-11'),
-        escapeCsvValue(r.time || r.timestamp || '12:00:00'),
-        escapeCsvValue(r.timezone || 'IST'),
-        escapeCsvValue(r.cameraDirection || 'North'),
-        escapeCsvValue(r.type || 'Car'),
-        escapeCsvValue(r.numberPlate || 'N/A'),
-        escapeCsvValue(r.signalState || 'Green'),
+        escapeCsvValue(r.id || r.observationId || 'OBS-0001'),
+        escapeCsvValue(r.timestampIst || r.timestamp || r.time || '2026-09-11 08:12:14'),
+        escapeCsvValue(r.vehicleType || r.type || 'Car'),
+        escapeCsvValue(r.vehicleNumberPlate || r.numberPlate || 'N/A'),
+        escapeCsvValue(r.plateConfidence || r.confidence || 0.95),
+        escapeCsvValue(r.vehicleImage || ''),
+        escapeCsvValue(r.speed || 0),
+        escapeCsvValue(r.speedLimit || 60),
+        escapeCsvValue(r.overSpeed || (r.speed > r.speedLimit ? 'Yes' : 'No')),
         escapeCsvValue(r.latitude || 17.4485),
         escapeCsvValue(r.longitude || 78.3742),
-        escapeCsvValue(r.bboxX || 120),
-        escapeCsvValue(r.bboxY || 340),
-        escapeCsvValue(r.bboxWidth || 180),
-        escapeCsvValue(r.bboxHeight || 140),
-        escapeCsvValue(r.confidence || 0.95),
-        escapeCsvValue(r.distance || 18.0),
-        escapeCsvValue(r.weather || 'Clear'),
+        escapeCsvValue(r.videoClipPath || ''),
+        escapeCsvValue(r.vehicleImagePath || ''),
+        escapeCsvValue(r.plateImagePath || ''),
       ].join(',')
     ),
   ].join('\n')
@@ -88,7 +78,7 @@ function downloadCsv(rows, projectName) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `${projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-20-param-telemetry-audit.csv`
+  link.download = `${projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-14-param-telemetry-audit.csv`
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -99,6 +89,8 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
   const [filterSignal, setFilterSignal] = useState('ALL')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(15)
+  const [previewModalRow, setPreviewModalRow] = useState(null)
+  const [initialModalTab, setInitialModalTab] = useState('vehicle')
 
   // Compute comprehensive 20-parameter statistics
   const stats = useMemo(() => {
@@ -203,7 +195,7 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
           <p className="section-kicker">DOCUMENT INTELLIGENCE & TELEMETRY AUDIT</p>
           <h1>Traffic Telemetry Intelligence Document</h1>
           <p className="intro-copy">
-            Formal audit report with all 20 vehicle detection & telemetry parameters for <strong>{projectName}</strong>.
+            Formal audit report with all 14 vehicle detection & telemetry parameters for <strong>{projectName}</strong>.
           </p>
         </div>
         <div className="document-actions">
@@ -213,7 +205,7 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
           </button>
           <button className="document-action primary" onClick={() => downloadCsv(rows, projectName)} type="button">
             <Download size={16} />
-            <span>Export 20-Param CSV ({rows.length})</span>
+            <span>Export 14-Param CSV ({rows.length})</span>
           </button>
         </div>
       </div>
@@ -406,7 +398,7 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
         {/* Section Heading for Source Records Table */}
         <div className="document-section-heading">
           <div>
-            <p className="section-kicker">ALL 20 TELEMETRY PARAMETERS</p>
+            <p className="section-kicker">ALL 14 TELEMETRY PARAMETERS</p>
             <h3>Telemetry Observation Audit Ledger</h3>
           </div>
           <span>
@@ -416,81 +408,87 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
           </span>
         </div>
 
-        {/* 20-Parameter Data Table */}
+        {/* 14-Parameter Data Table */}
         <div className="document-table-wrap">
           <table className="document-table">
             <thead>
               <tr>
-                <th>OBSERVATION</th>
-                <th>OBJECT TYPE</th>
+                <th>ID</th>
+                <th>TIMESTAMP (IST)</th>
+                <th>VEHICLE TYPE</th>
                 <th>NUMBER PLATE</th>
-                <th>ROAD & JUNCTION</th>
-                <th>CAMERA & HEADING</th>
-                <th>SIGNAL</th>
-                <th>CONFIDENCE</th>
+                <th>PLATE CONFIDENCE</th>
+                <th>SPEED / LIMIT</th>
+                <th>OVER SPEED</th>
                 <th>COORDINATES</th>
-                <th>BBOX / DISTANCE</th>
-                <th>WEATHER</th>
-                <th>TIMESTAMP</th>
+                <th>MEDIA EVIDENCE PATHS</th>
               </tr>
             </thead>
             <tbody>
               {paginatedRows.map((row, index) => (
-                <tr key={`${row.observationId || row.camera}-${row.time || row.timestamp}-${index}`}>
+                <tr key={`${row.id || row.observationId}-${row.timestampIst || row.timestamp}-${index}`}>
                   <td>
-                    <code className="doc-obs-id">{row.observationId || `OBS-${String(index + 1).padStart(4, '0')}`}</code>
+                    <code className="doc-obs-id">{row.id || row.observationId || `ID-${String(index + 1).padStart(4, '0')}`}</code>
                   </td>
                   <td>
-                    <VehicleBadge type={row.type} />
+                    <div className="doc-time-cell">
+                      <span>{row.timestampIst || row.time || row.timestamp}</span>
+                    </div>
                   </td>
                   <td>
-                    {row.numberPlate && row.numberPlate !== 'N/A' ? (
-                      <span className="doc-plate-pill">{row.numberPlate}</span>
+                    <VehicleBadge type={row.vehicleType || row.type} />
+                  </td>
+                  <td>
+                    {row.vehicleNumberPlate || row.numberPlate ? (
+                      <span className="doc-plate-pill">{row.vehicleNumberPlate || row.numberPlate}</span>
                     ) : (
                       <span className="doc-na-pill">—</span>
                     )}
                   </td>
                   <td>
-                    <div className="doc-road-cell">
-                      <strong>{row.roadName || row.location}</strong>
-                      {row.junctionId && <span className="doc-jnc-tag">{row.junctionId}</span>}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="doc-cam-cell">
-                      <span>{row.camera}</span>
-                      {row.cameraDirection && <span className="doc-dir-tag">{row.cameraDirection}</span>}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`query-signal-pill signal-${(row.signalState || 'green').toLowerCase()}`}>
-                      {row.signalState || 'Green'}
-                    </span>
-                  </td>
-                  <td>
                     <strong className="doc-conf-val">
-                      {Math.round(row.confidence > 1 ? row.confidence : (row.confidence || 0.95) * 100)}%
+                      {Math.round((row.plateConfidence || row.confidence) > 1 ? (row.plateConfidence || row.confidence) : (row.plateConfidence || row.confidence || 0.95) * 100)}%
                     </strong>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                      <strong style={{ color: (row.overSpeed === 'Yes' || row.isOverSpeed) ? '#dc2626' : '#1e293b' }}>
+                        {row.speed || 0}
+                      </strong>
+                      <span style={{ fontSize: '11px', color: '#64748b' }}>
+                        / {row.speedLimit || 60} km/h
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    {(row.overSpeed === 'Yes' || row.isOverSpeed) ? (
+                      <span className="query-signal-pill" style={{ background: '#fef2f2', color: '#dc2626', borderColor: '#fca5a5', fontWeight: 600 }}>
+                        ⚠ Over Speed
+                      </span>
+                    ) : (
+                      <span className="query-signal-pill" style={{ background: '#ecfdf5', color: '#059669', borderColor: '#a7f3d0' }}>
+                        Normal
+                      </span>
+                    )}
                   </td>
                   <td>
                     <span className="doc-coords-cell">
                       {row.latitude?.toFixed(4) || '17.4485'}°, {row.longitude?.toFixed(4) || '78.3742'}°
                     </span>
                   </td>
-                  <td>
-                    <div className="doc-bbox-cell">
-                      <span>{row.bboxWidth || 180}×{row.bboxHeight || 140}px</span>
-                      <small>{row.distance || 18}m dist</small>
-                    </div>
-                  </td>
-                  <td>
-                    <span className="doc-weather-tag">{row.weather || 'Clear'}</span>
-                  </td>
-                  <td>
-                    <div className="doc-time-cell">
-                      <strong>{row.time || row.timestamp}</strong>
-                      <small>{row.date || '2026-09-11'} {row.timezone || 'IST'}</small>
-                    </div>
+                  <td style={{ minWidth: '120px' }}>
+                    <VehicleImageThumbnail
+                      onClick={() => {
+                        setInitialModalTab('vehicle')
+                        setPreviewModalRow(row)
+                      }}
+                      onPlayVideo={() => {
+                        setInitialModalTab('video')
+                        setPreviewModalRow(row)
+                      }}
+                      row={row}
+                      size="table"
+                    />
                   </td>
                 </tr>
               ))}
@@ -561,6 +559,17 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
           </div>
         </div>
       </div>
+
+      {previewModalRow && (
+        <MediaPreviewModal
+          allRows={filteredRows}
+          initialTab={initialModalTab}
+          isOpen={Boolean(previewModalRow)}
+          onClose={() => setPreviewModalRow(null)}
+          onSelectRow={setPreviewModalRow}
+          row={previewModalRow}
+        />
+      )}
     </div>
   )
 }

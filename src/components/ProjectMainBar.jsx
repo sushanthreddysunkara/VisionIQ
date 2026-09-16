@@ -80,11 +80,11 @@ export default function ProjectMainBar({
                     </span>
                   </div>
                 </div>
-                <label className="main-bar-action-btn secondary file-input-label" title="Upload another CSV file">
+                <label className="main-bar-action-btn secondary file-input-label" title="Upload another CSV or XLSX file">
                   <Upload size={13} />
-                  <span>Change CSV</span>
+                  <span>Change File</span>
                   <input
-                    accept=".csv,text/csv"
+                    accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel"
                     onChange={onImport}
                     style={{ display: 'none' }}
                     type="file"
@@ -95,9 +95,9 @@ export default function ProjectMainBar({
               <div className="main-bar-upload-group">
                 <label className="main-bar-action-btn primary file-input-label">
                   <Upload size={14} />
-                  <span>Upload CSV File</span>
+                  <span>Upload CSV / XLSX</span>
                   <input
-                    accept=".csv,text/csv"
+                    accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel"
                     onChange={onImport}
                     style={{ display: 'none' }}
                     type="file"

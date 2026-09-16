@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
+  AlertTriangle,
   ArrowUpDown,
   Camera,
   Car,
@@ -8,7 +9,10 @@ import {
   Clock,
   Compass,
   Download,
+  Eye,
+  FileVideo,
   Filter,
+  Image as ImageIcon,
   Layers,
   MapPin,
   Network,
@@ -19,11 +23,14 @@ import {
   TrafficCone,
   Undo2,
   Users,
+  Video,
   X,
 } from 'lucide-react'
 import { getVehicleMeta } from '../data/vehicleTypes'
 import VehicleBadge from './VehicleBadge'
 import QueryKnowledgeGraph from './query/QueryKnowledgeGraph'
+import MediaPreviewModal from './MediaPreviewModal'
+import VehicleImageThumbnail from './VehicleImageThumbnail'
 
 export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -32,6 +39,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [selectedCamera, setSelectedCamera] = useState('ALL')
   const [selectedSignal, setSelectedSignal] = useState('ALL')
   const [selectedWeather, setSelectedWeather] = useState('ALL')
+  const [overspeedOnly, setOverspeedOnly] = useState(false)
   const [sortBy, setSortBy] = useState('timestamp-desc')
   const [viewMode, setViewMode] = useState('graph') // 'graph' | 'table' | 'cards'
   const [previewMode, setPreviewMode] = useState(false)
@@ -39,6 +47,8 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [pageSize, setPageSize] = useState(10)
   const [queryHistory, setQueryHistory] = useState([])
   const [graphFocusId, setGraphFocusId] = useState(null)
+  const [previewModalRow, setPreviewModalRow] = useState(null)
+  const [initialModalTab, setInitialModalTab] = useState('vehicle')
 
   // Extract unique facets from dataset
   const facets = useMemo(() => {
@@ -75,12 +85,8 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
       'Bikes',
       'Buses',
       'Trucks',
-      'Tractors',
-      'Jeeps',
-      'Pedestrians',
-      'Green Signal',
-      'Red Signal',
-      'Clear Weather',
+      'Over Speed',
+      'Speed > 60',
       'High Confidence > 90%',
     ]
   }, [])
@@ -92,33 +98,49 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     return rows
       .filter((row) => {
         // 1. Facet Filters
-        if (selectedType !== 'ALL' && row.type !== selectedType) return false
+        if (selectedType !== 'ALL' && (row.vehicleType !== selectedType && row.type !== selectedType)) return false
         if (selectedLocation !== 'ALL' && (row.roadName !== selectedLocation && row.location !== selectedLocation)) return false
         if (selectedCamera !== 'ALL' && row.camera !== selectedCamera) return false
         if (selectedSignal !== 'ALL' && row.signalState !== selectedSignal) return false
         if (selectedWeather !== 'ALL' && row.weather !== selectedWeather) return false
+        if (overspeedOnly && !(row.overSpeed === 'Yes' || row.isOverSpeed)) return false
 
         // 2. Freeform Search Query
         if (!query) return true
+
+        // Speed queries (e.g. speed > 60, > 70)
+        if (query.includes('speed') && (query.includes('>') || query.includes('<'))) {
+          const num = parseFloat(query.replace(/[^0-9.]/g, ''))
+          if (!isNaN(num)) {
+            if (query.includes('>')) return (row.speed || 0) > num
+            if (query.includes('<')) return (row.speed || 0) < num
+          }
+        }
 
         // Numerical volume / confidence queries
         if (query.startsWith('>') || query.includes('>')) {
           const num = parseFloat(query.replace(/[^0-9.]/g, ''))
           if (!isNaN(num)) {
-            if (num <= 1) return (row.confidence || 0) > num
-            if (num > 50 && num <= 100 && (row.confidence || 0) <= 1) return ((row.confidence || 0) * 100) > num
-            return (row.volume || 1) > num
+            if (num <= 1) return (row.plateConfidence || row.confidence || 0) > num
+            if (num > 50 && num <= 100 && (row.plateConfidence || row.confidence || 0) <= 1) {
+              return ((row.plateConfidence || row.confidence || 0) * 100) > num
+            }
+            return (row.speed || row.volume || 1) > num
           }
         }
         if (query.startsWith('<') || query.includes('<')) {
           const num = parseFloat(query.replace(/[^0-9.]/g, ''))
-          if (!isNaN(num)) return (row.volume || 1) < num
+          if (!isNaN(num)) return (row.speed || row.volume || 1) < num
         }
 
         // Special quick keyword queries
-        const rowTypeLower = (row.type || '').toLowerCase()
+        const rowTypeLower = (row.vehicleType || row.type || '').toLowerCase()
         const signalLower = (row.signalState || '').toLowerCase()
         const weatherLower = (row.weather || '').toLowerCase()
+
+        if (query === 'overspeed' || query === 'over speed' || query === 'speed violation' || query === 'violation') {
+          return row.overSpeed === 'Yes' || row.isOverSpeed
+        }
 
         if (query === 'cars' || query === 'car') return rowTypeLower.includes('car')
         if (query === 'bikes' || query === 'bike' || query === 'motorcycle' || query === 'bicycle' || query === 'scooter') {
@@ -157,19 +179,23 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         if (query === 'yellow signal' || query === 'yellow' || query === 'amber') return signalLower === 'yellow' || signalLower === 'amber'
         if (query.includes('weather')) return weatherLower.includes(query.replace('weather', '').trim())
 
-        // Multi-attribute search across all 20 schema fields
+        // Multi-attribute search across all schema fields
         const terms = query.split(/\s+/).filter(Boolean)
         const rowSearchString = [
+          row.id,
           row.observationId,
+          row.vehicleType,
           row.type,
+          row.vehicleNumberPlate,
           row.numberPlate,
-          row.roadName,
-          row.location,
-          row.junctionId,
-          row.camera,
-          row.cameraDirection,
-          row.signalState,
-          row.weather,
+          row.speed ? `${row.speed}km/h` : '',
+          row.speedLimit ? `${row.speedLimit}km/h` : '',
+          row.overSpeed,
+          row.vehicleImage,
+          row.videoClipPath,
+          row.vehicleImagePath,
+          row.plateImagePath,
+          row.timestampIst,
           row.time,
           row.date,
           row.timestamp,
@@ -184,80 +210,70 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         })
       })
       .sort((a, b) => {
-        if (sortBy === 'confidence-desc') return (b.confidence || 0) - (a.confidence || 0)
-        if (sortBy === 'confidence-asc') return (a.confidence || 0) - (b.confidence || 0)
+        if (sortBy === 'speed-desc') return (b.speed || 0) - (a.speed || 0)
+        if (sortBy === 'speed-asc') return (a.speed || 0) - (b.speed || 0)
+        if (sortBy === 'confidence-desc') return (b.plateConfidence || b.confidence || 0) - (a.plateConfidence || a.confidence || 0)
+        if (sortBy === 'confidence-asc') return (a.plateConfidence || a.confidence || 0) - (b.plateConfidence || b.confidence || 0)
         if (sortBy === 'volume-desc') return (b.volume || 0) - (a.volume || 0)
-        if (sortBy === 'timestamp-desc') return String(b.time || b.timestamp).localeCompare(String(a.time || a.timestamp))
-        if (sortBy === 'timestamp-asc') return String(a.time || a.timestamp).localeCompare(String(b.time || b.timestamp))
+        if (sortBy === 'timestamp-desc') return String(b.timestampIst || b.time || b.timestamp).localeCompare(String(a.timestampIst || a.time || a.timestamp))
+        if (sortBy === 'timestamp-asc') return String(a.timestampIst || a.time || a.timestamp).localeCompare(String(b.timestampIst || b.time || b.timestamp))
         return 0
       })
-  }, [rows, searchQuery, selectedType, selectedLocation, selectedCamera, selectedSignal, selectedWeather, sortBy])
+  }, [rows, searchQuery, selectedType, selectedLocation, selectedCamera, selectedSignal, selectedWeather, overspeedOnly, sortBy])
 
   // Summary statistics for the filtered result set
   const filteredStats = useMemo(() => {
     const totalRecords = filteredRows.length
-    const uniquePlates = new Set(filteredRows.map((r) => r.numberPlate).filter((p) => p && p !== 'N/A')).size
+    const uniquePlates = new Set(filteredRows.map((r) => r.numberPlate || r.vehicleNumberPlate).filter((p) => p && p !== 'N/A')).size
     const uniqueLocations = new Set(filteredRows.map((r) => r.roadName || r.location).filter(Boolean)).size
     const uniqueCameras = new Set(filteredRows.map((r) => r.camera).filter(Boolean)).size
     const avgConfidence = filteredRows.length
       ? Math.round(
-        (filteredRows.reduce((sum, r) => sum + (r.confidence > 1 ? r.confidence : r.confidence * 100), 0) /
+        (filteredRows.reduce((sum, r) => sum + ((r.plateConfidence || r.confidence) > 1 ? (r.plateConfidence || r.confidence) : (r.plateConfidence || r.confidence) * 100), 0) /
           filteredRows.length)
       )
       : 0
     return { totalRecords, uniquePlates, uniqueLocations, uniqueCameras, avgConfidence }
   }, [filteredRows])
 
-  // CSV Export for filtered query results in the exact 20-column schema
+  // CSV Export for filtered query results in the exact 14-column schema
   function exportQueryResults() {
     if (!filteredRows.length) return
     const headers = [
-      'observation_id',
-      'camera_id',
-      'junction_id',
-      'road_name',
-      'date',
-      'time',
-      'timezone',
-      'camera_direction',
-      'object_type',
-      'number_plate',
-      'traffic_signal_state',
-      'object_latitude',
-      'object_longitude',
-      'bbox_x',
-      'bbox_y',
-      'bbox_width',
-      'bbox_height',
-      'detection_confidence',
-      'estimated_distance_m',
-      'weather',
+      'ID',
+      'Timestamp (IST)',
+      'Vehicle Type',
+      'Vehicle Number Plate',
+      'Plate Confidence',
+      'Vehicle Image',
+      'Speed (km/h)',
+      'Speed Limit (km/h)',
+      'Over Speed',
+      'Latitude',
+      'Longitude',
+      'Video Clip Path',
+      'Vehicle Image Path',
+      'Plate Image Path',
     ]
 
     const csvContent = [
       headers.join(','),
       ...filteredRows.map((r) =>
         [
-          r.observationId || 'OBS-0001',
-          r.camera,
-          r.junctionId || 'JNC-01',
-          `"${r.roadName || r.location}"`,
-          r.date || '2026-09-11',
-          r.time || r.timestamp,
-          r.timezone || 'IST',
-          r.cameraDirection || 'North',
-          r.type,
-          r.numberPlate || 'N/A',
-          r.signalState || 'Green',
+          r.id || r.observationId || 'OBS-0001',
+          `"${r.timestampIst || r.timestamp || r.time || ''}"`,
+          r.vehicleType || r.type || 'Car',
+          `"${r.vehicleNumberPlate || r.numberPlate || 'N/A'}"`,
+          r.plateConfidence || r.confidence || 0.95,
+          `"${r.vehicleImage || ''}"`,
+          r.speed || 0,
+          r.speedLimit || 60,
+          r.overSpeed || (r.speed > r.speedLimit ? 'Yes' : 'No'),
           r.latitude || 17.4485,
           r.longitude || 78.3742,
-          r.bboxX || 120,
-          r.bboxY || 340,
-          r.bboxWidth || 180,
-          r.bboxHeight || 140,
-          r.confidence || 0.95,
-          r.distance || 18.0,
-          r.weather || 'Clear',
+          `"${r.videoClipPath || ''}"`,
+          `"${r.vehicleImagePath || ''}"`,
+          `"${r.plateImagePath || ''}"`,
         ].join(',')
       ),
     ].join('\n')
@@ -339,6 +355,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     setSelectedCamera('ALL')
     setSelectedSignal('ALL')
     setSelectedWeather('ALL')
+    setOverspeedOnly(false)
     setPreviewMode(false)
     setCurrentPage(1)
     setGraphFocusId(null)
@@ -537,25 +554,33 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
               )
             })}
 
-            {/* Quick High-Impact Toggle */}
+            {/* Quick Over Speed Violation Pill */}
             <button
-              className={`query-vehicle-pill-btn ${selectedSignal === 'Red' ? 'active' : ''}`}
+              className={`query-vehicle-pill-btn ${overspeedOnly ? 'active' : ''}`}
               onClick={() => {
                 pushHistory()
-                setSelectedSignal(selectedSignal === 'Red' ? 'ALL' : 'Red')
+                setOverspeedOnly(!overspeedOnly)
                 setCurrentPage(1)
-                setViewMode('graph')
               }}
               style={{
-                color: selectedSignal === 'Red' ? '#ffffff' : '#ef4444',
-                backgroundColor: selectedSignal === 'Red' ? '#ef4444' : '#fef2f2',
-                borderColor: '#fecaca',
+                color: overspeedOnly ? '#ffffff' : '#dc2626',
+                backgroundColor: overspeedOnly ? '#dc2626' : '#fef2f2',
+                borderColor: '#fca5a5',
               }}
-              title="Filter to Red Signal Violations"
+              title="Filter to Over Speed Violations"
               type="button"
             >
-              <TrafficCone size={13} />
-              <span>Red Signal</span>
+              <AlertTriangle size={13} />
+              <span>Over Speed</span>
+              <span
+                className="query-pill-count"
+                style={{
+                  backgroundColor: overspeedOnly ? 'rgba(255,255,255,0.25)' : 'rgba(220,38,38,0.12)',
+                  color: overspeedOnly ? '#ffffff' : '#dc2626',
+                }}
+              >
+                {rows.filter((r) => r.overSpeed === 'Yes' || r.isOverSpeed).length}
+              </span>
             </button>
           </div>
         </div>
@@ -617,6 +642,8 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             >
               <option value="timestamp-desc">Timestamp (Recent first)</option>
               <option value="timestamp-asc">Timestamp (Earliest first)</option>
+              <option value="speed-desc">Speed (High to Low)</option>
+              <option value="speed-asc">Speed (Low to High)</option>
               <option value="confidence-desc">Confidence (High to Low)</option>
               <option value="confidence-asc">Confidence (Low to High)</option>
             </select>
@@ -736,6 +763,28 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             </span>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {rows.some((r) => r.hasExtractedImage) && (
+                <span
+                  className="query-xlsx-extracted-badge"
+                  title="Images extracted directly from Excel (.xlsx) workbook"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '3px 9px',
+                    borderRadius: '12px',
+                    background: '#ecfdf5',
+                    color: '#047857',
+                    border: '1px solid #a7f3d0',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                  }}
+                >
+                  <Sparkles size={12} />
+                  {rows.filter((r) => r.hasExtractedImage).length} images extracted from XLSX
+                </span>
+              )}
+
               {previewMode && !hasActiveFilters && (
                 <button
                   className="query-reset-btn"
@@ -793,67 +842,108 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
               <table className="query-results-table">
                 <thead>
                   <tr>
-                    <th>VEHICLE / OBJECT</th>
+                    <th>ID</th>
+                    <th>TIMESTAMP (IST)</th>
+                    <th>VEHICLE TYPE</th>
                     <th>NUMBER PLATE</th>
-                    <th>ROAD & JUNCTION</th>
-                    <th>CAMERA & HEADING</th>
-                    <th>SIGNAL</th>
-                    <th>CONFIDENCE</th>
-                    <th>WEATHER</th>
-                    <th>TIMESTAMP</th>
+                    <th>PLATE CONFIDENCE</th>
+                    <th>SPEED / LIMIT</th>
+                    <th>OVER SPEED</th>
+                    <th>COORDINATES</th>
+                    <th>MEDIA EVIDENCE</th>
                     <th>GRAPH</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedRows.map((row, idx) => (
-                    <tr key={`${row.observationId || row.camera}-${row.time || row.timestamp}-${idx}`}>
+                    <tr key={`${row.id || row.observationId}-${row.timestampIst || row.timestamp}-${idx}`}>
                       <td>
-                        <VehicleBadge type={row.type} />
+                        <code className="query-camera-code">{row.id || row.observationId || `ID-${idx + 1}`}</code>
                       </td>
                       <td>
-                        {row.numberPlate && row.numberPlate !== 'N/A' ? (
-                          <span className="query-plate-badge">{row.numberPlate}</span>
+                        <span className="query-time-cell">
+                          <Clock size={12} />
+                          {row.timestampIst || row.time || row.timestamp}
+                        </span>
+                      </td>
+                      <td>
+                        <VehicleBadge type={row.vehicleType || row.type} />
+                      </td>
+                      <td>
+                        {row.vehicleNumberPlate || row.numberPlate ? (
+                          <span className="query-plate-badge">{row.vehicleNumberPlate || row.numberPlate}</span>
                         ) : (
                           <span className="query-plate-na">—</span>
                         )}
                       </td>
                       <td>
-                        <div className="query-road-cell">
-                          <strong>{row.roadName || row.location}</strong>
-                          {row.junctionId && <span className="query-jnc-tag">{row.junctionId}</span>}
-                        </div>
-                      </td>
-                      <td>
-                        <div className="query-cam-cell">
-                          <code className="query-camera-code">{row.camera}</code>
-                          {row.cameraDirection && (
-                            <span className="query-heading-tag">{row.cameraDirection}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`query-signal-pill signal-${(row.signalState || 'green').toLowerCase()}`}>
-                          {row.signalState || 'Green'}
-                        </span>
-                      </td>
-                      <td>
                         <span className="query-confidence-badge">
-                          {Math.round(row.confidence > 1 ? row.confidence : (row.confidence || 0.9) * 100)}%
+                          {Math.round(
+                            (row.plateConfidence || row.confidence) > 1
+                              ? (row.plateConfidence || row.confidence)
+                              : ((row.plateConfidence || row.confidence || 0.95) * 100)
+                          )}%
                         </span>
                       </td>
                       <td>
-                        <span className="query-weather-tag">{row.weather || 'Clear'}</span>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                          <strong style={{ fontSize: '13px', color: (row.overSpeed === 'Yes' || row.isOverSpeed) ? '#dc2626' : '#1e293b' }}>
+                            {row.speed || 0}
+                          </strong>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>
+                            / {row.speedLimit || 60} km/h
+                          </span>
+                        </div>
                       </td>
                       <td>
-                        <span className="query-time-cell">
-                          <Clock size={12} />
-                          {row.time || row.timestamp}
+                        {(row.overSpeed === 'Yes' || row.isOverSpeed) ? (
+                          <span
+                            className="query-signal-pill"
+                            style={{
+                              background: '#fef2f2',
+                              color: '#dc2626',
+                              borderColor: '#fca5a5',
+                              fontWeight: 600,
+                            }}
+                          >
+                            ⚠ Over Speed
+                          </span>
+                        ) : (
+                          <span
+                            className="query-signal-pill"
+                            style={{
+                              background: '#ecfdf5',
+                              color: '#059669',
+                              borderColor: '#a7f3d0',
+                            }}
+                          >
+                            Normal
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="query-heading-tag" style={{ fontSize: '11px' }}>
+                          {row.latitude?.toFixed(4) || '17.4485'}°, {row.longitude?.toFixed(4) || '78.3742'}°
                         </span>
+                      </td>
+                      <td>
+                        <VehicleImageThumbnail
+                          onClick={() => {
+                            setInitialModalTab('vehicle')
+                            setPreviewModalRow(row)
+                          }}
+                          onPlayVideo={() => {
+                            setInitialModalTab('video')
+                            setPreviewModalRow(row)
+                          }}
+                          row={row}
+                          size="table"
+                        />
                       </td>
                       <td>
                         <button
                           className="query-row-graph-btn"
-                          onClick={() => handleFocusInGraph(row.observationId || row.numberPlate)}
+                          onClick={() => handleFocusInGraph(row.id || row.observationId || row.numberPlate)}
                           title="Inspect in Knowledge Graph"
                           type="button"
                         >
@@ -933,6 +1023,16 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             </div>
           )}
         </>
+      )}
+
+      {previewModalRow && (
+        <MediaPreviewModal
+          allRows={filteredRows}
+          isOpen={Boolean(previewModalRow)}
+          onClose={() => setPreviewModalRow(null)}
+          onSelectRow={setPreviewModalRow}
+          row={previewModalRow}
+        />
       )}
     </div>
   )

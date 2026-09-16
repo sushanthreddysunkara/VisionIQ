@@ -58,8 +58,24 @@ export default function App() {
 
   const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
 
-  function handleLoadSampleData() {
-    setTrafficData(sampleTrafficData)
+  async function handleLoadSampleData() {
+    try {
+      const res = await fetch('/sample_traffic_feed.xlsx')
+      if (res.ok) {
+        const blob = await res.blob()
+        const file = new File([blob], 'sample_traffic_feed.xlsx', {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        })
+        const importedRows = await parseTrafficCsv(file)
+        setTrafficData(importedRows)
+        setFileName('sample_traffic_feed.xlsx')
+        setImportError('')
+        return
+      }
+    } catch (e) {
+      console.warn('Could not load sample_traffic_feed.xlsx, falling back:', e)
+    }
+    setTrafficData(normalizeTrafficData(sampleTrafficData))
     setFileName('sample_traffic_feed.csv')
     setImportError('')
   }
@@ -124,11 +140,11 @@ export default function App() {
 
     try {
       const importedRows = await parseTrafficCsv(file)
-      setTrafficData(normalizeTrafficData(importedRows))
+      setTrafficData(importedRows)
       setFileName(file.name)
       setImportError('')
     } catch (error) {
-      setImportError(error.message || 'Unable to import this CSV file.')
+      setImportError(error.message || 'Unable to import this file (supported: .csv, .xlsx).')
     } finally {
       event.target.value = ''
     }

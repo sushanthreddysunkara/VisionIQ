@@ -4,6 +4,7 @@ import {
   Camera,
   Car,
   ChevronDown,
+  Eye,
   Filter,
   MapPin,
   Maximize,
@@ -16,11 +17,13 @@ import {
   X,
 } from 'lucide-react'
 import { getVehicleMeta } from '../../data/vehicleTypes'
+import MediaPreviewModal from '../MediaPreviewModal'
 
 export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Dataset' }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [activeCategory, setActiveCategory] = useState('ALL')
   const [selectedNode, setSelectedNode] = useState(null)
+  const [previewModalRow, setPreviewModalRow] = useState(null)
   const containerRef = useRef(null)
   const cyRef = useRef(null)
 
@@ -114,21 +117,23 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         color: '#8b5cf6',
         icon: 'Sparkles',
         properties: {
-          'Observation ID': row.observationId || `OBS-${i + 1}`,
-          Timestamp: `${row.date || ''} ${row.time || row.timestamp || ''}`.trim() || 'N/A',
-          Vehicle: row.type,
-          'Number Plate': row.numberPlate || 'N/A',
-          'Road Name': row.roadName || row.location,
-          Junction: row.junctionId || 'N/A',
-          Camera: row.camera,
-          Heading: row.cameraDirection || 'North',
-          'Signal State': row.signalState || 'Green',
-          Confidence: `${Math.round((row.confidence > 1 ? row.confidence : (row.confidence || 0.94) * 100))}%`,
-          Distance: `${row.distance || 18}m`,
-          Weather: row.weather || 'Clear',
-          Coordinates: `${row.latitude || 17.4485}, ${row.longitude || 78.3742}`,
-          'Bounding Box': `[x:${row.bboxX || 120}, y:${row.bboxY || 340}, w:${row.bboxWidth || 180}, h:${row.bboxHeight || 140}]`,
+          'Observation ID': row.id || row.observationId || `OBS-${i + 1}`,
+          'Timestamp (IST)': row.timestampIst || row.timestamp || 'N/A',
+          'Vehicle Type': row.vehicleType || row.type || 'Car',
+          'Number Plate': row.vehicleNumberPlate || row.numberPlate || 'N/A',
+          'Plate Confidence': `${Math.round(((row.plateConfidence || row.confidence) > 1 ? (row.plateConfidence || row.confidence) : (row.plateConfidence || row.confidence || 0.95) * 100))}%`,
+          'Speed (km/h)': `${row.speed || 0} km/h`,
+          'Speed Limit': `${row.speedLimit || 60} km/h`,
+          'Over Speed': row.overSpeed || (row.speed > row.speedLimit ? 'Yes' : 'No'),
+          'Coordinates': `${row.latitude?.toFixed(4) || '17.4485'}, ${row.longitude?.toFixed(4) || '78.3742'}`,
+          'Vehicle Image': row.vehicleImage || 'N/A',
+          'Vehicle Image Path': row.vehicleImagePath || 'N/A',
+          'Plate Image Path': row.plateImagePath || 'N/A',
+          'Video Clip Path': row.videoClipPath || 'N/A',
         },
+        image: row.extractedImage || row.vehicleImageDataUrl,
+        hasExtractedImage: row.hasExtractedImage,
+        rawRow: row,
       })
 
       // Links
@@ -439,6 +444,89 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
             </div>
 
             <div className="kg-details-body">
+              {selectedNode.image && (
+                <div
+                  className="kg-inspector-media-card"
+                  style={{
+                    background: '#0f172a',
+                    borderRadius: '10px',
+                    padding: '8px',
+                    marginBottom: '14px',
+                    border: '1px solid #334155',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '6px',
+                      fontSize: '11px',
+                      color: '#94a3b8',
+                    }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      <Camera size={12} /> Surveillance Capture
+                    </span>
+                    {selectedNode.hasExtractedImage && (
+                      <span
+                        style={{
+                          background: '#064e3b',
+                          color: '#34d399',
+                          padding: '1px 6px',
+                          borderRadius: '8px',
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
+                        }}
+                      >
+                        <Sparkles size={10} /> XLSX Extracted
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    onClick={() => selectedNode.rawRow && setPreviewModalRow(selectedNode.rawRow)}
+                    style={{
+                      cursor: 'pointer',
+                      position: 'relative',
+                      borderRadius: '6px',
+                      overflow: 'hidden',
+                      maxHeight: '140px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: '#020617',
+                    }}
+                    title="Click to open high-resolution surveillance modal"
+                  >
+                    <img
+                      alt={selectedNode.label}
+                      src={selectedNode.image}
+                      style={{ width: '100%', height: 'auto', display: 'block', objectFit: 'contain' }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: '4px',
+                        right: '4px',
+                        background: 'rgba(15, 23, 42, 0.85)',
+                        color: '#ffffff',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        fontSize: '10px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                      }}
+                    >
+                      <Eye size={10} /> Click to Inspect
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <h3>Attributes & Telemetry</h3>
               <div className="kg-property-list">
                 {Object.entries(selectedNode.properties || {}).map(([key, val]) => (
@@ -466,6 +554,16 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
           </div>
         )}
       </div>
+
+      {previewModalRow && (
+        <MediaPreviewModal
+          allRows={rows}
+          isOpen={Boolean(previewModalRow)}
+          onClose={() => setPreviewModalRow(null)}
+          onSelectRow={setPreviewModalRow}
+          row={previewModalRow}
+        />
+      )}
     </div>
   )
 }

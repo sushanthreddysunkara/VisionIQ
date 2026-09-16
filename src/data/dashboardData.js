@@ -1,4 +1,6 @@
 import Papa from 'papaparse'
+import * as XLSX from 'xlsx'
+import JSZip from 'jszip'
 
 export const sampleTrafficData = [
   {
@@ -583,36 +585,191 @@ export const projectDatasets = {
   ],
 }
 
-// Aliases covering the user's exact 20-column format + legacy variations
+// Aliases covering the user's exact 14-column CSV format + legacy variations
 const aliases = {
-  observationId: ['observation_id', 'observation id', 'obs_id', 'id'],
+  id: [
+    'id',
+    'observation_id',
+    'observation id',
+    'obs_id',
+    'record_id',
+  ],
+  timestamp: [
+    'timestamp (ist)',
+    'timestamp(ist)',
+    'timestamp ist',
+    'timestamp',
+    'time',
+    'datetime',
+    'date_time',
+    'detection_date',
+  ],
+  vehicleType: [
+    'vehicle type',
+    'vehicle_type',
+    'object_type',
+    'object type',
+    'type',
+    'object',
+    'category',
+    'class',
+  ],
+  numberPlate: [
+    'vehicle number plate',
+    'vehicle_number_plate',
+    'number_plate',
+    'number plate',
+    'license_plate',
+    'license plate',
+    'plate',
+    'registration',
+    'plate_number',
+  ],
+  plateConfidence: [
+    'plate confidence',
+    'plate_confidence',
+    'detection_confidence',
+    'confidence',
+    'score',
+    'ocr_confidence',
+  ],
+  vehicleImage: [
+    'vehicle image',
+    'vehicle_image',
+    'image',
+    'car_image',
+    'vehicle_snapshot',
+  ],
+  speed: [
+    'speed (km/h)',
+    'speed(km/h)',
+    'speed_kmh',
+    'speed kmh',
+    'speed (kmph)',
+    'speed',
+    'velocity',
+  ],
+  speedLimit: [
+    'speed limit (km/h)',
+    'speed limit(km/h)',
+    'speed_limit (km/h)',
+    'speed_limit_kmh',
+    'speed_limit',
+    'speed limit',
+    'limit',
+    'posted_speed',
+  ],
+  overSpeed: [
+    'over speed',
+    'over_speed',
+    'overspeed',
+    'speed_violation',
+    'violation',
+    'is_overspeed',
+  ],
+  latitude: [
+    'latitude',
+    'lat',
+    'object_latitude',
+    'gps_lat',
+  ],
+  longitude: [
+    'longitude',
+    'long',
+    'lon',
+    'lng',
+    'object_longitude',
+    'gps_lon',
+  ],
+  videoClipPath: [
+    'video clip path',
+    'video_clip_path',
+    'vedio clip path',
+    'vedio_clip_path',
+    'video clip',
+    'vedio clip',
+    'video_path',
+    'vedio_path',
+    'video url',
+    'video_url',
+    'vedio url',
+    'vedio_url',
+    'videourl',
+    'vediourl',
+    'clip url',
+    'clip_url',
+    'video link',
+    'videolink',
+    'video_link',
+    'clip_path',
+    'clip',
+    'videopath',
+    'url',
+    'video',
+    'vedio',
+    'media_url',
+    'media url',
+    'video_source',
+    'source_url',
+    'link',
+  ],
+  vehicleImagePath: [
+    'vehicle image path',
+    'vehicle_image_path',
+    'vehicle_photo_path',
+    'car_image_path',
+    'image_path',
+  ],
+  plateImagePath: [
+    'plate image path',
+    'plate_image_path',
+    'license_plate_image_path',
+    'number_plate_image_path',
+    'plate_photo_path',
+  ],
+  // Optional secondary / legacy fields
   camera: ['camera_id', 'camera id', 'camera', 'sensor', 'sensor_id'],
   junction: ['junction_id', 'junction id', 'junction', 'intersection'],
   location: ['road_name', 'road name', 'road', 'location', 'area', 'place'],
   date: ['date', 'detection_date'],
-  time: ['time', 'timestamp', 'datetime'],
+  time: ['time', 'timestamp'],
   timezone: ['timezone', 'tz'],
   cameraDirection: ['camera_direction', 'camera direction', 'direction', 'heading'],
-  type: ['object_type', 'object type', 'type', 'object', 'vehicle_type', 'vehicle type', 'category', 'class'],
-  numberPlate: ['number_plate', 'number plate', 'license_plate', 'plate', 'registration'],
   signalState: ['traffic_signal_state', 'traffic signal state', 'signal_state', 'signal', 'light'],
-  latitude: ['object_latitude', 'latitude', 'lat'],
-  longitude: ['object_longitude', 'longitude', 'lon', 'lng'],
   bboxX: ['bbox_x', 'bbox x', 'x'],
   bboxY: ['bbox_y', 'bbox y', 'y'],
   bboxWidth: ['bbox_width', 'bbox width', 'width', 'w'],
   bboxHeight: ['bbox_height', 'bbox height', 'height', 'h'],
-  confidence: ['detection_confidence', 'detection confidence', 'confidence', 'score'],
   distance: ['estimated_distance_m', 'estimated distance', 'distance_m', 'distance'],
   weather: ['weather', 'condition', 'weather_condition'],
   pedestrians: ['pedestrians', 'pedestrian_count', 'pedestrian count', 'people'],
   volume: ['volume', 'traffic_volume', 'traffic volume', 'count', 'vehicles'],
 }
 
-function valueFor(row, fields) {
+function cleanKey(str) {
+  return String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function valueFor(row, candidates = []) {
   if (!row || typeof row !== 'object') return ''
-  const key = Object.keys(row).find((candidate) => fields.includes(candidate.trim().toLowerCase()))
-  return key && row[key] !== undefined && row[key] !== null ? String(row[key]).trim() : ''
+  const rowKeys = Object.keys(row)
+
+  // 1. Exact case-insensitive match
+  const exactKey = rowKeys.find((k) =>
+    candidates.some((c) => c.trim().toLowerCase() === k.trim().toLowerCase())
+  )
+  if (exactKey && row[exactKey] !== undefined && row[exactKey] !== null) {
+    return String(row[exactKey]).trim()
+  }
+
+  // 2. Alphanumeric match ignoring spaces, brackets, slashes
+  const cleanedCandidates = candidates.map(cleanKey)
+  const fuzzyKey = rowKeys.find((k) => cleanedCandidates.includes(cleanKey(k)))
+  if (fuzzyKey && row[fuzzyKey] !== undefined && row[fuzzyKey] !== null) {
+    return String(row[fuzzyKey]).trim()
+  }
+
+  return ''
 }
 
 function numberOrFallback(value, fallback) {
@@ -621,79 +778,554 @@ function numberOrFallback(value, fallback) {
   return Number.isFinite(number) ? number : fallback
 }
 
-export function normalizeTrafficData(rows) {
+export function generateSurveillanceSvgDataUrl(row, index = 0) {
+  const type = row.vehicleType || row.type || 'Vehicle'
+  const plate = row.vehicleNumberPlate || row.numberPlate || 'N/A'
+  const speed = row.speed !== undefined ? row.speed : 50
+  const speedLimit = row.speedLimit !== undefined ? row.speedLimit : 60
+  const isOverSpeed = row.overSpeed === 'Yes' || row.isOverSpeed || speed > speedLimit
+  const timestamp = row.timestampIst || row.timestamp || '08:12:14 IST'
+  const camera = row.camera || `CAM-HYD-${String((index % 8) + 1).padStart(3, '0')}-N`
+  const conf = Math.round(
+    (row.plateConfidence || row.confidence || 0.95) > 1
+      ? row.plateConfidence || row.confidence
+      : (row.plateConfidence || row.confidence || 0.95) * 100
+  )
+
+  const boxColor = isOverSpeed ? '#ef4444' : '#10b981'
+  const typeColorMap = {
+    Car: '#2563eb',
+    Bike: '#ea580c',
+    Auto: '#d97706',
+    Bus: '#0d9488',
+    Truck: '#7c3aed',
+    Tractor: '#65a30d',
+    Jeep: '#4f46e5',
+    Van: '#0284c7',
+    Train: '#e11d48',
+    Pedestrians: '#ec4899',
+  }
+  const typeColor = typeColorMap[type] || '#3b82f6'
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" width="320" height="200">
+    <defs>
+      <linearGradient id="bgGrad_${index}" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#0f172a" />
+        <stop offset="100%" stop-color="#1e293b" />
+      </linearGradient>
+      <linearGradient id="vehGrad_${index}" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="${typeColor}" />
+        <stop offset="100%" stop-color="#090d16" />
+      </linearGradient>
+    </defs>
+    <rect width="320" height="200" fill="url(#bgGrad_${index})" />
+    <line x1="50" y1="30" x2="10" y2="180" stroke="#334155" stroke-width="1.5" />
+    <line x1="270" y1="30" x2="310" y2="180" stroke="#334155" stroke-width="1.5" />
+    <line x1="160" y1="30" x2="160" y2="180" stroke="#eab308" stroke-dasharray="8 6" stroke-width="1.5" opacity="0.6" />
+    <rect x="100" y="60" width="120" height="75" rx="8" fill="url(#vehGrad_${index})" stroke="#475569" stroke-width="1" />
+    <rect x="115" y="70" width="90" height="24" rx="4" fill="#090d16" opacity="0.85" />
+    <circle cx="112" cy="118" r="6" fill="#fef08a" opacity="0.9" />
+    <circle cx="208" cy="118" r="6" fill="#fef08a" opacity="0.9" />
+    <rect x="135" y="115" width="50" height="12" rx="2" fill="#ffffff" />
+    <text x="160" y="124" font-size="7" font-family="monospace" font-weight="bold" fill="#0f172a" text-anchor="middle">${plate}</text>
+    <rect x="92" y="52" width="136" height="92" fill="none" stroke="${boxColor}" stroke-width="2" stroke-dasharray="4 2" />
+    <path d="M 88 64 L 88 48 L 104 48" fill="none" stroke="${boxColor}" stroke-width="2.5" />
+    <path d="M 232 48 L 248 48 L 248 64" fill="none" stroke="${boxColor}" stroke-width="2.5" />
+    <path d="M 88 132 L 88 148 L 104 148" fill="none" stroke="${boxColor}" stroke-width="2.5" />
+    <path d="M 232 148 L 248 148 L 248 132" fill="none" stroke="${boxColor}" stroke-width="2.5" />
+    <rect x="92" y="38" width="115" height="14" rx="3" fill="${boxColor}" />
+    <text x="96" y="48" font-size="8" font-family="sans-serif" font-weight="bold" fill="#ffffff">${type.toUpperCase()} · ${conf}%</text>
+    <rect x="0" y="0" width="320" height="22" fill="#090d16" opacity="0.95" />
+    <circle cx="12" cy="11" r="4" fill="#ef4444" />
+    <text x="22" y="14" font-size="8" font-family="monospace" font-weight="bold" fill="#ffffff">REC</text>
+    <text x="50" y="14" font-size="8" font-family="monospace" fill="#94a3b8">${camera}</text>
+    <text x="310" y="14" font-size="8" font-family="monospace" fill="#38bdf8" text-anchor="end">1080P · 60FPS</text>
+    <rect x="0" y="178" width="320" height="22" fill="#090d16" opacity="0.95" />
+    <text x="10" y="192" font-size="8" font-family="monospace" fill="#cbd5e1">${timestamp}</text>
+    <rect x="235" y="181" width="75" height="16" rx="3" fill="${boxColor}" />
+    <text x="272" y="192" font-size="8" font-family="monospace" font-weight="bold" fill="#ffffff" text-anchor="middle">${speed} / ${speedLimit} km/h</text>
+  </svg>`
+
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg)
+}
+
+export async function extractImagesFromXlsx(arrayBuffer) {
+  try {
+    const zip = await JSZip.loadAsync(arrayBuffer)
+
+    // 1. Collect all media files in the archive
+    const mediaMap = {}
+    const allImages = []
+
+    for (const [filePath, zipEntry] of Object.entries(zip.files)) {
+      if (zipEntry.dir) continue
+      const lower = filePath.toLowerCase()
+      if (
+        (lower.includes('media/') || lower.includes('pictures/') || lower.includes('drawings/')) &&
+        (lower.endsWith('.png') ||
+          lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.webp') ||
+          lower.endsWith('.gif') ||
+          lower.endsWith('.bmp') ||
+          lower.endsWith('.svg'))
+      ) {
+        const ext = lower.split('.').pop()
+        const mime =
+          ext === 'png'
+            ? 'image/png'
+            : ext === 'jpg' || ext === 'jpeg'
+            ? 'image/jpeg'
+            : ext === 'webp'
+            ? 'image/webp'
+            : ext === 'gif'
+            ? 'image/gif'
+            : ext === 'bmp'
+            ? 'image/bmp'
+            : ext === 'svg'
+            ? 'image/svg+xml'
+            : 'image/png'
+
+        const base64 = await zipEntry.async('base64')
+        const dataUrl = `data:${mime};base64,${base64}`
+        const fileName = filePath.split('/').pop()
+
+        const mediaObj = {
+          path: filePath,
+          fileName,
+          name: fileName,
+          mime,
+          dataUrl,
+        }
+
+        mediaMap[filePath] = mediaObj
+        mediaMap[fileName] = mediaObj
+        allImages.push(mediaObj)
+      }
+    }
+
+    if (allImages.length === 0) {
+      return { imagesByRow: {}, allImages: [] }
+    }
+
+    // 2. Parse drawing rels to map rId -> media object
+    const drawingRels = {}
+    for (const [filePath, zipEntry] of Object.entries(zip.files)) {
+      const lower = filePath.toLowerCase()
+      if (
+        lower.includes('rels') &&
+        (lower.includes('drawing') || lower.includes('cellimage') || lower.includes('sheet'))
+      ) {
+        try {
+          const xmlText = await zipEntry.async('text')
+          const rels = {}
+          const relMatches = xmlText.matchAll(/<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/gi)
+          for (const m of relMatches) {
+            const id = m[1]
+            const target = m[2]
+            const baseName = target.split('/').pop()
+            const mediaMatch =
+              mediaMap[baseName] || mediaMap[target] || mediaMap['xl/media/' + baseName]
+            if (mediaMatch) {
+              rels[id] = mediaMatch
+            }
+          }
+          drawingRels[filePath] = rels
+          const baseRelName = filePath.split('/').pop()
+          drawingRels[baseRelName] = rels
+        } catch {
+          // ignore xml parse error
+        }
+      }
+    }
+
+    // 3. Parse drawings to locate anchors
+    const imagesByRow = {}
+    for (const [filePath, zipEntry] of Object.entries(zip.files)) {
+      const lower = filePath.toLowerCase()
+      if (lower.includes('drawings/') && lower.endsWith('.xml') && !lower.includes('rels')) {
+        try {
+          const xmlText = await zipEntry.async('text')
+          const baseName = filePath.split('/').pop()
+          const rels =
+            drawingRels[`xl/drawings/_rels/${baseName}.rels`] ||
+            drawingRels[`${baseName}.rels`] ||
+            Object.values(drawingRels)[0] ||
+            {}
+
+          const anchorRegex =
+            /<(?:xdr:)?(?:twoCellAnchor|oneCellAnchor)[^>]*>([\s\S]*?)<\/(?:xdr:)?(?:twoCellAnchor|oneCellAnchor)>/gi
+          let anchorMatch
+          while ((anchorMatch = anchorRegex.exec(xmlText)) !== null) {
+            const content = anchorMatch[1]
+            const rowMatch = content.match(/<(?:xdr:)?row>(\d+)<\/(?:xdr:)?row>/i)
+            const blipMatch = content.match(/<(?:a:)?blip[^>]*r:embed="([^"]+)"/i)
+            if (rowMatch && blipMatch) {
+              const excelRow = parseInt(rowMatch[1], 10)
+              const rId = blipMatch[1]
+              const media = rels[rId]
+              if (media) {
+                // row 0 is header in Excel, so row 1 corresponds to data index 0
+                const dataIndex = excelRow >= 1 ? excelRow - 1 : excelRow
+                imagesByRow[dataIndex] = media
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    return {
+      imagesByRow,
+      allImages,
+    }
+  } catch (err) {
+    console.warn('Failed to extract images from XLSX archive:', err)
+    return { imagesByRow: {}, allImages: [] }
+  }
+}
+
+export function normalizeTrafficData(rows, extractedMedia = null) {
+  if (!Array.isArray(rows)) return []
+
+  const mediaByRow = extractedMedia?.imagesByRow || {}
+  const allMediaList = extractedMedia?.allImages || []
+
   return rows
     .filter((row) => row && Object.values(row).some(Boolean))
     .map((row, index) => {
-      const type = valueFor(row, aliases.type) || 'Car'
-      const roadName = valueFor(row, aliases.location) || `Road ${index + 1}`
-      const junctionId = valueFor(row, aliases.junction) || `JNC-${String((index % 12) + 1).padStart(2, '0')}`
-      const camera = valueFor(row, aliases.camera) || `CAM-HYD-${String(index + 1).padStart(3, '0')}-N`
-      const dateVal = valueFor(row, aliases.date) || '2026-09-11'
-      const timeVal = valueFor(row, aliases.time) || ''
+      // 1. ID
+      const rawId = valueFor(row, aliases.id)
+      const id = rawId || `ID-${String(index + 1).padStart(4, '0')}`
+      const observationId = id
 
-      let timestamp = timeVal
+      // 2. Timestamp (IST)
+      const rawTimestamp = valueFor(row, aliases.timestamp) || ''
+      const rawDate = valueFor(row, aliases.date)
+      const rawTime = valueFor(row, aliases.time)
+
+      let date = rawDate || '2026-09-11'
+      let time = rawTime || ''
+      let timestamp = rawTimestamp
+
+      if (rawTimestamp) {
+        const parts = rawTimestamp.split(/[\sT]+/)
+        if (parts.length >= 2) {
+          date = parts[0]
+          time = parts[1]
+        } else if (rawTimestamp.includes(':')) {
+          time = rawTimestamp
+        } else if (rawTimestamp.includes('-') || rawTimestamp.includes('/')) {
+          date = rawTimestamp
+        }
+      }
+      if (!time) {
+        time = `08:${String(12 + (Math.floor(index * 1.2) % 48)).padStart(2, '0')}:${String((index * 17) % 60).padStart(2, '0')}`
+      }
       if (!timestamp) {
-        timestamp = `08:${String(12 + Math.floor(index * 1.2) % 48).padStart(2, '0')}:${String((index * 17) % 60).padStart(2, '0')}`
+        timestamp = `${date} ${time}`
       }
 
+      // 3. Vehicle Type
+      const type = valueFor(row, aliases.vehicleType) || 'Car'
+      const vehicleType = type
+
+      // 4. Vehicle Number Plate
       const rawNumberPlate = valueFor(row, aliases.numberPlate)
-      const isPed = type.toLowerCase().includes('pedestrian') || type.toLowerCase().includes('edisetrain')
+      const isPed =
+        type.toLowerCase().includes('pedestrian') || type.toLowerCase().includes('edisetrain')
       const isTrain = type.toLowerCase().includes('train') || type.toLowerCase().includes('rail')
-      const numberPlate = rawNumberPlate || (isPed || isTrain ? 'N/A' : `TS 09 ${String.fromCharCode(65 + (index % 26))}${String.fromCharCode(66 + (index % 25))} ${1000 + (index * 137) % 8999}`)
+      const numberPlate =
+        rawNumberPlate ||
+        (isPed || isTrain
+          ? 'N/A'
+          : `TS 09 ${String.fromCharCode(65 + (index % 26))}${String.fromCharCode(66 + (index % 25))} ${1000 + ((index * 137) % 8999)}`)
+      const vehicleNumberPlate = numberPlate
 
-      const signalState = valueFor(row, aliases.signalState) || (index % 3 === 0 ? 'Green' : index % 3 === 1 ? 'Red' : 'Yellow')
-      const cameraDirection = valueFor(row, aliases.cameraDirection) || (camera.endsWith('-N') ? 'North' : camera.endsWith('-S') ? 'South' : camera.endsWith('-E') ? 'East' : camera.endsWith('-W') ? 'West' : 'North')
-      const weather = valueFor(row, aliases.weather) || (index % 4 === 3 ? 'Rainy' : index % 4 === 2 ? 'Sunny' : index % 4 === 1 ? 'Overcast' : 'Clear')
-      const observationId = valueFor(row, aliases.observationId) || `OBS-${String(index + 1).padStart(4, '0')}`
-      const timezone = valueFor(row, aliases.timezone) || 'IST'
+      // 5. Plate Confidence
+      const rawPlateConf = valueFor(row, aliases.plateConfidence)
+      let plateConfidence = rawPlateConf !== '' ? numberOrFallback(rawPlateConf, 0.95) : 0.95
+      if (plateConfidence > 1 && plateConfidence <= 100) {
+        plateConfidence = Number((plateConfidence / 100).toFixed(2))
+      }
+      const confidence = plateConfidence
 
-      const rawConf = valueFor(row, aliases.confidence)
-      const confidence = rawConf !== '' ? numberOrFallback(rawConf, 0.94) : 0.94
+      // 6. Extracted Image resolution from Excel archive
+      let extractedImage = row.extractedImage || null
+      let hasExtractedImage = Boolean(row.hasExtractedImage)
+      let extractedImageName = row.extractedImageName || null
 
-      const rawDist = valueFor(row, aliases.distance)
-      const distance = rawDist !== '' ? numberOrFallback(rawDist, 18.0) : 18.0
+      if (!extractedImage && extractedMedia) {
+        // Priority 1: Match by drawing anchor row
+        if (mediaByRow[index]) {
+          extractedImage = mediaByRow[index].dataUrl
+          hasExtractedImage = true
+          extractedImageName = mediaByRow[index].fileName
+        }
 
+        // Priority 2: Match by filename if row mentions image name
+        if (!extractedImage && allMediaList.length > 0) {
+          const rawImgVal = String(valueFor(row, aliases.vehicleImage) || '').toLowerCase()
+          const rawPathVal = String(valueFor(row, aliases.vehicleImagePath) || '').toLowerCase()
+          const match = allMediaList.find((img) => {
+            const name = (img.fileName || '').toLowerCase()
+            const baseName = name.replace(/\.[^.]+$/, '')
+            return (
+              (rawImgVal && (rawImgVal.includes(name) || rawImgVal.includes(baseName))) ||
+              (rawPathVal && (rawPathVal.includes(name) || rawPathVal.includes(baseName)))
+            )
+          })
+          if (match) {
+            extractedImage = match.dataUrl
+            hasExtractedImage = true
+            extractedImageName = match.fileName
+          }
+        }
+
+        // Priority 3: Single image in uploaded Excel workbook -> assign to row
+        if (!extractedImage && allMediaList.length === 1) {
+          extractedImage = allMediaList[0].dataUrl
+          hasExtractedImage = true
+          extractedImageName = allMediaList[0].fileName
+        }
+
+        // Priority 4: Sequential row matching
+        if (!extractedImage && allMediaList[index]) {
+          extractedImage = allMediaList[index].dataUrl
+          hasExtractedImage = true
+          extractedImageName = allMediaList[index].fileName
+        }
+      }
+
+      const rawVehicleImage = valueFor(row, aliases.vehicleImage)
+      const vehicleImage =
+        rawVehicleImage ||
+        extractedImageName ||
+        `veh_obs_${String(index + 1).padStart(4, '0')}.jpg`
+
+      // 7. Speed (km/h)
+      const rawSpeed = valueFor(row, aliases.speed)
+      const speed = rawSpeed !== '' ? numberOrFallback(rawSpeed, 45 + ((index * 7) % 45)) : 45 + ((index * 7) % 45)
+
+      // 8. Speed Limit (km/h)
+      const rawSpeedLimit = valueFor(row, aliases.speedLimit)
+      const speedLimit = rawSpeedLimit !== '' ? numberOrFallback(rawSpeedLimit, 60) : 60
+
+      // 9. Over Speed
+      const rawOverSpeed = valueFor(row, aliases.overSpeed).trim().toLowerCase()
+      let overSpeed = 'No'
+      if (rawOverSpeed) {
+        if (['yes', 'true', '1', 'y', 'violation', 'overspeed'].includes(rawOverSpeed)) {
+          overSpeed = 'Yes'
+        } else if (['no', 'false', '0', 'n'].includes(rawOverSpeed)) {
+          overSpeed = 'No'
+        } else {
+          overSpeed = speed > speedLimit ? 'Yes' : 'No'
+        }
+      } else {
+        overSpeed = speed > speedLimit ? 'Yes' : 'No'
+      }
+      const isOverSpeed = overSpeed === 'Yes'
+
+      // 10. Latitude & 11. Longitude
       const rawLat = valueFor(row, aliases.latitude)
       const rawLng = valueFor(row, aliases.longitude)
-      const latitude = rawLat !== '' ? numberOrFallback(rawLat, 17.4485) : 17.4485
-      const longitude = rawLng !== '' ? numberOrFallback(rawLng, 78.3742) : 78.3742
+      const latitude = rawLat !== '' ? numberOrFallback(rawLat, 17.4485 + ((index % 5) * 0.005)) : 17.4485 + ((index % 5) * 0.005)
+      const longitude = rawLng !== '' ? numberOrFallback(rawLng, 78.3742 + ((index % 5) * 0.004)) : 78.3742 + ((index % 5) * 0.004)
+
+      // 12. Video Clip Path / Video URL (Supports any direct URL, YouTube, Vimeo, Google Drive, or file path)
+      let videoClipPath = valueFor(row, aliases.videoClipPath)
+      if (!videoClipPath) {
+        // Fallback 1: Any key containing 'video', 'vedio', 'clip', 'url', 'link'
+        const rowKeys = Object.keys(row || {})
+        const matchKey = rowKeys.find((k) => {
+          const lk = k.toLowerCase().replace(/[^a-z0-9]/g, '')
+          return (
+            lk.includes('video') ||
+            lk.includes('vedio') ||
+            lk.includes('clip') ||
+            lk === 'url' ||
+            lk.includes('videourl') ||
+            lk.includes('link')
+          )
+        })
+        if (matchKey && row[matchKey]) {
+          videoClipPath = String(row[matchKey]).trim()
+        }
+      }
+      if (!videoClipPath) {
+        // Fallback 2: Any string value in the row that looks like an HTTP/HTTPS URL or video file
+        const foundUrl = Object.values(row || {}).find((val) => {
+          if (typeof val !== 'string') return false
+          const s = val.trim().toLowerCase()
+          return (
+            s.startsWith('http://') ||
+            s.startsWith('https://') ||
+            s.includes('youtube.com') ||
+            s.includes('youtu.be') ||
+            s.includes('.mp4') ||
+            s.includes('.webm')
+          )
+        })
+        if (foundUrl) {
+          videoClipPath = String(foundUrl).trim()
+        }
+      }
+      if (!videoClipPath) {
+        videoClipPath = 'https://www.youtube.com/watch?v=1EiC9bvVGnk'
+      }
+
+      // 13. Vehicle Image Path
+      const vehicleImagePath =
+        valueFor(row, aliases.vehicleImagePath) || `/evidence/vehicles/veh_${String(index + 1).padStart(4, '0')}.jpg`
+
+      // 14. Plate Image Path
+      const plateImagePath =
+        valueFor(row, aliases.plateImagePath) || `/evidence/plates/plate_${String(index + 1).padStart(4, '0')}.jpg`
+
+      // Derived & backward-compatible context
+      const roadName =
+        valueFor(row, aliases.location) ||
+        `Outer Corridor Sector ${((index % 6) + 1)}`
+      const junctionId = valueFor(row, aliases.junction) || `JNC-${String((index % 12) + 1).padStart(2, '0')}`
+      const camera = valueFor(row, aliases.camera) || `CAM-HYD-${String((index % 8) + 1).padStart(3, '0')}-N`
+      const cameraDirection =
+        valueFor(row, aliases.cameraDirection) ||
+        (camera.endsWith('-N') ? 'North' : camera.endsWith('-S') ? 'South' : camera.endsWith('-E') ? 'East' : 'West')
+      const signalState =
+        valueFor(row, aliases.signalState) ||
+        (isOverSpeed ? 'Red' : index % 3 === 0 ? 'Green' : index % 3 === 1 ? 'Yellow' : 'Green')
+      const weather =
+        valueFor(row, aliases.weather) ||
+        (index % 4 === 3 ? 'Rainy' : index % 4 === 2 ? 'Sunny' : index % 4 === 1 ? 'Overcast' : 'Clear')
+      const timezone = valueFor(row, aliases.timezone) || 'IST'
 
       const rawVolume = valueFor(row, aliases.volume)
       const rawPeds = valueFor(row, aliases.pedestrians)
       const volume = rawVolume !== '' ? numberOrFallback(rawVolume, 1) : 1
       const pedestrians = rawPeds !== '' ? numberOrFallback(rawPeds, isPed ? 1 : 0) : (isPed ? 1 : 0)
 
+      const vehicleImageDataUrl =
+        extractedImage ||
+        row.vehicleImageDataUrl ||
+        generateSurveillanceSvgDataUrl(
+          {
+            id,
+            vehicleType,
+            type,
+            vehicleNumberPlate,
+            numberPlate,
+            speed,
+            speedLimit,
+            overSpeed,
+            isOverSpeed,
+            plateConfidence,
+            timestampIst: timestamp,
+            camera,
+          },
+          index
+        )
+
       return {
+        // Exact 14 CSV parameters
+        id,
         observationId,
+        timestampIst: timestamp,
+        timestamp,
+        vehicleType,
+        type,
+        vehicleNumberPlate,
+        numberPlate,
+        plateConfidence,
+        confidence,
+        vehicleImage,
+        speed,
+        speedLimit,
+        overSpeed,
+        isOverSpeed,
+        latitude,
+        longitude,
+        videoClipPath,
+        vehicleImagePath,
+        plateImagePath,
+
+        // Extracted media attributes
+        extractedImage,
+        hasExtractedImage,
+        extractedImageName,
+        vehicleImageDataUrl,
+
+        // Supporting / legacy telemetry properties
         camera,
         junctionId,
         roadName,
-        location: roadName || junctionId || 'Hyderabad Road',
-        date: dateVal,
-        time: timeVal || timestamp,
-        timestamp,
+        location: roadName,
+        date,
+        time,
         timezone,
         cameraDirection,
-        type,
-        numberPlate,
         signalState,
-        latitude,
-        longitude,
+        weather,
+        volume,
+        pedestrians,
         bboxX: numberOrFallback(valueFor(row, aliases.bboxX), 120),
         bboxY: numberOrFallback(valueFor(row, aliases.bboxY), 340),
         bboxWidth: numberOrFallback(valueFor(row, aliases.bboxWidth), 180),
         bboxHeight: numberOrFallback(valueFor(row, aliases.bboxHeight), 140),
-        confidence,
-        distance,
-        weather,
-        volume,
-        pedestrians,
+        distance: numberOrFallback(valueFor(row, aliases.distance), 18.0),
       }
     })
 }
 
-export function parseTrafficCsv(file) {
+export function parseTrafficDataFile(file) {
+  const fileName = (file.name || '').toLowerCase()
+  const isExcel =
+    fileName.endsWith('.xlsx') ||
+    fileName.endsWith('.xls') ||
+    (file.type &&
+      (file.type.includes('spreadsheet') ||
+        file.type.includes('excel') ||
+        file.type.includes('officedocument')))
+
+  if (isExcel) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = async (e) => {
+        try {
+          const buffer = e.target.result
+          const data = new Uint8Array(buffer)
+          const workbook = XLSX.read(data, { type: 'array' })
+          const sheetName = workbook.SheetNames[0]
+          if (!sheetName) {
+            reject(new Error('The Excel workbook does not contain any sheets.'))
+            return
+          }
+          const worksheet = workbook.Sheets[sheetName]
+          const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+
+          // Extract images embedded in the Excel archive (xl/media, drawings, anchors)
+          const extractedMedia = await extractImagesFromXlsx(buffer)
+          const normalized = normalizeTrafficData(rows, extractedMedia)
+
+          if (!normalized.length) {
+            reject(new Error('The Excel sheet does not contain any valid data rows.'))
+            return
+          }
+
+          normalized.extractedMediaCount = extractedMedia.allImages?.length || 0
+          resolve(normalized)
+        } catch (error) {
+          reject(new Error(error.message || 'Failed to read the Excel file.'))
+        }
+      }
+      reader.onerror = () => reject(new Error('Unable to read the selected file.'))
+      reader.readAsArrayBuffer(file)
+    })
+  }
+
+  // Fallback to CSV parsing with PapaParse
   return new Promise((resolve, reject) => {
     Papa.parse(file, {
       header: true,
@@ -714,6 +1346,9 @@ export function parseTrafficCsv(file) {
     })
   })
 }
+
+export const parseTrafficCsv = parseTrafficDataFile
+export const parseTrafficFile = parseTrafficDataFile
 
 export function summarizeData(rows) {
   const total = rows.reduce((sum, row) => sum + (row.volume || 1), 0)

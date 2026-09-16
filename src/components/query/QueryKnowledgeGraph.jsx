@@ -4,6 +4,7 @@ import {
   Camera,
   Car,
   ChevronDown,
+  Eye,
   Layers,
   MapPin,
   Maximize,
@@ -16,6 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import { getVehicleMeta } from '../../data/vehicleTypes'
+import MediaPreviewModal from '../MediaPreviewModal'
 
 export default function QueryKnowledgeGraph({
   rows = [],
@@ -26,6 +28,7 @@ export default function QueryKnowledgeGraph({
   const [searchTerm, setSearchTerm] = useState('')
   const [activeCategory, setActiveCategory] = useState('ALL')
   const [selectedNode, setSelectedNode] = useState(null)
+  const [previewModalRow, setPreviewModalRow] = useState(null)
   const containerRef = useRef(null)
   const cyRef = useRef(null)
 
@@ -128,20 +131,23 @@ export default function QueryKnowledgeGraph({
         color: '#8b5cf6',
         icon: 'Sparkles',
         properties: {
-          'Observation ID': row.observationId || `OBS-${i + 1}`,
-          'Number Plate': row.numberPlate || 'N/A',
-          Vehicle: row.type,
-          Timestamp: `${row.date || ''} ${row.time || row.timestamp || ''}`.trim() || 'N/A',
-          Road: loc || 'Unknown',
-          Junction: row.junctionId || 'N/A',
-          Camera: row.camera,
-          'Camera Heading': row.cameraDirection || 'North',
-          'Signal State': row.signalState || 'Green',
-          Confidence: `${Math.round(row.confidence > 1 ? row.confidence : (row.confidence || 0.94) * 100)}%`,
-          Weather: row.weather || 'Clear',
-          Distance: `${row.distance || 18}m`,
-          Coordinates: `${row.latitude || 17.4485}, ${row.longitude || 78.3742}`,
+          'Observation ID': row.id || row.observationId || `OBS-${i + 1}`,
+          'Number Plate': row.vehicleNumberPlate || row.numberPlate || 'N/A',
+          'Vehicle Type': row.vehicleType || row.type || 'Car',
+          'Timestamp (IST)': row.timestampIst || row.timestamp || 'N/A',
+          'Plate Confidence': `${Math.round(((row.plateConfidence || row.confidence) > 1 ? (row.plateConfidence || row.confidence) : (row.plateConfidence || row.confidence || 0.95) * 100))}%`,
+          'Speed (km/h)': `${row.speed || 0} km/h`,
+          'Speed Limit': `${row.speedLimit || 60} km/h`,
+          'Over Speed': row.overSpeed || (row.speed > row.speedLimit ? 'Yes' : 'No'),
+          Coordinates: `${row.latitude?.toFixed(4) || '17.4485'}, ${row.longitude?.toFixed(4) || '78.3742'}`,
+          'Vehicle Image': row.vehicleImage || 'N/A',
+          'Vehicle Image Path': row.vehicleImagePath || 'N/A',
+          'Plate Image Path': row.plateImagePath || 'N/A',
+          'Video Clip Path': row.videoClipPath || 'N/A',
         },
+        image: row.extractedImage || row.vehicleImageDataUrl,
+        hasExtractedImage: row.hasExtractedImage,
+        rawRow: row,
       })
 
       // Link to vehicle type
@@ -448,6 +454,88 @@ export default function QueryKnowledgeGraph({
             <h3 className="query-kg-drawer-title">{selectedNode.label}</h3>
             <span className="query-kg-drawer-id">ID: {selectedNode.id}</span>
 
+            {selectedNode.image && (
+              <div
+                style={{
+                  background: '#0f172a',
+                  borderRadius: '10px',
+                  padding: '8px',
+                  margin: '10px 0 14px 0',
+                  border: '1px solid #334155',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '6px',
+                    fontSize: '11px',
+                    color: '#94a3b8',
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <Camera size={12} /> Surveillance Capture
+                  </span>
+                  {selectedNode.hasExtractedImage && (
+                    <span
+                      style={{
+                        background: '#064e3b',
+                        color: '#34d399',
+                        padding: '1px 6px',
+                        borderRadius: '8px',
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                      }}
+                    >
+                      <Sparkles size={10} /> XLSX Extracted
+                    </span>
+                  )}
+                </div>
+                <div
+                  onClick={() => selectedNode.rawRow && setPreviewModalRow(selectedNode.rawRow)}
+                  style={{
+                    cursor: 'pointer',
+                    position: 'relative',
+                    borderRadius: '6px',
+                    overflow: 'hidden',
+                    maxHeight: '140px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: '#020617',
+                  }}
+                  title="Click to open high-resolution surveillance modal"
+                >
+                  <img
+                    alt={selectedNode.label}
+                    src={selectedNode.image}
+                    style={{ width: '100%', height: 'auto', display: 'block', objectFit: 'contain' }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: '4px',
+                      right: '4px',
+                      background: 'rgba(15, 23, 42, 0.85)',
+                      color: '#ffffff',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      fontSize: '10px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '3px',
+                    }}
+                  >
+                    <Eye size={10} /> Click to Inspect
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="query-kg-drawer-section">
               <h4>Entity Properties</h4>
               <div className="query-kg-prop-list">
@@ -478,6 +566,16 @@ export default function QueryKnowledgeGraph({
           </div>
         )}
       </div>
+
+      {previewModalRow && (
+        <MediaPreviewModal
+          allRows={rows}
+          isOpen={Boolean(previewModalRow)}
+          onClose={() => setPreviewModalRow(null)}
+          onSelectRow={setPreviewModalRow}
+          row={previewModalRow}
+        />
+      )}
     </div>
   )
 }

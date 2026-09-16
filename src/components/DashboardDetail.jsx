@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { ArrowLeft, BarChart3, Camera, Car, FileText, MapPin, Upload, Users } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { groupBy, summarizeData } from '../data/dashboardData'
 import { getVehicleMeta } from '../data/vehicleTypes'
 import VehicleBadge from './VehicleBadge'
+import VehicleImageThumbnail from './VehicleImageThumbnail'
+import MediaPreviewModal from './MediaPreviewModal'
 
 const configs = {
   vehicles: { number: '01', title: 'Vehicle Analytics', eyebrow: 'VEHICLE INTELLIGENCE', description: 'Understand vehicle mix and traffic volume from every imported detection.', icon: Car, chartTitle: 'Vehicles by type', chartKey: 'type', color: '#467c62' },
@@ -12,6 +15,8 @@ const configs = {
 }
 
 export default function DashboardDetail({ rows, fileName, onImport, importError, projectName }) {
+  const [previewModalRow, setPreviewModalRow] = useState(null)
+  const [initialModalTab, setInitialModalTab] = useState('vehicle')
   const { kind } = useParams()
   const config = configs[kind] || configs.vehicles
   const Icon = config.icon
@@ -24,8 +29,12 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
       <div className="detail-back-row">
         <Link className="back-link" to="/dashboards"><ArrowLeft size={16} />All dashboards</Link>
         <label className="csv-import-button csv-import-button-small">
-          <Upload size={15} />Import CSV
-          <input accept=".csv,text/csv" onChange={onImport} type="file" />
+          <Upload size={15} />Import CSV / XLSX
+          <input
+            accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel"
+            onChange={onImport}
+            type="file"
+          />
         </label>
       </div>
       {importError && <p className="csv-import-error" role="alert">{importError}</p>}
@@ -109,39 +118,78 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
           <table className="traffic-table">
             <thead>
               <tr>
-                <th>TIME</th>
-                <th>CAMERA</th>
-                <th>OBJECT</th>
+                <th>VEHICLE IMAGE</th>
+                <th>TIMESTAMP (IST)</th>
+                <th>VEHICLE TYPE</th>
                 <th>NUMBER PLATE</th>
-                <th>ROAD NAME</th>
-                <th>CONFIDENCE</th>
-                <th>SIGNAL</th>
+                <th>SPEED / LIMIT</th>
+                <th>OVER SPEED</th>
+                <th>PLATE CONFIDENCE</th>
+                <th>COORDINATES</th>
               </tr>
             </thead>
             <tbody>
               {rows.slice(0, 10).map((row, index) => (
-                <tr key={`${row.observationId || row.camera}-${index}`}>
-                  <td>{row.time || row.timestamp}</td>
-                  <td><span className="camera-id"><Camera size={13} />{row.camera}</span></td>
+                <tr key={`${row.id || row.observationId || row.camera}-${index}`}>
+                  <td style={{ minWidth: '120px' }}>
+                    <VehicleImageThumbnail
+                      onClick={() => {
+                        setInitialModalTab('vehicle')
+                        setPreviewModalRow(row)
+                      }}
+                      onPlayVideo={() => {
+                        setInitialModalTab('video')
+                        setPreviewModalRow(row)
+                      }}
+                      row={row}
+                      size="table"
+                    />
+                  </td>
+                  <td>{row.timestampIst || row.time || row.timestamp}</td>
                   <td>
-                    <VehicleBadge type={row.type} />
+                    <VehicleBadge type={row.vehicleType || row.type} />
                   </td>
                   <td>
-                    {row.numberPlate && row.numberPlate !== 'N/A' ? (
-                      <span className="query-plate-badge">{row.numberPlate}</span>
+                    {row.vehicleNumberPlate || row.numberPlate ? (
+                      <span className="query-plate-badge">{row.vehicleNumberPlate || row.numberPlate}</span>
                     ) : (
                       <span className="query-plate-na">—</span>
                     )}
                   </td>
-                  <td><span className="location-cell"><MapPin size={13} />{row.roadName || row.location}</span></td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                      <strong style={{ color: (row.overSpeed === 'Yes' || row.isOverSpeed) ? '#dc2626' : '#1e293b' }}>
+                        {row.speed || 0}
+                      </strong>
+                      <span style={{ fontSize: '11px', color: '#64748b' }}>
+                        / {row.speedLimit || 60} km/h
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    {(row.overSpeed === 'Yes' || row.isOverSpeed) ? (
+                      <span className="query-signal-pill" style={{ background: '#fef2f2', color: '#dc2626', borderColor: '#fca5a5', fontWeight: 600 }}>
+                        ⚠ Over Speed
+                      </span>
+                    ) : (
+                      <span className="query-signal-pill" style={{ background: '#ecfdf5', color: '#059669', borderColor: '#a7f3d0' }}>
+                        Normal
+                      </span>
+                    )}
+                  </td>
                   <td>
                     <span className="query-confidence-badge">
-                      {Math.round(row.confidence > 1 ? row.confidence : (row.confidence || 0.94) * 100)}%
+                      {Math.round(
+                        (row.plateConfidence || row.confidence) > 1
+                          ? (row.plateConfidence || row.confidence)
+                          : ((row.plateConfidence || row.confidence || 0.94) * 100)
+                      )}%
                     </span>
                   </td>
                   <td>
-                    <span className={`query-signal-pill signal-${(row.signalState || 'green').toLowerCase()}`}>
-                      {row.signalState || 'Green'}
+                    <span className="location-cell">
+                      <MapPin size={13} />
+                      {row.latitude?.toFixed(4) || '17.4485'}°, {row.longitude?.toFixed(4) || '78.3742'}°
                     </span>
                   </td>
                 </tr>
@@ -150,6 +198,17 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
           </table>
         </div>
       </div>
+
+      {previewModalRow && (
+        <MediaPreviewModal
+          allRows={rows}
+          initialTab={initialModalTab}
+          isOpen={Boolean(previewModalRow)}
+          onClose={() => setPreviewModalRow(null)}
+          onSelectRow={setPreviewModalRow}
+          row={previewModalRow}
+        />
+      )}
     </div>
   )
-}
+}

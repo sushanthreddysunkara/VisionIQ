@@ -22,8 +22,12 @@ export default function DashboardHub({ rows, fileName, onImport, importError, pr
         </div>
         <label className="csv-import-button">
           <Upload size={16} />
-          Import CSV
-          <input accept=".csv,text/csv" onChange={onImport} type="file" />
+          Import CSV / XLSX
+          <input
+            accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel"
+            onChange={onImport}
+            type="file"
+          />
         </label>
       </div>
 

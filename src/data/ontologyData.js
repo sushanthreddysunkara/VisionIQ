@@ -389,9 +389,10 @@ export function generateOntologyFromRows(rows) {
     return { nodes: ontologyNodes, relationships: ontologyRelationships }
   }
 
-  const vehicleTypes = Array.from(new Set(rows.map((r) => r.type).filter(Boolean)))
-  const locations = Array.from(new Set(rows.map((r) => r.location).filter(Boolean)))
-  const cameras = Array.from(new Set(rows.map((r) => r.camera).filter(Boolean)))
+  const vehicleTypes = Array.from(
+    new Set(rows.map((r) => r.vehicleType || r.type).filter(Boolean))
+  )
+  const overspeedCount = rows.filter((r) => r.overSpeed === 'Yes' || r.isOverSpeed).length
 
   const dynamicNodes = [
     // Root Ontology Class
@@ -402,122 +403,128 @@ export function generateOntologyFromRows(rows) {
       description: `Active ontology model constructed from ${rows.length} CSV records.`,
     },
 
-    // Core Entities
+    // Core Domain Entities
     {
       id: 'vehicle',
       label: 'Vehicle',
       category: 'Entity',
-      description: `General vehicle entity representing ${vehicleTypes.length} detected vehicle categories.`,
+      description: `Vehicle entity representing ${vehicleTypes.length} detected vehicle categories.`,
     },
     {
-      id: 'camera',
-      label: 'Camera',
+      id: 'observation',
+      label: 'TelemetryObservation',
       category: 'Entity',
-      description: `Traffic monitoring device network with ${cameras.length} active sensors.`,
+      description: `Telemetry observation entity capturing ${rows.length} geo-spatial timestamped events.`,
     },
     {
-      id: 'location',
-      label: 'Location',
+      id: 'speed-violation',
+      label: 'SpeedViolation',
       category: 'Entity',
-      description: `Monitored spatial zones covering ${locations.length} designated locations.`,
+      description: `Speed enforcement entity tracking speed limit breaches (${overspeedCount} active alerts).`,
     },
     {
-      id: 'traffic-event',
-      label: 'TrafficEvent',
+      id: 'evidence',
+      label: 'MediaEvidence',
       category: 'Entity',
-      description: 'Telemetry observation record representing traffic movement at a point in time.',
+      description: 'Media evidence entity associating vehicle captures, plate crops, and video clips.',
     },
 
-    // Vehicle Subclasses based on uploaded CSV
+    // Vehicle Subclasses from CSV
     ...vehicleTypes.map((type) => {
-      const count = rows.filter((r) => r.type === type).length
+      const count = rows.filter((r) => (r.vehicleType || r.type) === type).length
       const slug = type.toLowerCase().replace(/[^a-z0-9]+/g, '-')
       return {
         id: `type-${slug}`,
         label: type,
         category: 'OntologyClass',
-        description: `Detected class instance '${type}' (${count} observations in dataset).`,
+        description: `Class instance '${type}' (${count} observations in active dataset).`,
       }
     }),
 
-    // Location Nodes based on uploaded CSV
-    ...locations.slice(0, 5).map((loc) => {
-      const vol = rows.filter((r) => r.location === loc).reduce((s, r) => s + (r.volume || 1), 0)
-      const slug = loc.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-      return {
-        id: `loc-${slug}`,
-        label: loc,
-        category: 'Location',
-        description: `Zone '${loc}' with total recorded traffic volume of ${vol}.`,
-      }
-    }),
-
-    // Data Properties from the full 20-column schema
+    // The 14 CSV Data Properties
     {
-      id: 'prop-type',
-      label: 'objectType',
+      id: 'prop-id',
+      label: 'ID',
       category: 'DataProperty',
-      description: 'Categorical type of detected vehicle or object.',
+      description: 'Unique telemetry observation identifier (e.g. OBS-0001).',
+    },
+    {
+      id: 'prop-timestamp',
+      label: 'Timestamp (IST)',
+      category: 'DataProperty',
+      description: 'Temporal timestamp in Indian Standard Time (IST).',
+    },
+    {
+      id: 'prop-vehicle-type',
+      label: 'Vehicle Type',
+      category: 'DataProperty',
+      description: 'Categorical type of detected vehicle.',
     },
     {
       id: 'prop-plate',
-      label: 'numberPlate',
+      label: 'Vehicle Number Plate',
       category: 'DataProperty',
       description: 'Vehicle registration number plate identifier.',
     },
     {
-      id: 'prop-location',
-      label: 'roadName',
+      id: 'prop-plate-confidence',
+      label: 'Plate Confidence',
       category: 'DataProperty',
-      description: 'Monitored road name or corridor corridor.',
+      description: 'OCR detection confidence score (0.0 to 1.0).',
     },
     {
-      id: 'prop-junction',
-      label: 'junctionId',
+      id: 'prop-vehicle-image',
+      label: 'Vehicle Image',
       category: 'DataProperty',
-      description: 'Intersection or junction identifier.',
+      description: 'Vehicle image filename or bounding capture identifier.',
     },
     {
-      id: 'prop-camera',
-      label: 'cameraId',
+      id: 'prop-speed',
+      label: 'Speed (km/h)',
       category: 'DataProperty',
-      description: 'Identifier of recording camera sensor.',
+      description: 'Detected instantaneous ground velocity measured in km/h.',
     },
     {
-      id: 'prop-direction',
-      label: 'cameraDirection',
+      id: 'prop-speed-limit',
+      label: 'Speed Limit (km/h)',
       category: 'DataProperty',
-      description: 'Orientation heading of camera sensor (North/South/East/West).',
+      description: 'Statutory speed limit ceiling for the monitored corridor.',
     },
     {
-      id: 'prop-signal',
-      label: 'trafficSignalState',
+      id: 'prop-over-speed',
+      label: 'Over Speed',
       category: 'DataProperty',
-      description: 'State of traffic signal during capture (Green/Red/Yellow).',
+      description: 'Speed compliance indicator flag (Yes / No).',
     },
     {
-      id: 'prop-confidence',
-      label: 'detectionConfidence',
+      id: 'prop-latitude',
+      label: 'Latitude',
       category: 'DataProperty',
-      description: 'Machine learning model confidence score (0.0 to 1.0).',
+      description: 'Geographical GPS latitude coordinate.',
     },
     {
-      id: 'prop-distance',
-      label: 'estimatedDistance',
+      id: 'prop-longitude',
+      label: 'Longitude',
       category: 'DataProperty',
-      description: 'Estimated distance in meters from camera to vehicle.',
+      description: 'Geographical GPS longitude coordinate.',
     },
     {
-      id: 'prop-weather',
-      label: 'weather',
+      id: 'prop-video-clip-path',
+      label: 'Video Clip Path',
       category: 'DataProperty',
-      description: 'Atmospheric condition during telemetry capture.',
+      description: 'Evidentiary recorded video footage path or URI.',
     },
     {
-      id: 'prop-timestamp',
-      label: 'timestamp',
+      id: 'prop-vehicle-image-path',
+      label: 'Vehicle Image Path',
       category: 'DataProperty',
-      description: 'Recorded timestamp of detection.',
+      description: 'Full resolution vehicle capture image file path.',
+    },
+    {
+      id: 'prop-plate-image-path',
+      label: 'Plate Image Path',
+      category: 'DataProperty',
+      description: 'High-resolution cropped license plate snapshot file path.',
     },
 
     // Datatypes
@@ -537,13 +544,25 @@ export function generateOntologyFromRows(rows) {
       id: 'dt-integer',
       label: 'Integer',
       category: 'Datatype',
-      description: 'Whole numerical count measurement.',
+      description: 'Whole numerical count / velocity measurement.',
     },
     {
-      id: 'dt-time',
-      label: 'Timestamp',
+      id: 'dt-datetime',
+      label: 'DateTime',
       category: 'Datatype',
       description: 'Temporal timestamp string or date object.',
+    },
+    {
+      id: 'dt-uri',
+      label: 'FilePath / URI',
+      category: 'Datatype',
+      description: 'Local file system path or network media locator URI.',
+    },
+    {
+      id: 'dt-boolean',
+      label: 'Boolean',
+      category: 'Datatype',
+      description: 'Binary boolean flag (Yes/No or true/false).',
     },
   ]
 
@@ -551,9 +570,9 @@ export function generateOntologyFromRows(rows) {
   const dynamicRelationships = [
     // Model has classes
     { id: `r-${relId++}`, source: 'traffic-ontology', target: 'vehicle', label: 'hasClass' },
-    { id: `r-${relId++}`, source: 'traffic-ontology', target: 'camera', label: 'hasClass' },
-    { id: `r-${relId++}`, source: 'traffic-ontology', target: 'location', label: 'hasClass' },
-    { id: `r-${relId++}`, source: 'traffic-ontology', target: 'traffic-event', label: 'hasClass' },
+    { id: `r-${relId++}`, source: 'traffic-ontology', target: 'observation', label: 'hasClass' },
+    { id: `r-${relId++}`, source: 'traffic-ontology', target: 'speed-violation', label: 'hasClass' },
+    { id: `r-${relId++}`, source: 'traffic-ontology', target: 'evidence', label: 'hasClass' },
 
     // Vehicle types inherit from Vehicle
     ...vehicleTypes.map((type) => {
@@ -566,54 +585,47 @@ export function generateOntologyFromRows(rows) {
       }
     }),
 
-    // Top locations are locations
-    ...locations.slice(0, 5).map((loc) => {
-      const slug = loc.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-      return {
-        id: `r-${relId++}`,
-        source: `loc-${slug}`,
-        target: 'location',
-        label: 'subClassOf',
-      }
-    }),
+    // Entity to Entity connections
+    { id: `r-${relId++}`, source: 'observation', target: 'vehicle', label: 'records' },
+    { id: `r-${relId++}`, source: 'vehicle', target: 'speed-violation', label: 'triggers' },
+    { id: `r-${relId++}`, source: 'observation', target: 'evidence', label: 'hasEvidence' },
+    { id: `r-${relId++}`, source: 'speed-violation', target: 'evidence', label: 'hasEvidence' },
 
-    // Core entity relations
-    { id: `r-${relId++}`, source: 'vehicle', target: 'camera', label: 'detectedBy' },
-    { id: `r-${relId++}`, source: 'camera', target: 'location', label: 'monitors' },
-    { id: `r-${relId++}`, source: 'traffic-event', target: 'vehicle', label: 'records' },
-    { id: `r-${relId++}`, source: 'traffic-event', target: 'location', label: 'occursAt' },
-
-    // Vehicle Properties
-    { id: `r-${relId++}`, source: 'vehicle', target: 'prop-type', label: 'hasDataProperty' },
+    // Vehicle Properties (from CSV)
+    { id: `r-${relId++}`, source: 'vehicle', target: 'prop-vehicle-type', label: 'hasDataProperty' },
     { id: `r-${relId++}`, source: 'vehicle', target: 'prop-plate', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'vehicle', target: 'prop-plate-confidence', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'vehicle', target: 'prop-speed', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'vehicle', target: 'prop-speed-limit', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'vehicle', target: 'prop-over-speed', label: 'hasDataProperty' },
 
-    // Camera Properties
-    { id: `r-${relId++}`, source: 'camera', target: 'prop-camera', label: 'hasDataProperty' },
-    { id: `r-${relId++}`, source: 'camera', target: 'prop-direction', label: 'hasDataProperty' },
+    // Observation Properties (from CSV)
+    { id: `r-${relId++}`, source: 'observation', target: 'prop-id', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'observation', target: 'prop-timestamp', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'observation', target: 'prop-latitude', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'observation', target: 'prop-longitude', label: 'hasDataProperty' },
 
-    // Location Properties
-    { id: `r-${relId++}`, source: 'location', target: 'prop-location', label: 'hasDataProperty' },
-    { id: `r-${relId++}`, source: 'location', target: 'prop-junction', label: 'hasDataProperty' },
-
-    // Event Properties
-    { id: `r-${relId++}`, source: 'traffic-event', target: 'prop-timestamp', label: 'hasDataProperty' },
-    { id: `r-${relId++}`, source: 'traffic-event', target: 'prop-signal', label: 'hasDataProperty' },
-    { id: `r-${relId++}`, source: 'traffic-event', target: 'prop-confidence', label: 'hasDataProperty' },
-    { id: `r-${relId++}`, source: 'traffic-event', target: 'prop-distance', label: 'hasDataProperty' },
-    { id: `r-${relId++}`, source: 'traffic-event', target: 'prop-weather', label: 'hasDataProperty' },
+    // Evidence Properties (from CSV)
+    { id: `r-${relId++}`, source: 'evidence', target: 'prop-vehicle-image', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'evidence', target: 'prop-video-clip-path', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'evidence', target: 'prop-vehicle-image-path', label: 'hasDataProperty' },
+    { id: `r-${relId++}`, source: 'evidence', target: 'prop-plate-image-path', label: 'hasDataProperty' },
 
     // Datatype Links
-    { id: `r-${relId++}`, source: 'prop-type', target: 'dt-string', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-id', target: 'dt-string', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-timestamp', target: 'dt-datetime', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-vehicle-type', target: 'dt-string', label: 'hasDatatype' },
     { id: `r-${relId++}`, source: 'prop-plate', target: 'dt-string', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-location', target: 'dt-string', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-junction', target: 'dt-string', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-camera', target: 'dt-string', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-direction', target: 'dt-string', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-signal', target: 'dt-string', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-weather', target: 'dt-string', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-timestamp', target: 'dt-time', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-confidence', target: 'dt-float', label: 'hasDatatype' },
-    { id: `r-${relId++}`, source: 'prop-distance', target: 'dt-float', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-plate-confidence', target: 'dt-float', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-vehicle-image', target: 'dt-string', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-speed', target: 'dt-float', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-speed-limit', target: 'dt-integer', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-over-speed', target: 'dt-boolean', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-latitude', target: 'dt-float', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-longitude', target: 'dt-float', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-video-clip-path', target: 'dt-uri', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-vehicle-image-path', target: 'dt-uri', label: 'hasDatatype' },
+    { id: `r-${relId++}`, source: 'prop-plate-image-path', target: 'dt-uri', label: 'hasDatatype' },
   ]
 
   return { nodes: dynamicNodes, relationships: dynamicRelationships }
