@@ -11,16 +11,19 @@ import {
   Filter,
   Layers,
   MapPin,
+  Network,
   Search,
   ShieldCheck,
   Sparkles,
   SunMedium,
   TrafficCone,
+  Undo2,
   Users,
   X,
 } from 'lucide-react'
 import { getVehicleMeta } from '../data/vehicleTypes'
 import VehicleBadge from './VehicleBadge'
+import QueryKnowledgeGraph from './query/QueryKnowledgeGraph'
 
 export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -30,10 +33,12 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [selectedSignal, setSelectedSignal] = useState('ALL')
   const [selectedWeather, setSelectedWeather] = useState('ALL')
   const [sortBy, setSortBy] = useState('timestamp-desc')
-  const [viewMode, setViewMode] = useState('table') // 'table' | 'cards'
+  const [viewMode, setViewMode] = useState('graph') // 'graph' | 'table' | 'cards'
   const [previewMode, setPreviewMode] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
+  const [queryHistory, setQueryHistory] = useState([])
+  const [graphFocusId, setGraphFocusId] = useState(null)
 
   // Extract unique facets from dataset
   const facets = useMemo(() => {
@@ -44,6 +49,14 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     const weathers = Array.from(new Set(rows.map((r) => r.weather).filter(Boolean))).sort()
     return { types, locations, cameras, signals, weathers }
   }, [rows])
+
+  // Filter to primary real vehicle/pedestrian categories
+  const primaryTypes = useMemo(() => {
+    return facets.types.filter((t) => {
+      const lower = t.toLowerCase()
+      return !lower.includes('sign') && !lower.includes('signal')
+    })
+  }, [facets.types])
 
   // Count detections by vehicle type in the current dataset
   const vehicleCounts = useMemo(() => {
@@ -188,9 +201,9 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     const uniqueCameras = new Set(filteredRows.map((r) => r.camera).filter(Boolean)).size
     const avgConfidence = filteredRows.length
       ? Math.round(
-          (filteredRows.reduce((sum, r) => sum + (r.confidence > 1 ? r.confidence : r.confidence * 100), 0) /
-            filteredRows.length)
-        )
+        (filteredRows.reduce((sum, r) => sum + (r.confidence > 1 ? r.confidence : r.confidence * 100), 0) /
+          filteredRows.length)
+      )
       : 0
     return { totalRecords, uniquePlates, uniqueLocations, uniqueCameras, avgConfidence }
   }, [filteredRows])
@@ -259,8 +272,44 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     document.body.removeChild(link)
   }
 
+  function pushHistory() {
+    setQueryHistory((prev) => [
+      ...prev,
+      {
+        searchQuery,
+        selectedType,
+        selectedLocation,
+        selectedCamera,
+        selectedSignal,
+        selectedWeather,
+        viewMode,
+        previewMode,
+        currentPage,
+      },
+    ])
+  }
+
+  function handleUndoQuery() {
+    if (!queryHistory.length) return
+    const prev = queryHistory[queryHistory.length - 1]
+    setQueryHistory((hist) => hist.slice(0, -1))
+    setSearchQuery(prev.searchQuery)
+    setSelectedType(prev.selectedType)
+    setSelectedLocation(prev.selectedLocation)
+    setSelectedCamera(prev.selectedCamera)
+    setSelectedSignal(prev.selectedSignal)
+    setSelectedWeather(prev.selectedWeather)
+    setViewMode(prev.viewMode)
+    setPreviewMode(prev.previewMode)
+    setCurrentPage(prev.currentPage)
+    setGraphFocusId(null)
+  }
+
   function handleQuickSuggestion(item) {
+    pushHistory()
     setCurrentPage(1)
+    setViewMode('graph')
+    setGraphFocusId(null)
     if (item === 'Green Signal') {
       setSelectedSignal('Green')
     } else if (item === 'Red Signal') {
@@ -274,7 +323,16 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     }
   }
 
+  function handleSelectType(type) {
+    pushHistory()
+    setSelectedType(type)
+    setCurrentPage(1)
+    setViewMode('graph')
+    setGraphFocusId(null)
+  }
+
   function clearAllFilters() {
+    pushHistory()
     setSearchQuery('')
     setSelectedType('ALL')
     setSelectedLocation('ALL')
@@ -283,15 +341,33 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     setSelectedWeather('ALL')
     setPreviewMode(false)
     setCurrentPage(1)
+    setGraphFocusId(null)
   }
+
+  function handleFocusInGraph(obsId) {
+    setGraphFocusId(obsId)
+    setViewMode('graph')
+  }
+
+  const activeQueryLabel = useMemo(() => {
+    const parts = []
+    if (searchQuery) parts.push(`"${searchQuery}"`)
+    if (selectedType !== 'ALL') parts.push(`Type: ${selectedType}`)
+    if (selectedLocation !== 'ALL') parts.push(`Road: ${selectedLocation}`)
+    if (selectedCamera !== 'ALL') parts.push(`Cam: ${selectedCamera}`)
+    if (selectedSignal !== 'ALL') parts.push(`Signal: ${selectedSignal}`)
+    if (selectedWeather !== 'ALL') parts.push(`Weather: ${selectedWeather}`)
+    if (!parts.length) return previewMode ? 'Preview Dataset' : 'All Traffic Telemetry'
+    return parts.join(' · ')
+  }, [searchQuery, selectedType, selectedLocation, selectedCamera, selectedSignal, selectedWeather, previewMode])
 
   const hasActiveFilters = Boolean(
     searchQuery ||
-      selectedType !== 'ALL' ||
-      selectedLocation !== 'ALL' ||
-      selectedCamera !== 'ALL' ||
-      selectedSignal !== 'ALL' ||
-      selectedWeather !== 'ALL'
+    selectedType !== 'ALL' ||
+    selectedLocation !== 'ALL' ||
+    selectedCamera !== 'ALL' ||
+    selectedSignal !== 'ALL' ||
+    selectedWeather !== 'ALL'
   )
 
   const isQueryActive = hasActiveFilters || previewMode
@@ -345,53 +421,89 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         </div>
       </div>
 
-      {/* Primary Search Console */}
+      {/* Streamlined Search Console */}
       <div className="query-search-console">
-        <div className="query-input-box">
-          <Search className="query-search-icon" size={20} />
-          <input
-            autoFocus
-            className="query-search-input"
-            onChange={(e) => {
-              setSearchQuery(e.target.value)
-              setCurrentPage(1)
-            }}
-            placeholder="Search by vehicle, plate (TS 09 AB 4521), road (HITEC City), junction (JNC-01), camera, signal (Red/Green), weather..."
-            type="text"
-            value={searchQuery}
-          />
-          {searchQuery && (
-            <button
-              className="query-clear-search-btn"
-              onClick={() => {
-                setSearchQuery('')
+        <div className="query-search-row">
+          <div className="query-input-box">
+            <Search className="query-search-icon" size={18} />
+            <input
+              autoFocus
+              className="query-search-input"
+              onChange={(e) => {
+                setSearchQuery(e.target.value)
                 setCurrentPage(1)
               }}
-              title="Clear search"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  pushHistory()
+                  setViewMode('graph')
+                }
+              }}
+              placeholder="Search by vehicle, plate, road, junction, camera, signal..."
+              type="text"
+              value={searchQuery}
+            />
+            {searchQuery && (
+              <button
+                className="query-clear-search-btn"
+                onClick={() => {
+                  pushHistory()
+                  setSearchQuery('')
+                  setCurrentPage(1)
+                }}
+                title="Clear search"
+                type="button"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </div>
+
+          <div className="query-search-actions-group">
+            <button
+              className="query-execute-graph-btn"
+              onClick={() => {
+                pushHistory()
+                setViewMode('graph')
+              }}
+              title="Generate and view Knowledge Graph for this query"
               type="button"
             >
-              <X size={16} />
+              <Network size={14} />
+              <span>Graph Query</span>
             </button>
-          )}
+
+            {queryHistory.length > 0 && (
+              <button
+                className="query-undo-btn"
+                onClick={handleUndoQuery}
+                title="Revert / Undo last query action"
+                type="button"
+              >
+                <Undo2 size={14} />
+                <span>Undo</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Dedicated Vehicle Category Filter Bar */}
+        {/* Curated Category Filter Chips */}
         <div className="query-vehicle-bar">
           <span className="query-vehicle-bar-label">
-            <Layers size={13} /> Vehicles & Objects:
+            <Layers size={13} /> Filters:
           </span>
           <div className="query-vehicle-chips-wrap">
             <button
-              className={`query-vehicle-pill-btn ${selectedType === 'ALL' && !hasActiveFilters ? '' : selectedType === 'ALL' ? 'active' : ''}`}
+              className={`query-vehicle-pill-btn ${selectedType === 'ALL' && selectedSignal === 'ALL' && !searchQuery ? 'active' : ''}`}
               onClick={() => {
-                setSelectedType('ALL')
-                setCurrentPage(1)
+                handleSelectType('ALL')
+                setSelectedSignal('ALL')
               }}
               type="button"
             >
               All Types <span className="query-pill-count">{rows.length}</span>
             </button>
-            {facets.types.map((type) => {
+            {primaryTypes.map((type) => {
               const meta = getVehicleMeta(type)
               const Icon = meta.icon
               const count = vehicleCounts[type] || 0
@@ -401,10 +513,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                 <button
                   className={`query-vehicle-pill-btn ${isActive ? 'active' : ''}`}
                   key={type}
-                  onClick={() => {
-                    setSelectedType(isActive ? 'ALL' : type)
-                    setCurrentPage(1)
-                  }}
+                  onClick={() => handleSelectType(isActive ? 'ALL' : type)}
                   style={{
                     color: isActive ? '#ffffff' : meta.color,
                     backgroundColor: isActive ? meta.color : meta.bg,
@@ -427,54 +536,39 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                 </button>
               )
             })}
-          </div>
-        </div>
 
-        {/* Quick Suggestion Chips */}
-        <div className="query-suggestions-row">
-          <span className="query-suggestions-label">
-            <Sparkles size={13} /> Quick searches:
-          </span>
-          {suggestions.map((item) => (
+            {/* Quick High-Impact Toggle */}
             <button
-              className="query-suggestion-chip"
-              key={item}
-              onClick={() => handleQuickSuggestion(item)}
+              className={`query-vehicle-pill-btn ${selectedSignal === 'Red' ? 'active' : ''}`}
+              onClick={() => {
+                pushHistory()
+                setSelectedSignal(selectedSignal === 'Red' ? 'ALL' : 'Red')
+                setCurrentPage(1)
+                setViewMode('graph')
+              }}
+              style={{
+                color: selectedSignal === 'Red' ? '#ffffff' : '#ef4444',
+                backgroundColor: selectedSignal === 'Red' ? '#ef4444' : '#fef2f2',
+                borderColor: '#fecaca',
+              }}
+              title="Filter to Red Signal Violations"
               type="button"
             >
-              {item}
+              <TrafficCone size={13} />
+              <span>Red Signal</span>
             </button>
-          ))}
+          </div>
         </div>
 
-        {/* Multi-facet Filter Controls */}
+        {/* Compact Filter Controls */}
         <div className="query-filters-bar">
-          <div className="query-filter-group">
-            <label>
-              <Car size={14} /> Type:
-            </label>
-            <select
-              onChange={(e) => {
-                setSelectedType(e.target.value)
-                setCurrentPage(1)
-              }}
-              value={selectedType}
-            >
-              <option value="ALL">All Types ({facets.types.length})</option>
-              {facets.types.map((t) => (
-                <option key={t} value={t}>
-                  {t} ({vehicleCounts[t] || 0})
-                </option>
-              ))}
-            </select>
-          </div>
-
           <div className="query-filter-group">
             <label>
               <MapPin size={14} /> Road:
             </label>
             <select
               onChange={(e) => {
+                pushHistory()
                 setSelectedLocation(e.target.value)
                 setCurrentPage(1)
               }}
@@ -495,6 +589,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             </label>
             <select
               onChange={(e) => {
+                pushHistory()
                 setSelectedCamera(e.target.value)
                 setCurrentPage(1)
               }}
@@ -508,50 +603,6 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
               ))}
             </select>
           </div>
-
-          {facets.signals.length > 0 && (
-            <div className="query-filter-group">
-              <label>
-                <TrafficCone size={14} /> Signal:
-              </label>
-              <select
-                onChange={(e) => {
-                  setSelectedSignal(e.target.value)
-                  setCurrentPage(1)
-                }}
-                value={selectedSignal}
-              >
-                <option value="ALL">All Signals ({facets.signals.length})</option>
-                {facets.signals.map((sig) => (
-                  <option key={sig} value={sig}>
-                    {sig}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {facets.weathers.length > 0 && (
-            <div className="query-filter-group">
-              <label>
-                <SunMedium size={14} /> Weather:
-              </label>
-              <select
-                onChange={(e) => {
-                  setSelectedWeather(e.target.value)
-                  setCurrentPage(1)
-                }}
-                value={selectedWeather}
-              >
-                <option value="ALL">All Weather ({facets.weathers.length})</option>
-                {facets.weathers.map((w) => (
-                  <option key={w} value={w}>
-                    {w}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           <div className="query-filter-group query-sort-group">
             <label>
@@ -698,24 +749,26 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
 
               <div className="query-view-buttons">
                 <button
+                  className={`query-view-btn ${viewMode === 'graph' ? 'active' : ''}`}
+                  onClick={() => setViewMode('graph')}
+                  type="button"
+                >
+                  <Network size={14} />
+                  <span>Knowledge Graph</span>
+                </button>
+                <button
                   className={`query-view-btn ${viewMode === 'table' ? 'active' : ''}`}
                   onClick={() => setViewMode('table')}
                   type="button"
                 >
                   Table View
                 </button>
-                <button
-                  className={`query-view-btn ${viewMode === 'cards' ? 'active' : ''}`}
-                  onClick={() => setViewMode('cards')}
-                  type="button"
-                >
-                  Card Grid
-                </button>
+
               </div>
             </div>
           </div>
 
-          {/* Results Rendering (Paginated) */}
+          {/* Results Rendering (Paginated or Graph) */}
           {filteredRows.length === 0 ? (
             <div className="query-empty-results">
               <Search size={36} />
@@ -728,7 +781,14 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                 Clear Filters
               </button>
             </div>
-          ) : viewMode === 'table' ? (
+          ) : viewMode === 'graph' ? (
+            <QueryKnowledgeGraph
+              initialSelectedId={graphFocusId}
+              onClose={() => setViewMode('table')}
+              queryLabel={activeQueryLabel}
+              rows={filteredRows}
+            />
+          ) : (
             <div className="query-table-wrapper">
               <table className="query-results-table">
                 <thead>
@@ -741,6 +801,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                     <th>CONFIDENCE</th>
                     <th>WEATHER</th>
                     <th>TIMESTAMP</th>
+                    <th>GRAPH</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -789,60 +850,26 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                           {row.time || row.timestamp}
                         </span>
                       </td>
+                      <td>
+                        <button
+                          className="query-row-graph-btn"
+                          onClick={() => handleFocusInGraph(row.observationId || row.numberPlate)}
+                          title="Inspect in Knowledge Graph"
+                          type="button"
+                        >
+                          <Network size={13} />
+                          <span>Graph</span>
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          ) : (
-            <div className="query-cards-grid">
-              {paginatedRows.map((row, idx) => (
-                <div className="query-card-item" key={`${row.observationId || row.camera}-${row.time || row.timestamp}-${idx}`}>
-                  <div className="query-card-top">
-                    <VehicleBadge type={row.type} />
-                    <span className={`query-signal-pill signal-${(row.signalState || 'green').toLowerCase()}`}>
-                      {row.signalState || 'Green'}
-                    </span>
-                  </div>
-
-                  <div style={{ marginTop: '4px' }}>
-                    {row.numberPlate && row.numberPlate !== 'N/A' ? (
-                      <span className="query-plate-badge">{row.numberPlate}</span>
-                    ) : (
-                      <span className="query-plate-na">Plate: N/A</span>
-                    )}
-                  </div>
-
-                  <h3 className="query-card-location">{row.roadName || row.location}</h3>
-                  <p className="query-card-camera">
-                    <Camera size={13} /> {row.camera} · {row.cameraDirection || 'North'}
-                  </p>
-
-                  <div className="query-card-metrics">
-                    <div className="query-card-metric">
-                      <span>Confidence</span>
-                      <strong>{Math.round(row.confidence > 1 ? row.confidence : (row.confidence || 0.9) * 100)}%</strong>
-                    </div>
-                    <div className="query-card-metric">
-                      <span>Distance</span>
-                      <strong>{row.distance || 18}m</strong>
-                    </div>
-                    <div className="query-card-metric">
-                      <span>Weather</span>
-                      <strong>{row.weather || 'Clear'}</strong>
-                    </div>
-                    <div className="query-card-metric">
-                      <span>Time</span>
-                      <strong>{row.time || row.timestamp}</strong>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
           )}
 
           {/* Clean Pagination Bar */}
-          {filteredRows.length > 0 && (
+          {viewMode !== 'graph' && filteredRows.length > 0 && (
             <div className="query-pagination-bar">
               <div className="query-pagination-info">
                 <span>

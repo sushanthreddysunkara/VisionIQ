@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Navigate, Route, Routes } from 'react-router-dom'
 
 import DashboardDetail from './components/DashboardDetail'
 import DashboardHub from './components/DashboardHub'
@@ -10,10 +10,10 @@ import ProjectConnectionRequired from './components/ProjectConnectionRequired'
 import ProjectComingSoon from './components/ProjectComingSoon'
 import DataImportRequired from './components/DataImportRequired'
 import QueryPage from './components/QueryPage'
-import ProfilePage from './components/ProfilePage'
-import SettingsPage from './components/SettingsPage'
+import RulesEventsPage from './components/RulesEventsPage'
 
 import PlaceholderPage from './components/PlaceholderPage'
+import ProjectMainBar from './components/ProjectMainBar'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import LoginPage from './components/auth/LoginPage'
@@ -28,14 +28,38 @@ import {
 import { routePaths } from './data/navigation'
 import { projects } from './data/projects'
 
+const storedProjectsKey = 'vision-iq-created-projects'
+
 export default function App() {
   const { isAuthenticated, loading } = useAuth()
   const { pathname } = useLocation()
   const [searchOpen, setSearchOpen] = useState(false)
+  const [projectList, setProjectList] = useState(() => {
+    try {
+      const storedProjects = JSON.parse(
+        localStorage.getItem(storedProjectsKey) || '[]',
+      )
+      return [...projects, ...storedProjects.filter((project) => project.created)]
+    } catch {
+      return projects
+    }
+  })
+  const [selectedProject, setSelectedProject] = useState(projects[0])
   const [connectedProject, setConnectedProject] = useState(projects[0])
   const [trafficData, setTrafficData] = useState([])
   const [fileName, setFileName] = useState('')
   const [importError, setImportError] = useState('')
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        storedProjectsKey,
+        JSON.stringify(projectList.filter((project) => project.created)),
+      )
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, [projectList])
 
   const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
 
@@ -54,9 +78,48 @@ export default function App() {
     setImportError('')
   }
 
+  function handleSelectProject(project) {
+    setSelectedProject(project)
+  }
+
+  function handleCreateProject(name) {
+    const newProject = {
+      name,
+      caption: 'New project',
+      status: 'Coming soon',
+      modules: 'No modules yet',
+      dashboards: 'No dashboards yet',
+      data: 'Not connected',
+      key: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`,
+      comingSoon: true,
+      created: true,
+    }
+    setProjectList((currentProjects) => [...currentProjects, newProject])
+    setSelectedProject(newProject)
+  }
+
+  function handleDeleteProject(targetProject) {
+    const target = targetProject || selectedProject
+    if (!target || !target.created) return
+    const confirmed = window.confirm(`Delete ${target.name}?`)
+    if (!confirmed) return
+
+    setProjectList((currentProjects) => {
+      const remaining = currentProjects.filter((p) => p.key !== target.key)
+      setSelectedProject(remaining[0] || projects[0])
+      return remaining
+    })
+
+    if (connectedProject?.key === target.key) {
+      handleProjectDisconnect()
+    }
+  }
+
   function handleProjectConnect(project) {
-    if (project.comingSoon && !project.created) return
-    setConnectedProject(project)
+    const target = project || selectedProject
+    if (!target) return
+    if (target.comingSoon && !target.created) return
+    setConnectedProject(target)
     setTrafficData([])
     setFileName('')
     setImportError('')
@@ -90,18 +153,28 @@ export default function App() {
       <div className="app-shell">
       <Sidebar
         connectedProject={connectedProject}
-        fileName={fileName}
-        hasImportedFile={hasImportedFile}
-        importError={importError}
-        onImport={handleImport}
-        onLoadSampleData={handleLoadSampleData}
-        onProjectConnect={handleProjectConnect}
-        onProjectDisconnect={handleProjectDisconnect}
-        rows={trafficData}
+        onCreateProject={handleCreateProject}
+        onSelectProject={handleSelectProject}
+        projectList={projectList}
+        selectedProject={selectedProject}
       />
 
       <main className="main-content">
         <Topbar searchOpen={searchOpen} setSearchOpen={setSearchOpen} />
+
+        <ProjectMainBar
+          connectedProject={connectedProject}
+          fileName={fileName}
+          hasImportedFile={hasImportedFile}
+          importError={importError}
+          onDeleteProject={handleDeleteProject}
+          onImport={handleImport}
+          onLoadSampleData={handleLoadSampleData}
+          onProjectConnect={handleProjectConnect}
+          onProjectDisconnect={handleProjectDisconnect}
+          rows={trafficData}
+          selectedProject={selectedProject}
+        />
 
         <section className="content-wrap">
           <Routes>
@@ -250,8 +323,8 @@ export default function App() {
               }
             />
 
-            <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
+            <Route path="/rules-events" element={<RulesEventsPage />} />
 
             {/* OTHER PLATFORM PAGES */}
             {routePaths
@@ -262,8 +335,7 @@ export default function App() {
                   path !== '/knowledge-graph' &&
                   path !== '/query' &&
                   path !== '/document-intelligence' &&
-                  path !== '/profile' &&
-                  path !== '/settings'
+                  path !== '/rules-events'
               )
               .map((path) => (
                 <Route element={<PlaceholderPage />} key={path} path={path} />
