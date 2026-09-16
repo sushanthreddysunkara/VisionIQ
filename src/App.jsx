@@ -16,6 +16,9 @@ import PlaceholderPage from './components/PlaceholderPage'
 import ProjectMainBar from './components/ProjectMainBar'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
+import LoginPage from './components/auth/LoginPage'
+import ProtectedRoute from './components/auth/ProtectedRoute'
+import { useAuth } from './context/AuthContext'
 
 import {
   normalizeTrafficData,
@@ -28,6 +31,8 @@ import { projects } from './data/projects'
 const storedProjectsKey = 'vision-iq-created-projects'
 
 export default function App() {
+  const { isAuthenticated, loading } = useAuth()
+  const { pathname } = useLocation()
   const [searchOpen, setSearchOpen] = useState(false)
   const [projectList, setProjectList] = useState(() => {
     try {
@@ -57,6 +62,15 @@ export default function App() {
   }, [projectList])
 
   const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
+
+  if (loading) return <div className="auth-loading">Checking your session...</div>
+  if (!isAuthenticated || pathname === '/login') {
+    return (
+      <Routes>
+        <Route path="*" element={isAuthenticated ? <Navigate replace to="/home" /> : <LoginPage />} />
+      </Routes>
+    )
+  }
 
   function handleLoadSampleData() {
     setTrafficData(sampleTrafficData)
@@ -135,7 +149,8 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <ProtectedRoute>
+      <div className="app-shell">
       <Sidebar
         connectedProject={connectedProject}
         onCreateProject={handleCreateProject}
@@ -331,6 +346,7 @@ export default function App() {
           </Routes>
         </section>
       </main>
-    </div>
+      </div>
+    </ProtectedRoute>
   )
 }
