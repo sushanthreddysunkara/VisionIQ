@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { io } from 'socket.io-client'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import DashboardDetail from './components/DashboardDetail'
@@ -31,6 +32,32 @@ import { routePaths } from './data/navigation'
 import { projects } from './data/projects'
 
 const storedProjectsKey = 'vision-iq-created-projects'
+const apiBaseUrl = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/$/, '')
+
+function rowKey(row) {
+  return `${row.sourceFile || row.fileName || 'local'}::${row.csvRecordId || row.observationId || row.id || `${row.timestamp}-${row.vehicleNumberPlate}`}`
+}
+
+function appendUniqueRows(previousRows, incomingRows) {
+  const existingKeys = new Set(previousRows.map(rowKey))
+  const uniqueRows = incomingRows.filter((row) => {
+    const key = rowKey(row)
+    if (existingKeys.has(key)) return false
+    existingKeys.add(key)
+    return true
+  })
+  return uniqueRows.length ? [...previousRows, ...uniqueRows] : previousRows
+}
+
+function normalizeStreamRows(rows) {
+  const normalizedRows = normalizeTrafficData(rows)
+  return normalizedRows.map((row, index) => ({
+    ...row,
+    csvRecordId: rows[index]?.csvRecordId || row.csvRecordId,
+    sourceFile: rows[index]?.sourceFile || row.sourceFile,
+    events: rows[index]?.events || row.events || '',
+  }))
+}
 
 export default function App() {
   const { isAuthenticated, loading } = useAuth()
@@ -51,6 +78,88 @@ export default function App() {
   const [trafficData, setTrafficData] = useState([])
   const [fileName, setFileName] = useState('')
   const [importError, setImportError] = useState('')
+  const [streamNotifications, setStreamNotifications] = useState([])
+  const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('vision-iq-notification-sound') !== 'off'
+    } catch {
+      return true
+    }
+  })
+  const notificationSoundEnabledRef = useRef(notificationSoundEnabled)
+
+  useEffect(() => {
+    notificationSoundEnabledRef.current = notificationSoundEnabled
+    try {
+      localStorage.setItem(
+        'vision-iq-notification-sound',
+        notificationSoundEnabled ? 'on' : 'off',
+      )
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, [notificationSoundEnabled])
+
+  function playNotificationTone() {
+    if (!notificationSoundEnabledRef.current) return
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextClass) return
+
+    const audioContext = new AudioContextClass()
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+
+    oscillator.type = 'triangle'
+    oscillator.frequency.setValueAtTime(920, audioContext.currentTime)
+    oscillator.frequency.exponentialRampToValueAtTime(620, audioContext.currentTime + 0.9)
+
+    gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime)
+    gainNode.gain.exponentialRampToValueAtTime(0.09, audioContext.currentTime + 0.04)
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 1)
+
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+
+    oscillator.start()
+    oscillator.stop(audioContext.currentTime + 1)
+    oscillator.onended = () => {
+      audioContext.close().catch(() => undefined)
+    }
+  }
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined
+
+    let active = true
+    const socket = io(apiBaseUrl, { transports: ['websocket', 'polling'] })
+
+    socket.on('newVehicleBatch', (newRows = []) => {
+      if (!newRows.length) return
+      const normalizedRows = normalizeStreamRows(newRows)
+      if (normalizedRows[0]?.sourceFile) {
+        setFileName((currentFileName) => currentFileName || normalizedRows[0].sourceFile)
+      }
+      setTrafficData((currentRows) => appendUniqueRows(currentRows, normalizedRows))
+    })
+
+    socket.on('vehicleStreamStatus', (status) => {
+      if (status.fileName) setFileName(status.fileName)
+      if (status.type !== 'batch') return
+      const nextNotification = {
+        id: `${status.fileName}-${Date.now()}`,
+        receivedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        ...status,
+      }
+      setStreamNotifications((current) => [nextNotification, ...current].slice(0, 8))
+      playNotificationTone()
+    })
+
+    return () => {
+      active = false
+      socket.disconnect()
+    }
+  }, [isAuthenticated])
 
   useEffect(() => {
     try {
@@ -65,7 +174,6 @@ export default function App() {
 
   const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
 
-<<<<<<< HEAD
   async function handleLoadSampleData() {
     try {
       const res = await fetch('/sample_traffic_feed.xlsx')
@@ -75,7 +183,7 @@ export default function App() {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         })
         const importedRows = await parseTrafficCsv(file)
-        setTrafficData(importedRows)
+        setTrafficData((currentRows) => appendUniqueRows(currentRows, importedRows))
         setFileName('sample_traffic_feed.xlsx')
         setImportError('')
         return
@@ -83,8 +191,11 @@ export default function App() {
     } catch (e) {
       console.warn('Could not load sample_traffic_feed.xlsx, falling back:', e)
     }
-    setTrafficData(normalizeTrafficData(sampleTrafficData))
-=======
+    setTrafficData((currentRows) => appendUniqueRows(currentRows, normalizeTrafficData(sampleTrafficData)))
+    setFileName('sample_traffic_feed.csv')
+    setImportError('')
+  }
+
   if (loading) return <div className="auth-loading">Checking your session...</div>
   if (!isAuthenticated || pathname === '/login') {
     return (
@@ -92,13 +203,6 @@ export default function App() {
         <Route path="*" element={isAuthenticated ? <Navigate replace to="/home" /> : <LoginPage />} />
       </Routes>
     )
-  }
-
-  function handleLoadSampleData() {
-    setTrafficData(sampleTrafficData)
->>>>>>> origin/main
-    setFileName('sample_traffic_feed.csv')
-    setImportError('')
   }
 
   function handleSelectProject(project) {
@@ -161,7 +265,7 @@ export default function App() {
 
     try {
       const importedRows = await parseTrafficCsv(file)
-      setTrafficData(importedRows)
+      setTrafficData((currentRows) => appendUniqueRows(currentRows, importedRows))
       setFileName(file.name)
       setImportError('')
     } catch (error) {
@@ -183,7 +287,13 @@ export default function App() {
       />
 
       <main className="main-content">
-        <Topbar searchOpen={searchOpen} setSearchOpen={setSearchOpen} />
+        <Topbar
+          notificationSoundEnabled={notificationSoundEnabled}
+          searchOpen={searchOpen}
+          setSearchOpen={setSearchOpen}
+          setNotificationSoundEnabled={setNotificationSoundEnabled}
+          streamNotifications={streamNotifications}
+        />
 
         <ProjectMainBar
           connectedProject={connectedProject}
@@ -203,6 +313,7 @@ export default function App() {
           <Routes>
             {/* HOME */}
             <Route path="/" element={<Navigate replace to="/home" />} />
+            <Route path="/home" element={<PlaceholderPage fileName={fileName} rows={trafficData} />} />
 
             {/* ONTOLOGY */}
             <Route
@@ -351,12 +462,21 @@ export default function App() {
 
             {/* ACCOUNT */}
             <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route
+              path="/settings"
+              element={
+                <SettingsPage
+                  notificationSoundEnabled={notificationSoundEnabled}
+                  setNotificationSoundEnabled={setNotificationSoundEnabled}
+                />
+              }
+            />
 
             {/* OTHER PLATFORM PAGES */}
             {routePaths
               .filter(
                 (path) =>
+                  path !== '/home' &&
                   path !== '/dashboards' &&
                   path !== '/ontology' &&
                   path !== '/knowledge-graph' &&

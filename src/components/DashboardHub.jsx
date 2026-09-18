@@ -4,7 +4,7 @@ import { groupBy, summarizeData } from '../data/dashboardData'
 
 const dashboardCards = [
   { path: '/dashboards/vehicles', number: '01', title: 'Vehicle Analytics', description: 'Vehicle types, volume, number plates and movement across the network.', icon: Car, tone: 'mint' },
-  { path: '/dashboards/traffic', number: '02', title: 'Pedestrian & Traffic Flow', description: 'Traffic volume, pedestrian activity and location patterns over time.', icon: BarChart3, tone: 'peach' },
+  { path: '/dashboards/traffic', number: '02', title: 'Traffic Flow', description: 'Traffic volume and location patterns over time.', icon: BarChart3, tone: 'peach' },
   { path: '/dashboards/cameras', number: '03', title: 'Camera & Location Monitoring', description: 'Camera coverage, active locations and imported detection records.', icon: Camera, tone: 'sky' },
 ]
 
@@ -54,7 +54,6 @@ export default function DashboardHub({ rows, fileName, onImport, importError, pr
           <h2>One import, three views</h2>
           <div className="dashboard-summary-stats">
             <div><strong>{summary.total.toLocaleString()}</strong><span>Traffic volume</span></div>
-            <div><strong>{summary.pedestrians.toLocaleString()}</strong><span>Pedestrian signals</span></div>
             <div><strong>{summary.uniqueCameras}</strong><span>Camera sources</span></div>
           </div>
         </div>

@@ -667,6 +667,12 @@ const aliases = {
     'violation',
     'is_overspeed',
   ],
+  events: [
+    'events',
+    'event',
+    'violation',
+    'rule',
+  ],
   latitude: [
     'latitude',
     'lat',
@@ -1250,6 +1256,7 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
         videoClipPath,
         vehicleImagePath,
         plateImagePath,
+        events: valueFor(row, aliases.events),
 
         // Extracted media attributes
         extractedImage,

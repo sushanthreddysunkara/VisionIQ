@@ -10,7 +10,7 @@ export default function VehicleImageThumbnail({
 }) {
   if (!row) return null
 
-  const imgSrc = row.extractedImage || row.vehicleImageDataUrl
+  const imgSrc = row.extractedImage || row.vehicleImageDataUrl || row.vehicleImagePath || row.vehicleImage
   const hasExtracted = Boolean(row.hasExtractedImage)
   const hasVideo = Boolean(row.videoClipPath)
 

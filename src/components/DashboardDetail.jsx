@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, BarChart3, Camera, Car, FileText, MapPin, Upload, Users } from 'lucide-react'
+import { Activity, ArrowLeft, BarChart3, Camera, Car, FileText, Gauge, MapPin, Radio, Upload } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { groupBy, summarizeData } from '../data/dashboardData'
@@ -10,7 +10,7 @@ import MediaPreviewModal from './MediaPreviewModal'
 
 const configs = {
   vehicles: { number: '01', title: 'Vehicle Analytics', eyebrow: 'VEHICLE INTELLIGENCE', description: 'Understand vehicle mix and traffic volume from every imported detection.', icon: Car, chartTitle: 'Vehicles by type', chartKey: 'type', color: '#467c62' },
-  traffic: { number: '02', title: 'Pedestrian & Traffic Flow', eyebrow: 'FLOW INTELLIGENCE', description: 'Compare traffic and pedestrian activity across your captured locations.', icon: BarChart3, chartTitle: 'Traffic by location', chartKey: 'location', color: '#b36d4d' },
+  traffic: { number: '02', title: 'Traffic Flow', eyebrow: 'FLOW INTELLIGENCE', description: 'Compare traffic activity across your captured locations.', icon: BarChart3, chartTitle: 'Traffic by location', chartKey: 'location', color: '#b36d4d' },
   cameras: { number: '03', title: 'Camera & Location Monitoring', eyebrow: 'COVERAGE INTELLIGENCE', description: 'Review camera sources and the locations represented in your dataset.', icon: Camera, chartTitle: 'Records by camera', chartKey: 'camera', color: '#417987' },
 }
 
@@ -23,9 +23,13 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
   const summary = summarizeData(rows)
   const chartData = groupBy(rows, config.chartKey).sort((a, b) => b.value - a.value).slice(0, 10)
   const pieData = groupBy(rows, 'type').sort((a, b) => b.value - a.value).slice(0, 12)
+  const topLocations = groupBy(rows, 'location').sort((a, b) => b.value - a.value).slice(0, 5)
+  const topCameras = groupBy(rows, 'camera').sort((a, b) => b.value - a.value).slice(0, 6)
+  const averageSpeed = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.speed || 0), 0) / rows.length) : 0
+  const overspeedCount = rows.filter((row) => row.overSpeed === 'Yes' || row.isOverSpeed).length
 
   return (
-    <div className="dashboard-page dashboard-detail-page">
+    <div className={`dashboard-page dashboard-detail-page dashboard-kind-${kind || 'vehicles'}`}>
       <div className="detail-back-row">
         <Link className="back-link" to="/dashboards"><ArrowLeft size={16} />All dashboards</Link>
         <label className="csv-import-button csv-import-button-small">
@@ -50,10 +54,35 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
 
       <div className="traffic-stat-grid detail-stat-grid">
         <div className="traffic-stat-card"><div className="traffic-stat-icon"><Car size={19} /></div><div><span>Traffic volume</span><strong>{summary.total.toLocaleString()}</strong></div></div>
-        <div className="traffic-stat-card"><div className="traffic-stat-icon"><Users size={19} /></div><div><span>Pedestrians</span><strong>{summary.pedestrians.toLocaleString()}</strong></div></div>
         <div className="traffic-stat-card"><div className="traffic-stat-icon"><MapPin size={19} /></div><div><span>Locations</span><strong>{summary.uniqueLocations}</strong></div></div>
         <div className="traffic-stat-card"><div className="traffic-stat-icon"><Camera size={19} /></div><div><span>Cameras</span><strong>{summary.uniqueCameras}</strong></div></div>
       </div>
+
+      {kind === 'traffic' && (
+        <section className="alternate-dashboard-layout traffic-flow-layout">
+          <div className="flow-command-panel">
+            <div className="flow-command-copy"><p className="section-kicker">LIVE FLOW PULSE</p><h2>Road activity at a glance</h2><span>Based on {rows.length} detections received so far</span></div>
+            <div className="flow-pulse"><Activity size={19} /><strong>{summary.total.toLocaleString()}</strong><span>traffic volume</span></div>
+            <div className="flow-pulse warm"><Gauge size={19} /><strong>{averageSpeed} <small>km/h</small></strong><span>average speed</span></div>
+            <div className="flow-pulse alert"><Radio size={19} /><strong>{overspeedCount}</strong><span>speed alerts</span></div>
+          </div>
+          <div className="flow-location-board">
+            <div className="alternate-section-heading"><div><p className="section-kicker">PRESSURE MAP</p><h2>Busy corridors</h2></div><span>LIVE</span></div>
+            {topLocations.length ? topLocations.map((location, index) => (
+              <div className="flow-location-row" key={location.name}><span className="flow-location-rank">0{index + 1}</span><div><strong>{location.name}</strong><span>{location.value} detections</span></div><b>{Math.round((location.value / (summary.total || 1)) * 100)}%</b><i><em style={{ width: `${Math.min(100, (location.value / (topLocations[0]?.value || 1)) * 100)}%` }} /></i></div>
+            )) : <p className="alternate-empty">Waiting for traffic records...</p>}
+          </div>
+        </section>
+      )}
+
+      {kind === 'cameras' && (
+        <section className="alternate-dashboard-layout camera-coverage-layout">
+          <div className="camera-coverage-hero"><div><p className="section-kicker">COVERAGE CONTROL</p><h2>Camera network health</h2><span>Every active source represented in the live stream</span></div><div className="coverage-ring"><strong>{summary.uniqueCameras}</strong><span>sources</span></div></div>
+          <div className="camera-source-grid">
+            {topCameras.length ? topCameras.map((camera, index) => <div className="camera-source-card" key={camera.name}><div className="camera-source-icon"><Camera size={17} /></div><div><strong>{camera.name}</strong><span>{camera.value} records captured</span></div><b className={index === 0 ? 'active' : ''}>{index === 0 ? 'LIVE' : 'READY'}</b></div>) : <p className="alternate-empty">Waiting for camera records...</p>}
+          </div>
+        </section>
+      )}
 
       <div className="detail-chart-grid">
         <div className="dashboard-panel chart-panel">
@@ -129,7 +158,7 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, 10).map((row, index) => (
+              {rows.map((row, index) => (
                 <tr key={`${row.id || row.observationId || row.camera}-${index}`}>
                   <td style={{ minWidth: '120px' }}>
                     <VehicleImageThumbnail
@@ -211,4 +240,4 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
       )}
     </div>
   )
-}
+}
