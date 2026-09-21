@@ -136,11 +136,18 @@ export default function MediaPreviewModal({
     }
   }
 
+  // Synthetic optical surveillance graphic for fallback
+  const syntheticVehicleSvg =
+    row.syntheticImageDataUrl ||
+    (typeof row.vehicleImageDataUrl === 'string' && row.vehicleImageDataUrl.startsWith('data:image')
+      ? row.vehicleImageDataUrl
+      : generateSurveillanceSvgDataUrl(row, currentIndex >= 0 ? currentIndex : 0))
+
   function handleDownloadImage() {
     const targetUrl =
       (activeMediaTab === 'plate' && plateImagePath && !plateLoadError)
         ? plateImagePath
-        : vehicleImagePath || row.extractedImage || row.vehicleImageDataUrl
+        : (!imgLoadError && vehicleImagePath ? vehicleImagePath : row.extractedImage || syntheticVehicleSvg)
     if (!targetUrl) return
     const link = document.createElement('a')
     link.href = targetUrl
@@ -157,7 +164,7 @@ export default function MediaPreviewModal({
       ? vehicleImagePath
       : (!imgLoadError && row.vehicleImage && (row.vehicleImage.startsWith('http') || row.vehicleImage.startsWith('data:') || row.vehicleImage.startsWith('/'))
         ? row.vehicleImage
-        : row.vehicleImageDataUrl))
+        : (row.extractedImage || syntheticVehicleSvg)))
 
   // Determine actual image source for plate
   const plateSrc =
@@ -405,12 +412,17 @@ export default function MediaPreviewModal({
             ) : (
               /* Vehicle Image View */
               <div className="media-tactical-frame">
-                {vehicleSrc ? (
+                {(vehicleSrc || syntheticVehicleSvg) ? (
                   <img
                     alt={`Vehicle Detection ${row.vehicleType || 'Vehicle'} - ${row.vehicleNumberPlate || 'N/A'}`}
                     className="media-tactical-img"
-                    onError={() => setImgLoadError(true)}
-                    src={vehicleSrc}
+                    onError={(e) => {
+                      setImgLoadError(true)
+                      if (syntheticVehicleSvg && e.currentTarget.src !== syntheticVehicleSvg) {
+                        e.currentTarget.src = syntheticVehicleSvg
+                      }
+                    }}
+                    src={vehicleSrc || syntheticVehicleSvg}
                   />
                 ) : (
                   <div className="media-tactical-placeholder">

@@ -864,8 +864,14 @@ export async function extractImagesFromXlsx(arrayBuffer) {
     const allImages = []
     const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.svg', '.tiff', '.tif', '.jfif', '.heic', '.avif']
 
-    for (const [filePath, zipEntry] of Object.entries(zip.files)) {
-      if (zipEntry.dir) continue
+    // Sort entries to maintain natural numeric order (image1, image2, ..., image10)
+    const sortedFilePaths = Object.keys(zip.files).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    )
+
+    for (const filePath of sortedFilePaths) {
+      const zipEntry = zip.files[filePath]
+      if (!zipEntry || zipEntry.dir) continue
       const lower = filePath.toLowerCase()
       const hasImageExt = imageExtensions.some((ext) => lower.endsWith(ext))
 
@@ -905,6 +911,8 @@ export async function extractImagesFromXlsx(arrayBuffer) {
         mediaMap[`../media/${fileName}`] = mediaObj
         mediaMap[`media/${fileName}`] = mediaObj
         mediaMap[`xl/media/${fileName}`] = mediaObj
+        mediaMap[`/xl/media/${fileName}`] = mediaObj
+        mediaMap[`/xl/media/${fileName.toLowerCase()}`] = mediaObj
         allImages.push(mediaObj)
       }
     }
@@ -913,7 +921,7 @@ export async function extractImagesFromXlsx(arrayBuffer) {
       return { imagesByRow: {}, allImages: [] }
     }
 
-    // 2. Parse relationship files (.rels) across the entire archive
+    // 2. Parse relationship files (.rels) robustly regardless of attribute ordering
     const relsMap = {}
     for (const [filePath, zipEntry] of Object.entries(zip.files)) {
       const lower = filePath.toLowerCase()
@@ -921,19 +929,25 @@ export async function extractImagesFromXlsx(arrayBuffer) {
         try {
           const xmlText = await zipEntry.async('text')
           const rels = {}
-          const relMatches = xmlText.matchAll(/<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/gi)
-          for (const m of relMatches) {
-            const id = m[1]
-            const target = m[2]
-            const baseName = target.split('/').pop()
-            const mediaMatch =
-              mediaMap[target] ||
-              mediaMap[baseName] ||
-              mediaMap[baseName.toLowerCase()] ||
-              mediaMap[`xl/media/${baseName}`] ||
-              mediaMap[`../media/${baseName}`]
-            if (mediaMatch) {
-              rels[id] = mediaMatch
+          const relTagRegex = /<Relationship\b([^>]*)\/?>/gi
+          let rm
+          while ((rm = relTagRegex.exec(xmlText)) !== null) {
+            const attrs = rm[1]
+            const id = attrs.match(/\bId="([^"]+)"/i)?.[1]
+            const target = attrs.match(/\bTarget="([^"]+)"/i)?.[1]
+            if (id && target) {
+              const baseName = target.split('/').pop()
+              const mediaMatch =
+                mediaMap[target] ||
+                mediaMap[target.toLowerCase()] ||
+                mediaMap[baseName] ||
+                mediaMap[baseName.toLowerCase()] ||
+                mediaMap[`xl/media/${baseName}`] ||
+                mediaMap[`/xl/media/${baseName}`] ||
+                mediaMap[`../media/${baseName}`]
+              if (mediaMatch) {
+                rels[id] = mediaMatch
+              }
             }
           }
           relsMap[filePath] = rels
@@ -969,12 +983,16 @@ export async function extractImagesFromXlsx(arrayBuffer) {
             // Extract row from the <from> coordinate
             const fromMatch = content.match(/<(?:[a-zA-Z0-9_-]+:)?from[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_-]+:)?from>/i)
             const rowStr = fromMatch ? fromMatch[1].match(/<(?:[a-zA-Z0-9_-]+:)?row>(\d+)<\/(?:[a-zA-Z0-9_-]+:)?row>/i)?.[1] : null
-            // Extract embed / link / id attribute
-            const blipMatch = content.match(/(?:embed|link|id)="([^"]+)"/i)
 
-            if (rowStr && blipMatch) {
+            // Extract embed / link attribute specifically from <a:blip> (avoid matching <cNvPr id="...">)
+            const blipTagMatch = content.match(/<[^>]*:?blip\b([^>]*)\/?>/i)
+            const blipAttrs = blipTagMatch ? blipTagMatch[1] : content
+            const rId =
+              blipAttrs.match(/\b(?:[a-zA-Z0-9_-]+:)?embed="([^"]+)"/i)?.[1] ||
+              blipAttrs.match(/\b(?:[a-zA-Z0-9_-]+:)?link="([^"]+)"/i)?.[1]
+
+            if (rowStr && rId) {
               const excelRow = parseInt(rowStr, 10)
-              const rId = blipMatch[1]
               const media = rels[rId] || mediaMap[rId]
               if (media) {
                 // In Excel drawings, row 0 is usually header, so row 1 is data row 0
@@ -1000,7 +1018,7 @@ export async function extractImagesFromXlsx(arrayBuffer) {
           const cellRelKey = Object.keys(relsMap).find((k) => k.toLowerCase().includes('cellimage'))
           const rels = cellRelKey ? relsMap[cellRelKey] : {}
 
-          const blipMatches = xmlText.matchAll(/(?:embed|link|id)="([^"]+)"/gi)
+          const blipMatches = xmlText.matchAll(/<[^>]*:?blip\b[^>]*\b(?:[a-zA-Z0-9_-]+:)?embed="([^"]+)"/gi)
           let cellImgIdx = 0
           for (const bm of blipMatches) {
             const rId = bm[1]
@@ -1283,32 +1301,33 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
       const volume = rawVolume !== '' ? numberOrFallback(rawVolume, 1) : 1
       const pedestrians = rawPeds !== '' ? numberOrFallback(rawPeds, isPed ? 1 : 0) : (isPed ? 1 : 0)
 
-      // Prioritize image extracted from Excel archive or explicit URL/data from CSV
-      const explicitImg =
-        extractedImage ||
-        (vehicleImagePath && (vehicleImagePath.startsWith('data:image') || vehicleImagePath.startsWith('http') || vehicleImagePath.startsWith('/')) ? vehicleImagePath : null) ||
-        (rawVehicleImage && (rawVehicleImage.startsWith('data:image') || rawVehicleImage.startsWith('http') || rawVehicleImage.startsWith('/')) ? rawVehicleImage : null)
+      // Generate a high-fidelity synthetic optical CCTV surveillance graphic
+      const syntheticImageDataUrl = generateSurveillanceSvgDataUrl(
+        {
+          id,
+          vehicleType,
+          type,
+          vehicleNumberPlate,
+          numberPlate,
+          speed,
+          speedLimit,
+          overSpeed,
+          isOverSpeed,
+          plateConfidence,
+          timestampIst: timestamp,
+          camera,
+        },
+        index
+      )
 
+      // Guaranteed image data URL: Real extracted image from Excel has highest priority,
+      // followed by any explicit base64 data URL, followed by guaranteed synthetic SVG.
       const vehicleImageDataUrl =
-        explicitImg ||
+        extractedImage ||
+        (rawVehicleImage && rawVehicleImage.startsWith('data:image') ? rawVehicleImage : null) ||
+        (vehicleImagePath && vehicleImagePath.startsWith('data:image') ? vehicleImagePath : null) ||
         row.vehicleImageDataUrl ||
-        generateSurveillanceSvgDataUrl(
-          {
-            id,
-            vehicleType,
-            type,
-            vehicleNumberPlate,
-            numberPlate,
-            speed,
-            speedLimit,
-            overSpeed,
-            isOverSpeed,
-            plateConfidence,
-            timestampIst: timestamp,
-            camera,
-          },
-          index
-        )
+        syntheticImageDataUrl
 
       return {
         // Exact 14 CSV parameters
@@ -1338,6 +1357,7 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
         extractedImage,
         hasExtractedImage,
         extractedImageName,
+        syntheticImageDataUrl,
         vehicleImageDataUrl,
 
         // Supporting / legacy telemetry properties

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Eye, FileVideo, Image as ImageIcon, Play, Sparkles } from 'lucide-react'
+import { generateSurveillanceSvgDataUrl } from '../data/dashboardData'
 
 export default function VehicleImageThumbnail({
   row,
@@ -15,6 +16,12 @@ export default function VehicleImageThumbnail({
     setImageLoadError(false)
   }, [row.id, row.observationId])
 
+  const syntheticSvg =
+    row.syntheticImageDataUrl ||
+    (typeof row.vehicleImageDataUrl === 'string' && row.vehicleImageDataUrl.startsWith('data:image/svg')
+      ? row.vehicleImageDataUrl
+      : generateSurveillanceSvgDataUrl(row, 0))
+
   // Priority 1: Image directly extracted from Excel (.xlsx) archive
   // Priority 2: Direct URL or base64 image from CSV / Excel row (unless failed to load)
   // Priority 3: Generated surveillance telemetry graphic
@@ -28,8 +35,9 @@ export default function VehicleImageThumbnail({
   const imgSrc =
     row.extractedImage ||
     directPath ||
-    row.vehicleImageDataUrl ||
-    (!imageLoadError ? row.vehicleImagePath || row.vehicleImage : null)
+    (typeof row.vehicleImageDataUrl === 'string' && row.vehicleImageDataUrl.startsWith('data:')
+      ? row.vehicleImageDataUrl
+      : syntheticSvg)
 
   const hasExtracted = Boolean(row.hasExtractedImage || row.extractedImage)
   const hasVideo = Boolean(row.videoClipPath || row.videoUrl || row.video)
@@ -64,13 +72,18 @@ export default function VehicleImageThumbnail({
         }
       }}
     >
-      {imgSrc && !imageLoadError ? (
+      {(imgSrc || syntheticSvg) && !imageLoadError ? (
         <img
           alt={row.vehicleImage || 'Vehicle capture'}
           className="vehicle-image-thumb-img"
           loading="lazy"
-          onError={() => setImageLoadError(true)}
-          src={imgSrc}
+          onError={(e) => {
+            setImageLoadError(true)
+            if (syntheticSvg && e.currentTarget.src !== syntheticSvg) {
+              e.currentTarget.src = syntheticSvg
+            }
+          }}
+          src={imgSrc || syntheticSvg}
         />
       ) : (
         <div className="vehicle-image-thumb-empty">
