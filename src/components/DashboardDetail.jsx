@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useState } from 'react'
-import { Activity, ArrowLeft, BarChart3, Camera, Car, FileText, Gauge, MapPin, Radio, Trash2, Upload } from 'lucide-react'
+import { Activity, ArrowLeft, BarChart3, Camera, Car, FileText, Gauge, MapPin, Radio, Trash2, Upload, Users } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { formatTimestampIst, groupBy, summarizeData } from '../data/dashboardData'
@@ -15,7 +15,7 @@ const configs = {
   cameras: { number: '03', title: 'Camera & Location Monitoring', eyebrow: 'COVERAGE INTELLIGENCE', description: 'Review camera sources and the locations represented in your dataset.', icon: Camera, chartTitle: 'Records by camera', chartKey: 'camera', color: '#417987' },
 }
 
-export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemoveCamera, removedCameras = [], rows, fileName, onImport, importError, projectName }) {
+export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemoveCamera, removedCameras = [], rows = [], fileName, onImport, importError, projectName }) {
   const [previewModalRow, setPreviewModalRow] = useState(null)
   const [initialModalTab, setInitialModalTab] = useState('vehicle')
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false)
@@ -23,15 +23,16 @@ export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemo
   const { kind } = useParams()
   const config = configs[kind] || configs.vehicles
   const Icon = config.icon
-  const summary = summarizeData(rows)
-  const chartData = groupBy(rows, config.chartKey).sort((a, b) => b.value - a.value).slice(0, 10)
-  const pieData = groupBy(rows, 'type').sort((a, b) => b.value - a.value).slice(0, 12)
-  const topLocations = groupBy(rows, 'location').sort((a, b) => b.value - a.value).slice(0, 5)
-  const importedCameras = groupBy(rows, 'camera').map((camera) => ({ ...camera, id: camera.name, status: 'READY' }))
+  const safeRows = Array.isArray(rows) ? rows : []
+  const summary = summarizeData(safeRows)
+  const chartData = groupBy(safeRows, config.chartKey).sort((a, b) => b.value - a.value).slice(0, 10)
+  const pieData = groupBy(safeRows, 'type').sort((a, b) => b.value - a.value).slice(0, 12)
+  const topLocations = groupBy(safeRows, 'location').sort((a, b) => b.value - a.value).slice(0, 5)
+  const importedCameras = groupBy(safeRows, 'camera').map((camera) => ({ ...camera, id: camera.name, status: 'READY' }))
   const cameraRecords = [...importedCameras, ...addedCameras].filter((camera) => !removedCameras.includes(camera.id))
   const topCameras = cameraRecords.sort((a, b) => b.value - a.value).slice(0, 6)
-  const averageSpeed = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.speed || 0), 0) / rows.length) : 0
-  const overspeedCount = rows.filter((row) => row.overSpeed === 'Yes' || row.isOverSpeed).length
+  const averageSpeed = safeRows.length ? Math.round(safeRows.reduce((total, row) => total + Number(row.speed || 0), 0) / safeRows.length) : 0
+  const overspeedCount = safeRows.filter((row) => row.overSpeed === 'Yes' || row.isOverSpeed).length
   const [cameraRemoveDialogOpen, setCameraRemoveDialogOpen] = useState(false)
 
   function submitCamera(event) {

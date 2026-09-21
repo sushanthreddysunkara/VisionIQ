@@ -1343,17 +1343,19 @@ export function parseTrafficDataFile(file) {
 export const parseTrafficCsv = parseTrafficDataFile
 export const parseTrafficFile = parseTrafficDataFile
 
-export function summarizeData(rows) {
-  const total = rows.reduce((sum, row) => sum + (row.volume || 1), 0)
-  const pedestrians = rows.reduce((sum, row) => sum + (row.pedestrians || 0), 0)
-  const uniqueLocations = new Set(rows.map((row) => row.location || row.roadName).filter(Boolean)).size
-  const uniqueCameras = new Set(rows.map((row) => row.camera).filter(Boolean)).size
+export function summarizeData(rows = []) {
+  const safeRows = Array.isArray(rows) ? rows : []
+  const total = safeRows.reduce((sum, row) => sum + (row.volume || 1), 0)
+  const pedestrians = safeRows.reduce((sum, row) => sum + (row.pedestrians || 0), 0)
+  const uniqueLocations = new Set(safeRows.map((row) => row.location || row.roadName).filter(Boolean)).size
+  const uniqueCameras = new Set(safeRows.map((row) => row.camera).filter(Boolean)).size
   return { total, pedestrians, uniqueLocations, uniqueCameras }
 }
 
-export function groupBy(rows, key) {
+export function groupBy(rows = [], key) {
+  const safeRows = Array.isArray(rows) ? rows : []
   return Object.entries(
-    rows.reduce((groups, row) => {
+    safeRows.reduce((groups, row) => {
       const value = row[key] || 'Unknown'
       groups[value] = (groups[value] || 0) + (key === 'location' || key === 'roadName' ? row.volume || 1 : 1)
       return groups

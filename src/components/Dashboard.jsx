@@ -4,6 +4,7 @@ import {
   Bus,
   Camera,
   MapPin,
+  Users,
 } from 'lucide-react'
 
 const vehicleData = [
@@ -38,7 +39,17 @@ const recentDetections = [
   },
   {
     time: '08:15:18',
+    camera: 'CAM-HYD-004-W',
+    type: 'Bus',
+    plate: 'TS 07 UA 1190',
+    location: 'Gachibowli Junction',
+  },
+]
+
+function VehicleIcon({ type }) {
   if (type === 'Buses') return <Bus size={17} />
+  if (type === 'Bikes') return <Bike size={17} />
+  if (type === 'Autos') return <Car size={17} />
   return <Car size={17} />
 }
 

@@ -110,16 +110,16 @@ export default function PlaceholderPage({ cameraCount = 0, rows = [], fileName =
 
   const activityItems = page.label === 'Home'
     ? [
-        { title: 'Traffic dataset refreshed', detail: 'Just now · VisionIQ automation', route: '/dashboards', cta: 'Open dashboard' },
-        { title: 'Ontology model synchronized', detail: '1 hour ago · VisionIQ automation', route: '/ontology', cta: 'Review ontology' },
-        { title: 'Rule set published to production', detail: '2 hours ago · VisionIQ automation', route: '/rules-events', cta: 'View rules' },
-      ]
+      { title: 'Traffic dataset refreshed', detail: 'Just now · VisionIQ automation', route: '/dashboards', cta: 'Open dashboard' },
+      { title: 'Ontology model synchronized', detail: '1 hour ago · VisionIQ automation', route: '/ontology', cta: 'Review ontology' },
+      { title: 'Rule set published to production', detail: '2 hours ago · VisionIQ automation', route: '/rules-events', cta: 'View rules' },
+    ]
     : (content.activity || []).map((item, index) => ({
-        title: item,
-        detail: `${index === 0 ? 'Just now' : `${index + 1} hours ago`} · VisionIQ automation`,
-        route: page.label === 'Knowledge Graph' ? '/knowledge-graph' : page.label === 'Rules & Events' ? '/rules-events' : '/dashboards',
-        cta: 'View details',
-      }))
+      title: item,
+      detail: `${index === 0 ? 'Just now' : `${index + 1} hours ago`} · VisionIQ automation`,
+      route: page.label === 'Knowledge Graph' ? '/knowledge-graph' : page.label === 'Rules & Events' ? '/rules-events' : '/dashboards',
+      cta: 'View details',
+    }))
 
   const isHomePage = page.label === 'Home' || pathname === '/home' || pathname === '/'
   const title = isHomePage

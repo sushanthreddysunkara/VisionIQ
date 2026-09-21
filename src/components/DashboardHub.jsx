@@ -8,9 +8,10 @@ const dashboardCards = [
   { path: '/dashboards/cameras', number: '03', title: 'Camera & Location Monitoring', description: 'Camera coverage, active locations and imported detection records.', icon: Camera, tone: 'sky' },
 ]
 
-export default function DashboardHub({ rows, fileName, onImport, importError, projectName }) {
-  const summary = summarizeData(rows)
-  const topLocations = groupBy(rows, 'location').sort((a, b) => b.value - a.value).slice(0, 3)
+export default function DashboardHub({ rows = [], fileName, onImport, importError, projectName }) {
+  const safeRows = Array.isArray(rows) ? rows : []
+  const summary = summarizeData(safeRows)
+  const topLocations = groupBy(safeRows, 'location').sort((a, b) => b.value - a.value).slice(0, 3)
 
   return (
     <div className="dashboard-page dashboard-hub">
