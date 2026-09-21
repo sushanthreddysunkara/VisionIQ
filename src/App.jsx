@@ -169,6 +169,8 @@ export default function App() {
     }
   }
 
+  const userUploadedFileRef = useRef(false)
+
   useEffect(() => {
     if (!isAuthenticated) return undefined
 
@@ -179,9 +181,9 @@ export default function App() {
         const response = await fetch(`${apiBaseUrl}/api/vehicles`)
         if (!response.ok) return
         const data = await response.json()
-        if (!isCancelled && Array.isArray(data.vehicles) && data.vehicles.length) {
+        if (!isCancelled && !userUploadedFileRef.current && Array.isArray(data.vehicles) && data.vehicles.length) {
           const streamRows = normalizeStreamRows(data.vehicles)
-          setTrafficData((currentRows) => appendUniqueRows(currentRows, streamRows))
+          setTrafficData((currentRows) => (userUploadedFileRef.current ? currentRows : appendUniqueRows(currentRows, streamRows)))
           setFileName((currentName) => currentName || 'Live vehicle database stream')
         }
       } catch (error) {
@@ -199,8 +201,10 @@ export default function App() {
     socket.on('newVehicleBatch', (incomingVehicles) => {
       if (!Array.isArray(incomingVehicles) || !incomingVehicles.length || isCancelled) return
       const streamRows = normalizeStreamRows(incomingVehicles)
-      setTrafficData((currentRows) => appendUniqueRows(currentRows, streamRows))
-      setFileName((currentName) => currentName || 'Live vehicle database stream')
+      if (!userUploadedFileRef.current) {
+        setTrafficData((currentRows) => appendUniqueRows(currentRows, streamRows))
+        setFileName((currentName) => currentName || 'Live vehicle database stream')
+      }
       const firstRow = streamRows[0]
       const label = firstRow.vehicleNumberPlate || firstRow.plateNumber || firstRow.id || 'Live vehicle'
       const type = firstRow.vehicleType || firstRow.type || 'Detection'
@@ -283,11 +287,8 @@ export default function App() {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         })
         const importedRows = await parseTrafficCsv(file)
-        setTrafficData((currentRows) => {
-          const importedKeySet = new Set(importedRows.map(rowKey))
-          const remainingRows = currentRows.filter((r) => !importedKeySet.has(rowKey(r)))
-          return [...importedRows, ...remainingRows]
-        })
+        userUploadedFileRef.current = true
+        setTrafficData(importedRows)
         setFileName('sample_traffic_feed.xlsx')
         setImportError('')
         return
@@ -296,11 +297,8 @@ export default function App() {
       console.warn('Could not load sample_traffic_feed.xlsx, falling back:', e)
     }
     const fallbackRows = normalizeTrafficData(sampleTrafficData)
-    setTrafficData((currentRows) => {
-      const importedKeySet = new Set(fallbackRows.map(rowKey))
-      const remainingRows = currentRows.filter((r) => !importedKeySet.has(rowKey(r)))
-      return [...fallbackRows, ...remainingRows]
-    })
+    userUploadedFileRef.current = true
+    setTrafficData(fallbackRows)
     setFileName('sample_traffic_feed.csv')
     setImportError('')
   }
@@ -331,6 +329,7 @@ export default function App() {
     }
     if (connectedProject?.name === name) {
       setConnectedProject(null)
+      userUploadedFileRef.current = false
       setTrafficData([])
       setFileName('')
     }
@@ -343,6 +342,7 @@ export default function App() {
 
   function handleProjectDisconnect() {
     setConnectedProject(null)
+    userUploadedFileRef.current = false
     setTrafficData([])
     setFileName('')
   }
@@ -362,12 +362,9 @@ export default function App() {
 
     try {
       const importedRows = await parseTrafficCsv(file)
-      // Prioritize uploaded Excel/CSV records with their extracted images at the front
-      setTrafficData((currentRows) => {
-        const importedKeySet = new Set(importedRows.map(rowKey))
-        const remainingRows = currentRows.filter((r) => !importedKeySet.has(rowKey(r)))
-        return [...importedRows, ...remainingRows]
-      })
+      // Directly display user's uploaded Excel dataset with all extracted vehicle images
+      userUploadedFileRef.current = true
+      setTrafficData(importedRows)
       setFileName(file.name)
       setImportError('')
     } catch (error) {

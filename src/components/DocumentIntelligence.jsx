@@ -101,6 +101,10 @@ export default function DocumentIntelligence({
   const [previewModalRow, setPreviewModalRow] = useState(null)
   const [initialModalTab, setInitialModalTab] = useState('vehicle')
 
+  const extractedImagesCount = useMemo(() => {
+    return rows.filter((r) => Boolean(r.extractedImage || r.hasExtractedImage)).length
+  }, [rows])
+
   // Compute comprehensive 20-parameter statistics
   const stats = useMemo(() => {
     const totalRecords = rows.length
@@ -249,7 +253,38 @@ export default function DocumentIntelligence({
       )}
 
       {/* Official Document Canvas Paper */}
-      <div className="document-paper">
+      <div
+        className="document-paper"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault()
+          const file = e.dataTransfer?.files?.[0]
+          if (file && onImport) {
+            onImport({ target: { files: [file], value: '' } })
+          }
+        }}
+      >
+        {extractedImagesCount > 0 && (
+          <div
+            className="doc-extracted-banner no-print"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(56, 189, 248, 0.12))',
+              border: '1px solid rgba(16, 185, 129, 0.4)',
+              borderRadius: '8px',
+              padding: '10px 16px',
+              marginBottom: '18px',
+              color: '#065f46',
+            }}
+          >
+            <Sparkles color="#10b981" size={18} />
+            <span style={{ fontSize: '13px', fontWeight: '600' }}>
+              ✓ Loaded {extractedImagesCount} real vehicle images from Excel ({fileName}). High-resolution pictures are displayed in the ledger below.
+            </span>
+          </div>
+        )}
         {/* Document Header Lockup */}
         <div className="document-paper-heading">
           <div className="document-title-mark">
@@ -459,7 +494,7 @@ export default function DocumentIntelligence({
                 <th>SPEED / LIMIT</th>
                 <th>OVER SPEED</th>
                 <th>COORDINATES</th>
-                <th>MEDIA EVIDENCE PATHS</th>
+                <th>VEHICLE IMAGE</th>
               </tr>
             </thead>
             <tbody>
