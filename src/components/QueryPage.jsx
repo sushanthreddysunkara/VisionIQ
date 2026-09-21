@@ -1,47 +1,41 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
-  ArrowUpDown,
-  Camera,
+  Bot,
   Car,
   ChevronLeft,
   ChevronRight,
   Clock,
   Compass,
+  Cpu,
   Download,
   Eye,
   FileVideo,
   Filter,
   Image as ImageIcon,
-  Layers,
-  MapPin,
+  Loader2,
   Network,
   Search,
   ShieldCheck,
   Sparkles,
   SunMedium,
+  Table2,
   TrafficCone,
-  Undo2,
   Users,
   Video,
   X,
 } from 'lucide-react'
-import { getVehicleMeta } from '../data/vehicleTypes'
 import VehicleBadge from './VehicleBadge'
 import QueryKnowledgeGraph from './query/QueryKnowledgeGraph'
 import MediaPreviewModal from './MediaPreviewModal'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
+import { checkOllamaStatus, parseNaturalLanguageQuery } from '../services/queryApi'
 
 export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedType, setSelectedType] = useState('ALL')
-  const [selectedLocation, setSelectedLocation] = useState('ALL')
-  const [selectedCamera, setSelectedCamera] = useState('ALL')
-  const [selectedSignal, setSelectedSignal] = useState('ALL')
-  const [selectedWeather, setSelectedWeather] = useState('ALL')
-  const [overspeedOnly, setOverspeedOnly] = useState(false)
+  const [submittedQuery, setSubmittedQuery] = useState('')
   const [sortBy, setSortBy] = useState('timestamp-desc')
-  const [viewMode, setViewMode] = useState('graph') // 'graph' | 'table' | 'cards'
+  const [viewMode, setViewMode] = useState('graph') // Knowledge Graph first, then table view
   const [previewMode, setPreviewMode] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -50,7 +44,26 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [previewModalRow, setPreviewModalRow] = useState(null)
   const [initialModalTab, setInitialModalTab] = useState('vehicle')
 
-  // Extract unique facets from dataset
+  // Ollama AI Query State
+  const [ollamaStatus, setOllamaStatus] = useState({ connected: false, loading: true, targetModel: 'qwen3:8b' })
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiFilters, setAiFilters] = useState(null)
+  const [aiExplanation, setAiExplanation] = useState('')
+  const [aiSource, setAiSource] = useState('')
+
+  useEffect(() => {
+    let active = true
+    checkOllamaStatus()
+      .then((status) => {
+        if (active) setOllamaStatus(status)
+      })
+      .catch(() => {
+        if (active) setOllamaStatus({ connected: false, loading: false, targetModel: 'qwen3:8b' })
+      })
+    return () => { active = false }
+  }, [])
+
+  // Extract unique facets from dataset for grounding AI prompts
   const facets = useMemo(() => {
     const types = Array.from(new Set(rows.map((r) => r.type).filter(Boolean))).sort()
     const locations = Array.from(new Set(rows.map((r) => r.roadName || r.location).filter(Boolean))).sort()
@@ -60,52 +73,105 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     return { types, locations, cameras, signals, weathers }
   }, [rows])
 
-  // Filter to primary real vehicle/pedestrian categories
-  const primaryTypes = useMemo(() => {
-    return facets.types.filter((t) => {
-      const lower = t.toLowerCase()
-      return !lower.includes('sign') && !lower.includes('signal')
-    })
-  }, [facets.types])
-
-  // Count detections by vehicle type in the current dataset
-  const vehicleCounts = useMemo(() => {
-    const counts = {}
-    rows.forEach((r) => {
-      const t = r.type || 'Unknown'
-      counts[t] = (counts[t] || 0) + 1
-    })
-    return counts
-  }, [rows])
-
-  // Preset search suggestions covering every vehicle category & telemetry attributes
-  const suggestions = useMemo(() => {
-    return [
-      'Cars',
-      'Bikes',
-      'Buses',
-      'Trucks',
-      'Over Speed',
-      'Speed > 60',
-      'High Confidence > 90%',
-    ]
-  }, [])
-
   // Filter and search logic with intelligent vehicle identification & telemetry fields
   const filteredRows = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
+    const query = submittedQuery.trim().toLowerCase()
 
     return rows
       .filter((row) => {
-        // 1. Facet Filters
-        if (selectedType !== 'ALL' && (row.vehicleType !== selectedType && row.type !== selectedType)) return false
-        if (selectedLocation !== 'ALL' && (row.roadName !== selectedLocation && row.location !== selectedLocation)) return false
-        if (selectedCamera !== 'ALL' && row.camera !== selectedCamera) return false
-        if (selectedSignal !== 'ALL' && row.signalState !== selectedSignal) return false
-        if (selectedWeather !== 'ALL' && row.weather !== selectedWeather) return false
-        if (overspeedOnly && !(row.overSpeed === 'Yes' || row.isOverSpeed)) return false
+        const rowTypeLower = (row.vehicleType || row.type || '').toLowerCase()
+        const signalLower = (row.signalState || '').toLowerCase()
+        const weatherLower = (row.weather || '').toLowerCase()
 
-        // 2. Freeform Search Query
+        // 0. AI Structured Natural Language Filters
+        if (aiFilters) {
+          if (aiFilters.vehicleTypes || aiFilters.vehicleType) {
+            const rawTypes = []
+            if (Array.isArray(aiFilters.vehicleTypes)) rawTypes.push(...aiFilters.vehicleTypes)
+            if (Array.isArray(aiFilters.vehicleType)) rawTypes.push(...aiFilters.vehicleType)
+            else if (typeof aiFilters.vehicleType === 'string') rawTypes.push(aiFilters.vehicleType)
+
+            if (rawTypes.length) {
+              const matchedType = rawTypes.some((typeVal) => {
+                if (!typeVal || typeof typeVal !== 'string') return false
+                const vt = typeVal.toLowerCase().trim()
+                if (vt === 'all') return true
+                const vtSingular = vt.endsWith('s') && vt.length > 3 ? vt.slice(0, -1) : vt
+                const rowSingular = rowTypeLower.endsWith('s') && rowTypeLower.length > 3 ? rowTypeLower.slice(0, -1) : rowTypeLower
+                return (
+                  rowTypeLower.includes(vt) ||
+                  vt.includes(rowTypeLower) ||
+                  rowSingular.includes(vtSingular) ||
+                  vtSingular.includes(rowSingular)
+                )
+              })
+              if (!matchedType) return false
+            }
+          }
+          if (aiFilters.location) {
+            const rawLocs = Array.isArray(aiFilters.location)
+              ? aiFilters.location
+              : typeof aiFilters.location === 'string'
+                ? [aiFilters.location]
+                : [String(aiFilters.location)]
+
+            const loc = (row.roadName || row.location || '').toLowerCase().trim()
+            const locWords = loc.split(/\s+/).filter((w) => w.length > 2)
+
+            const matchedLoc = rawLocs.some((locVal) => {
+              if (!locVal) return false
+              const target = String(locVal).toLowerCase().trim()
+              const targetWords = target.split(/\s+/).filter((w) => w.length > 2)
+              return (
+                loc.includes(target) ||
+                target.includes(loc) ||
+                targetWords.some((w) => loc.includes(w)) ||
+                locWords.some((w) => target.includes(w))
+              )
+            })
+            if (!matchedLoc) return false
+          }
+          if (aiFilters.camera) {
+            const rawCams = Array.isArray(aiFilters.camera)
+              ? aiFilters.camera
+              : [aiFilters.camera]
+            const cam = (row.camera || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+            const matchedCam = rawCams.some((camVal) => {
+              if (!camVal) return false
+              const targetCam = String(camVal).toLowerCase().replace(/[^a-z0-9]/g, '')
+              return cam && targetCam && (cam.includes(targetCam) || targetCam.includes(cam))
+            })
+            if (!matchedCam) return false
+          }
+          if (aiFilters.signalState) {
+            const targetSig = String(aiFilters.signalState).toLowerCase().trim()
+            if (signalLower !== targetSig) return false
+          }
+          if (aiFilters.weather) {
+            const targetWeather = String(aiFilters.weather).toLowerCase().trim()
+            if (!weatherLower.includes(targetWeather)) return false
+          }
+          if (aiFilters.overspeedOnly) {
+            const isOver = row.overSpeed === 'Yes' || row.isOverSpeed === true || (row.speed && row.speedLimit && row.speed > row.speedLimit)
+            if (!isOver) return false
+          }
+          if (aiFilters.minSpeed !== null && aiFilters.minSpeed !== undefined && Number(aiFilters.minSpeed) > 0) {
+            if ((row.speed || 0) < Number(aiFilters.minSpeed)) return false
+          }
+          if (aiFilters.maxSpeed !== null && aiFilters.maxSpeed !== undefined && Number(aiFilters.maxSpeed) > 0) {
+            if ((row.speed || 0) > Number(aiFilters.maxSpeed)) return false
+          }
+          if (aiFilters.plateSearch) {
+            const targetPlate = String(aiFilters.plateSearch).toUpperCase().trim()
+            const plate = String(row.numberPlate || row.vehicleNumberPlate || '').toUpperCase()
+            if (!plate.includes(targetPlate)) return false
+          }
+
+          // Matched all AI criteria! Return true so conversational query words (e.g. "show", "all", "on") are not treated as literal row keywords
+          return true
+        }
+
+        // 1. Freeform Search Query (when AI not yet invoked)
         if (!query) return true
 
         // Speed queries (e.g. speed > 60, > 70)
@@ -134,10 +200,6 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         }
 
         // Special quick keyword queries
-        const rowTypeLower = (row.vehicleType || row.type || '').toLowerCase()
-        const signalLower = (row.signalState || '').toLowerCase()
-        const weatherLower = (row.weather || '').toLowerCase()
-
         if (query === 'overspeed' || query === 'over speed' || query === 'speed violation' || query === 'violation') {
           return row.overSpeed === 'Yes' || row.isOverSpeed
         }
@@ -180,17 +242,27 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         if (query.includes('weather')) return weatherLower.includes(query.replace('weather', '').trim())
 
         // Multi-attribute search across all schema fields
-        const terms = query.split(/\s+/).filter(Boolean)
+        const STOP_WORDS = new Set(['show', 'all', 'me', 'find', 'get', 'list', 'the', 'in', 'on', 'at', 'with', 'and', 'or', 'for', 'of', 'to', 'from', 'any', 'where', 'please'])
+        const rawTerms = query.split(/\s+/).filter(Boolean)
+        const meaningfulTerms = rawTerms.filter((t) => !STOP_WORDS.has(t.toLowerCase()))
+        const terms = meaningfulTerms.length ? meaningfulTerms : rawTerms
+
         const rowSearchString = [
           row.id,
           row.observationId,
           row.vehicleType,
           row.type,
+          row.roadName,
+          row.location,
+          row.camera,
+          row.signalState,
+          row.weather,
           row.vehicleNumberPlate,
           row.numberPlate,
           row.speed ? `${row.speed}km/h` : '',
           row.speedLimit ? `${row.speedLimit}km/h` : '',
           row.overSpeed,
+          (row.overSpeed === 'Yes' || row.isOverSpeed) ? 'overspeed speeding speed violation fast' : '',
           row.vehicleImage,
           row.videoClipPath,
           row.vehicleImagePath,
@@ -219,7 +291,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         if (sortBy === 'timestamp-asc') return String(a.timestampIst || a.time || a.timestamp).localeCompare(String(b.timestampIst || b.time || b.timestamp))
         return 0
       })
-  }, [rows, searchQuery, selectedType, selectedLocation, selectedCamera, selectedSignal, selectedWeather, overspeedOnly, sortBy])
+  }, [rows, submittedQuery, sortBy, aiFilters])
 
   // Summary statistics for the filtered result set
   const filteredStats = useMemo(() => {
@@ -293,11 +365,10 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
       ...prev,
       {
         searchQuery,
-        selectedType,
-        selectedLocation,
-        selectedCamera,
-        selectedSignal,
-        selectedWeather,
+        submittedQuery,
+        aiFilters,
+        aiExplanation,
+        aiSource,
         viewMode,
         previewMode,
         currentPage,
@@ -309,56 +380,193 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     if (!queryHistory.length) return
     const prev = queryHistory[queryHistory.length - 1]
     setQueryHistory((hist) => hist.slice(0, -1))
-    setSearchQuery(prev.searchQuery)
-    setSelectedType(prev.selectedType)
-    setSelectedLocation(prev.selectedLocation)
-    setSelectedCamera(prev.selectedCamera)
-    setSelectedSignal(prev.selectedSignal)
-    setSelectedWeather(prev.selectedWeather)
-    setViewMode(prev.viewMode)
-    setPreviewMode(prev.previewMode)
-    setCurrentPage(prev.currentPage)
-    setGraphFocusId(null)
-  }
-
-  function handleQuickSuggestion(item) {
-    pushHistory()
-    setCurrentPage(1)
-    setViewMode('graph')
-    setGraphFocusId(null)
-    if (item === 'Green Signal') {
-      setSelectedSignal('Green')
-    } else if (item === 'Red Signal') {
-      setSelectedSignal('Red')
-    } else if (item === 'Clear Weather') {
-      setSelectedWeather('Clear')
-    } else if (item.startsWith('High Confidence')) {
-      setSearchQuery('> 0.90')
-    } else {
-      setSearchQuery(item)
-    }
-  }
-
-  function handleSelectType(type) {
-    pushHistory()
-    setSelectedType(type)
-    setCurrentPage(1)
-    setViewMode('graph')
+    setSearchQuery(prev.searchQuery || '')
+    setSubmittedQuery(prev.submittedQuery || '')
+    setAiFilters(prev.aiFilters || null)
+    setAiExplanation(prev.aiExplanation || '')
+    setAiSource(prev.aiSource || '')
+    setViewMode(prev.viewMode || 'graph')
+    setPreviewMode(prev.previewMode || false)
+    setCurrentPage(prev.currentPage || 1)
     setGraphFocusId(null)
   }
 
   function clearAllFilters() {
     pushHistory()
     setSearchQuery('')
-    setSelectedType('ALL')
-    setSelectedLocation('ALL')
-    setSelectedCamera('ALL')
-    setSelectedSignal('ALL')
-    setSelectedWeather('ALL')
-    setOverspeedOnly(false)
+    setSubmittedQuery('')
+    setAiFilters(null)
+    setAiExplanation('')
+    setAiSource('')
+    setSortBy('timestamp-desc')
     setPreviewMode(false)
     setCurrentPage(1)
     setGraphFocusId(null)
+    setViewMode('graph')
+  }
+
+  function parseQueryClient(text, facets = {}) {
+    const q = String(text || '').toLowerCase().trim()
+    if (!q) return null
+
+    const filters = {
+      vehicleType: null,
+      minSpeed: null,
+      maxSpeed: null,
+      overspeedOnly: null,
+      location: null,
+      camera: null,
+      signalState: null,
+      weather: null,
+      plateSearch: null,
+      sortBy: 'timestamp-desc',
+    }
+
+    let matched = false
+
+    // Overspeed
+    if (q.includes('overspeed') || q.includes('speeding') || q.includes('violation') || (q.includes('speed') && q.includes('limit'))) {
+      filters.overspeedOnly = true
+      matched = true
+    }
+
+    // Speed numerical
+    const speedMatch = q.match(/(?:speed|>|over|above|faster than)\s*(\d+)/i)
+    if (speedMatch) {
+      filters.minSpeed = parseInt(speedMatch[1], 10)
+      matched = true
+    }
+    const speedUnderMatch = q.match(/(?:<|under|below|slower than)\s*(\d+)/i)
+    if (speedUnderMatch) {
+      filters.maxSpeed = parseInt(speedUnderMatch[1], 10)
+      matched = true
+    }
+
+    // Multi-vehicle types detection (e.g. "all bikes and all autos")
+    const detectedTypes = []
+    if (/\b(?:car|cars|sedan|suv|hatchback)\b/i.test(q)) detectedTypes.push('Car')
+    if (/\b(?:bike|bikes|motorcycle|motorcycles|scooter|scooters|two wheeler|two wheelers|cycle|cycles)\b/i.test(q)) detectedTypes.push('Bike')
+    if (/\b(?:bus|buses)\b/i.test(q)) detectedTypes.push('Bus')
+    if (/\b(?:truck|trucks|lorry|lorries|trailer|trailers)\b/i.test(q)) detectedTypes.push('Truck')
+    if (/\b(?:auto|autos|rickshaw|rickshaws|auto rickshaw)\b/i.test(q)) detectedTypes.push('Auto')
+    if (/\b(?:tractor|tractors)\b/i.test(q)) detectedTypes.push('Tractor')
+    if (/\b(?:jeep|jeeps)\b/i.test(q)) detectedTypes.push('Jeep')
+    if (/\b(?:pedestrian|pedestrians|walking|people|person)\b/i.test(q)) detectedTypes.push('Pedestrian')
+    if (/\b(?:van|vans)\b/i.test(q)) detectedTypes.push('Van')
+    if (/\b(?:train|trains|metro|rail)\b/i.test(q)) detectedTypes.push('Train')
+
+    if (detectedTypes.length > 0) {
+      filters.vehicleTypes = detectedTypes
+      filters.vehicleType = detectedTypes.length === 1 ? detectedTypes[0] : detectedTypes
+      matched = true
+    }
+
+    // Signals
+    if (q.includes('red light') || q.includes('red signal') || q.includes('ran red')) { filters.signalState = 'Red'; matched = true }
+    else if (q.includes('green signal') || q.includes('green light')) { filters.signalState = 'Green'; matched = true }
+    else if (q.includes('yellow') || q.includes('amber')) { filters.signalState = 'Yellow'; matched = true }
+
+    // Weather
+    if (q.includes('rain') || q.includes('rainy')) { filters.weather = 'Rainy'; matched = true }
+    else if (q.includes('fog') || q.includes('foggy')) { filters.weather = 'Foggy'; matched = true }
+    else if (q.includes('clear')) { filters.weather = 'Clear'; matched = true }
+
+    // Location matching from facets if provided
+    if (facets.locations && Array.isArray(facets.locations)) {
+      for (const loc of facets.locations) {
+        const locLower = loc.toLowerCase()
+        if (q.includes(locLower) || locLower.includes(q)) {
+          filters.location = loc
+          matched = true
+          break
+        }
+        const words = locLower.split(/\s+/).filter((w) => w.length > 3)
+        if (words.some((w) => q.includes(w))) {
+          filters.location = loc
+          matched = true
+          break
+        }
+      }
+    }
+
+    // Camera matching
+    const camMatch = q.match(/cam(?:era)?[-_\s]*(\d+|[a-z0-9]+)/i)
+    if (camMatch) {
+      filters.camera = `CAM-${camMatch[1].toUpperCase()}`
+      matched = true
+    }
+
+    // Plate matching
+    const plateMatch = q.match(/\b([a-z]{2}[0-9]{1,2}[a-z]{0,3}[0-9]{1,4})\b/i)
+    if (plateMatch) {
+      filters.plateSearch = plateMatch[1].toUpperCase()
+      matched = true
+    }
+
+    // Sort
+    if (q.includes('fastest') || q.includes('highest speed')) {
+      filters.sortBy = 'speed-desc'
+    } else if (q.includes('slowest')) {
+      filters.sortBy = 'speed-asc'
+    } else if (q.includes('highest confidence') || q.includes('most confident')) {
+      filters.sortBy = 'confidence-desc'
+    }
+
+    return matched ? filters : null
+  }
+
+  function handleExecuteSearch(queryText) {
+    handleExecuteAiQuery(queryText)
+  }
+
+  async function handleExecuteAiQuery(queryText) {
+    const textToRun = (queryText !== undefined ? queryText : searchQuery).trim()
+    if (!textToRun) return
+
+    pushHistory()
+    setSubmittedQuery(textToRun)
+    setAiLoading(true)
+    setAiFilters(null) // Hide previous results while AI is fetching
+    setAiExplanation('')
+    setPreviewMode(false)
+    setCurrentPage(1)
+    setGraphFocusId(null)
+
+    try {
+      const res = await parseNaturalLanguageQuery(textToRun, {
+        types: facets.types,
+        locations: facets.locations,
+        cameras: facets.cameras,
+      })
+
+      if (res && res.filters) {
+        setAiFilters(res.filters)
+        setAiExplanation(res.explanation || `AI telemetry segment for "${textToRun}"`)
+        setAiSource(res.aiSource || 'ollama-qwen3:8b')
+
+        if (res.filters.sortBy) {
+          setSortBy(res.filters.sortBy)
+        }
+      } else {
+        const fallback = parseQueryClient(textToRun, facets)
+        if (fallback) {
+          setAiFilters(fallback)
+          setAiExplanation(`Telemetry segment for "${textToRun}"`)
+          setAiSource('rule-engine')
+        }
+      }
+    } catch (e) {
+      console.warn('AI query failed:', e)
+      const fallback = parseQueryClient(textToRun, facets)
+      if (fallback) {
+        setAiFilters(fallback)
+        setAiExplanation(`Telemetry segment for "${textToRun}"`)
+        setAiSource('rule-fallback')
+      }
+    } finally {
+      setViewMode('graph')
+      setAiLoading(false)
+    }
   }
 
   function handleFocusInGraph(obsId) {
@@ -367,26 +575,12 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   }
 
   const activeQueryLabel = useMemo(() => {
-    const parts = []
-    if (searchQuery) parts.push(`"${searchQuery}"`)
-    if (selectedType !== 'ALL') parts.push(`Type: ${selectedType}`)
-    if (selectedLocation !== 'ALL') parts.push(`Road: ${selectedLocation}`)
-    if (selectedCamera !== 'ALL') parts.push(`Cam: ${selectedCamera}`)
-    if (selectedSignal !== 'ALL') parts.push(`Signal: ${selectedSignal}`)
-    if (selectedWeather !== 'ALL') parts.push(`Weather: ${selectedWeather}`)
-    if (!parts.length) return previewMode ? 'Preview Dataset' : 'All Traffic Telemetry'
-    return parts.join(' · ')
-  }, [searchQuery, selectedType, selectedLocation, selectedCamera, selectedSignal, selectedWeather, previewMode])
+    if (aiExplanation) return aiExplanation
+    if (submittedQuery) return `"${submittedQuery}"`
+    return previewMode ? 'Preview Dataset' : 'All Traffic Telemetry'
+  }, [aiExplanation, submittedQuery, previewMode])
 
-  const hasActiveFilters = Boolean(
-    searchQuery ||
-    selectedType !== 'ALL' ||
-    selectedLocation !== 'ALL' ||
-    selectedCamera !== 'ALL' ||
-    selectedSignal !== 'ALL' ||
-    selectedWeather !== 'ALL'
-  )
-
+  const hasActiveFilters = Boolean(submittedQuery || aiFilters)
   const isQueryActive = hasActiveFilters || previewMode
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
@@ -438,7 +632,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         </div>
       </div>
 
-      {/* Streamlined Search Console */}
+      {/* Search Console */}
       <div className="query-search-console">
         <div className="query-search-row">
           <div className="query-input-box">
@@ -446,17 +640,16 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             <input
               autoFocus
               className="query-search-input"
+              disabled={aiLoading}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
-                setCurrentPage(1)
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  pushHistory()
-                  setViewMode('graph')
+                  handleExecuteSearch()
                 }
               }}
-              placeholder="Search by vehicle, plate, road, junction, camera, signal..."
+              placeholder="Ask anything (e.g. 'Show speeding cars on Ring Road', 'Bikes running red lights')..."
               type="text"
               value={searchQuery}
             />
@@ -466,6 +659,10 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                 onClick={() => {
                   pushHistory()
                   setSearchQuery('')
+                  setSubmittedQuery('')
+                  setAiFilters(null)
+                  setAiExplanation('')
+                  setPreviewMode(false)
                   setCurrentPage(1)
                 }}
                 title="Clear search"
@@ -478,247 +675,214 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
 
           <div className="query-search-actions-group">
             <button
-              className="query-execute-graph-btn"
+              className="query-search-btn"
+              disabled={!searchQuery.trim()}
+              onClick={() => handleExecuteSearch()}
+              title="Search traffic telemetry records"
+              type="button"
+            >
+              <Search size={15} />
+              <span>Search</span>
+            </button>
+
+            <button
+              className="query-ask-ai-btn"
+              disabled={aiLoading || !searchQuery.trim()}
+              onClick={() => handleExecuteAiQuery()}
+              title="Search with AI reasoning and extract Knowledge Graph segment"
+              type="button"
+            >
+              {aiLoading ? (
+                <>
+                  <Loader2 className="spinning" size={15} />
+                  <span>Thinking...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={16} />
+                  <span>Ask AI</span>
+                </>
+              )}
+            </button>
+
+            <button
+              className={`query-execute-graph-btn ${viewMode === 'graph' ? 'active' : ''}`}
               onClick={() => {
+                const text = searchQuery.trim()
                 pushHistory()
-                setViewMode('graph')
+                if (text) {
+                  handleExecuteSearch(text)
+                } else {
+                  setPreviewMode(true)
+                  setViewMode('graph')
+                  setCurrentPage(1)
+                }
               }}
-              title="Generate and view Knowledge Graph for this query"
+              title="View Knowledge Graph"
               type="button"
             >
               <Network size={14} />
-              <span>Graph Query</span>
+              <span>Knowledge Graph</span>
             </button>
+          </div>
+        </div>
 
-            {queryHistory.length > 0 && (
+        {/* Animated AI Thinking Progress State */}
+        {aiLoading && (
+          <div className="query-ai-loading-banner">
+            <Loader2 className="spinning" size={20} />
+            <div className="ai-loading-text">
+              <strong>AI is analyzing your query...</strong>
+              <span>Searching records and preparing the Knowledge Graph segment.</span>
+            </div>
+          </div>
+        )}
+
+        {/* AI Knowledge Graph Segment Retrieved Banner */}
+        {aiFilters && (
+          <div className="query-ai-segment-banner">
+            <div className="ai-segment-main">
+              <div className="ai-segment-title-row">
+                <div className="ai-segment-pill">
+                  <Sparkles size={14} />
+                  <span>AI KNOWLEDGE GRAPH SEGMENT</span>
+                </div>
+                <span className="ai-source-badge">AI Engine</span>
+                <span className="ai-node-count-badge">
+                  {filteredRows.length} matching entities · {filteredStats.uniqueCameras} cameras · {filteredStats.uniqueLocations} roads
+                </span>
+              </div>
+              <p className="ai-segment-explanation-text">{aiExplanation}</p>
+              <div className="ai-segment-tags-row">
+                {(aiFilters.vehicleTypes?.length || aiFilters.vehicleType) && (
+                  <span className="ai-criteria-tag">
+                    Type: <strong>{Array.isArray(aiFilters.vehicleTypes) ? aiFilters.vehicleTypes.join(', ') : (Array.isArray(aiFilters.vehicleType) ? aiFilters.vehicleType.join(', ') : String(aiFilters.vehicleType))}</strong>
+                  </span>
+                )}
+                {aiFilters.overspeedOnly && (
+                  <span className="ai-criteria-tag warning">
+                    ⚠️ Over Speed Violation
+                  </span>
+                )}
+                {aiFilters.minSpeed && (
+                  <span className="ai-criteria-tag">
+                    Speed &gt; <strong>{aiFilters.minSpeed} km/h</strong>
+                  </span>
+                )}
+                {aiFilters.maxSpeed && (
+                  <span className="ai-criteria-tag">
+                    Speed &lt; <strong>{aiFilters.maxSpeed} km/h</strong>
+                  </span>
+                )}
+                {aiFilters.location && (
+                  <span className="ai-criteria-tag">
+                    Road: <strong>{Array.isArray(aiFilters.location) ? aiFilters.location.join(', ') : String(aiFilters.location)}</strong>
+                  </span>
+                )}
+                {aiFilters.camera && (
+                  <span className="ai-criteria-tag">
+                    Camera: <strong>{Array.isArray(aiFilters.camera) ? aiFilters.camera.join(', ') : String(aiFilters.camera)}</strong>
+                  </span>
+                )}
+                {aiFilters.signalState && (
+                  <span className="ai-criteria-tag">
+                    Signal: <strong>{aiFilters.signalState}</strong>
+                  </span>
+                )}
+                {aiFilters.weather && (
+                  <span className="ai-criteria-tag">
+                    Weather: <strong>{aiFilters.weather}</strong>
+                  </span>
+                )}
+                {aiFilters.plateSearch && (
+                  <span className="ai-criteria-tag">
+                    Plate: <strong>{aiFilters.plateSearch}</strong>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="ai-segment-actions">
               <button
-                className="query-undo-btn"
-                onClick={handleUndoQuery}
-                title="Revert / Undo last query action"
+                className={`ai-segment-toggle-btn ${viewMode === 'graph' ? 'active' : ''}`}
+                onClick={() => setViewMode('graph')}
+                title="View Knowledge Graph Subgraph"
                 type="button"
               >
-                <Undo2 size={14} />
-                <span>Undo</span>
+                <Network size={14} />
+                <span>Knowledge Graph</span>
               </button>
-            )}
-          </div>
-        </div>
-
-        {/* Curated Category Filter Chips */}
-        <div className="query-vehicle-bar">
-          <span className="query-vehicle-bar-label">
-            <Layers size={13} /> Filters:
-          </span>
-          <div className="query-vehicle-chips-wrap">
-            <button
-              className={`query-vehicle-pill-btn ${selectedType === 'ALL' && selectedSignal === 'ALL' && !searchQuery ? 'active' : ''}`}
-              onClick={() => {
-                handleSelectType('ALL')
-                setSelectedSignal('ALL')
-              }}
-              type="button"
-            >
-              All Types <span className="query-pill-count">{rows.length}</span>
-            </button>
-            {primaryTypes.map((type) => {
-              const meta = getVehicleMeta(type)
-              const Icon = meta.icon
-              const count = vehicleCounts[type] || 0
-              const isActive = selectedType === type
-
-              return (
-                <button
-                  className={`query-vehicle-pill-btn ${isActive ? 'active' : ''}`}
-                  key={type}
-                  onClick={() => handleSelectType(isActive ? 'ALL' : type)}
-                  style={{
-                    color: isActive ? '#ffffff' : meta.color,
-                    backgroundColor: isActive ? meta.color : meta.bg,
-                    borderColor: meta.border,
-                  }}
-                  title={`Filter to ${type} (${count} records)`}
-                  type="button"
-                >
-                  <Icon size={13} />
-                  <span>{type}</span>
-                  <span
-                    className="query-pill-count"
-                    style={{
-                      backgroundColor: isActive ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.06)',
-                      color: isActive ? '#ffffff' : meta.color,
-                    }}
-                  >
-                    {count}
-                  </span>
-                </button>
-              )
-            })}
-
-            {/* Quick Over Speed Violation Pill */}
-            <button
-              className={`query-vehicle-pill-btn ${overspeedOnly ? 'active' : ''}`}
-              onClick={() => {
-                pushHistory()
-                setOverspeedOnly(!overspeedOnly)
-                setCurrentPage(1)
-              }}
-              style={{
-                color: overspeedOnly ? '#ffffff' : '#dc2626',
-                backgroundColor: overspeedOnly ? '#dc2626' : '#fef2f2',
-                borderColor: '#fca5a5',
-              }}
-              title="Filter to Over Speed Violations"
-              type="button"
-            >
-              <AlertTriangle size={13} />
-              <span>Over Speed</span>
-              <span
-                className="query-pill-count"
-                style={{
-                  backgroundColor: overspeedOnly ? 'rgba(255,255,255,0.25)' : 'rgba(220,38,38,0.12)',
-                  color: overspeedOnly ? '#ffffff' : '#dc2626',
-                }}
+              <button
+                className={`ai-segment-toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
+                onClick={() => setViewMode('table')}
+                title="View Records Table"
+                type="button"
               >
-                {rows.filter((r) => r.overSpeed === 'Yes' || r.isOverSpeed).length}
-              </span>
-            </button>
+                <Table2 size={14} />
+                <span>Table</span>
+              </button>
+              <button
+                className="ai-segment-toggle-btn clear"
+                onClick={clearAllFilters}
+                title="Clear AI Filters"
+                type="button"
+              >
+                <X size={14} />
+                <span>Reset AI</span>
+              </button>
+            </div>
           </div>
-        </div>
-
-        {/* Compact Filter Controls */}
-        <div className="query-filters-bar">
-          <div className="query-filter-group">
-            <label>
-              <MapPin size={14} /> Road:
-            </label>
-            <select
-              onChange={(e) => {
-                pushHistory()
-                setSelectedLocation(e.target.value)
-                setCurrentPage(1)
-              }}
-              value={selectedLocation}
-            >
-              <option value="ALL">All Roads ({facets.locations.length})</option>
-              {facets.locations.map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="query-filter-group">
-            <label>
-              <Camera size={14} /> Camera:
-            </label>
-            <select
-              onChange={(e) => {
-                pushHistory()
-                setSelectedCamera(e.target.value)
-                setCurrentPage(1)
-              }}
-              value={selectedCamera}
-            >
-              <option value="ALL">All Cameras ({facets.cameras.length})</option>
-              {facets.cameras.map((cam) => (
-                <option key={cam} value={cam}>
-                  {cam}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="query-filter-group query-sort-group">
-            <label>
-              <ArrowUpDown size={14} /> Sort:
-            </label>
-            <select
-              onChange={(e) => {
-                setSortBy(e.target.value)
-                setCurrentPage(1)
-              }}
-              value={sortBy}
-            >
-              <option value="timestamp-desc">Timestamp (Recent first)</option>
-              <option value="timestamp-asc">Timestamp (Earliest first)</option>
-              <option value="speed-desc">Speed (High to Low)</option>
-              <option value="speed-asc">Speed (Low to High)</option>
-              <option value="confidence-desc">Confidence (High to Low)</option>
-              <option value="confidence-asc">Confidence (Low to High)</option>
-            </select>
-          </div>
-
-          {hasActiveFilters && (
-            <button className="query-reset-btn" onClick={clearAllFilters} type="button">
-              Reset Filters
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* When no query is active: Show Clean Starter State (DO NOT SHOW ALL DATA DOWN) */}
-      {!isQueryActive ? (
+      {/* 1. When AI query is loading: Show dedicated AI Loading State ONLY */}
+      {aiLoading ? (
+        <div className="query-ai-loading-container">
+          <div className="query-ai-loading-pulse">
+            <Bot size={36} className="query-ai-pulse-icon" />
+            <Loader2 className="spinning query-ai-spinner" size={54} />
+          </div>
+          <h2>AI Query Engine Processing Telemetry</h2>
+          <p>
+            Analyzing natural language query <strong>&ldquo;{submittedQuery || searchQuery}&rdquo;</strong> and constructing the Knowledge Graph segment...
+          </p>
+          <div className="query-ai-loading-chips">
+            <span className="query-ai-chip">Semantic Analysis</span>
+            <span className="query-ai-chip">Multi-Entity Extraction</span>
+            <span className="query-ai-chip">Graph Subgraph Construction</span>
+          </div>
+        </div>
+      ) : !isQueryActive ? (
         <div className="query-empty-results query-start-prompt">
           <div className="query-start-icon-wrap">
-            <Search size={28} />
+            <Sparkles size={32} />
           </div>
-          <h2>Ready to Query Traffic Telemetry</h2>
+          <h2>Natural Language Traffic Intelligence</h2>
           <p>
-            Enter a keyword above (e.g. number plate, vehicle, road name, camera ID), select a category chip, or click any quick query below.
+            Type any traffic question in plain English above (e.g. <em>"Show all speeding cars on Ring Road"</em> or <em>"Find bikes running red lights"</em>) and click <strong>Ask AI</strong>.
           </p>
           <div className="query-quick-actions">
             <button
               className="query-quick-action-btn"
-              onClick={() => handleQuickSuggestion('Cars')}
+              onClick={() => {
+                setPreviewMode(true)
+                setViewMode('graph')
+              }}
               type="button"
             >
-              🚗 Query Cars ({vehicleCounts['Car'] || vehicleCounts['car'] || 0})
-            </button>
-            <button
-              className="query-quick-action-btn"
-              onClick={() => handleQuickSuggestion('Bikes')}
-              type="button"
-            >
-              🏍️ Query Bikes ({vehicleCounts['Bike'] || vehicleCounts['Motorcycle'] || vehicleCounts['bike'] || 0})
-            </button>
-            <button
-              className="query-quick-action-btn"
-              onClick={() => handleQuickSuggestion('Buses')}
-              type="button"
-            >
-              🚌 Query Buses ({vehicleCounts['Bus'] || vehicleCounts['bus'] || 0})
-            </button>
-            <button
-              className="query-quick-action-btn"
-              onClick={() => handleQuickSuggestion('Trucks')}
-              type="button"
-            >
-              🚛 Query Trucks ({vehicleCounts['Truck'] || vehicleCounts['truck'] || 0})
-            </button>
-            <button
-              className="query-quick-action-btn"
-              onClick={() => handleQuickSuggestion('Red Signal')}
-              type="button"
-            >
-              🛑 Red Signal Violations
-            </button>
-            <button
-              className="query-quick-action-btn"
-              onClick={() => handleQuickSuggestion('Pedestrians')}
-              type="button"
-            >
-              🚶 Pedestrians
+              <Network size={14} />
+              <span>Explore Knowledge Graph</span>
             </button>
             <button
               className="query-quick-action-btn secondary"
               onClick={() => {
                 setPreviewMode(true)
+                setViewMode('table')
                 setCurrentPage(1)
               }}
               type="button"
             >
-              📄 Preview First 10 Records
+              📄 Preview Records Table ({rows.length})
             </button>
           </div>
         </div>
@@ -754,10 +918,10 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
               Showing <strong>{paginatedRows.length ? (currentPage - 1) * pageSize + 1 : 0}</strong>–
               <strong>{Math.min(currentPage * pageSize, filteredRows.length)}</strong> of{' '}
               <strong>{filteredRows.length}</strong> matching records
-              {searchQuery && (
+              {submittedQuery && (
                 <span>
                   {' '}
-                  matching &ldquo;<em>{searchQuery}</em>&rdquo;
+                  matching &ldquo;<em>{submittedQuery}</em>&rdquo;
                 </span>
               )}
             </span>
@@ -812,7 +976,6 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                 >
                   Table View
                 </button>
-
               </div>
             </div>
           </div>
@@ -823,7 +986,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
               <Search size={36} />
               <h2>No matching traffic telemetry found</h2>
               <p>
-                No entries matched your query <strong>&ldquo;{searchQuery}&rdquo;</strong>. Try adjusting your search term
+                No entries matched your query <strong>&ldquo;{submittedQuery}&rdquo;</strong>. Try adjusting your search term
                 or resetting the filters.
               </p>
               <button className="data-import-sample-btn" onClick={clearAllFilters} type="button">

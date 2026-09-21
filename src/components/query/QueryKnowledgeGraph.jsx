@@ -40,7 +40,7 @@ export default function QueryKnowledgeGraph({
 
     const cameras = Array.from(new Set(rows.map((r) => r.camera).filter(Boolean)))
     const locations = Array.from(new Set(rows.map((r) => r.roadName || r.location).filter(Boolean)))
-    const types = Array.from(new Set(rows.map((r) => r.type).filter(Boolean)))
+    const types = Array.from(new Set(rows.map((r) => r.type || r.vehicleType).filter(Boolean)))
 
     const nodes = []
     const edges = []
@@ -97,7 +97,7 @@ export default function QueryKnowledgeGraph({
 
     // 3. Vehicle Type Nodes
     types.forEach((type) => {
-      const typeRows = rows.filter((r) => r.type === type)
+      const typeRows = rows.filter((r) => (r.type || r.vehicleType) === type)
       const meta = getVehicleMeta(type)
 
       nodes.push({
@@ -117,12 +117,13 @@ export default function QueryKnowledgeGraph({
       })
     })
 
-    // 4. Observation Nodes (sample up to 25 top matching detections for clarity)
-    const sampleRows = rows.slice(0, 25)
+    // 4. Observation Nodes (all matching queried detections)
+    const sampleRows = rows
     sampleRows.forEach((row, i) => {
       const obsId = row.observationId ? `obs-${row.observationId}` : `obs-${i + 1}`
       const obsLabel = row.numberPlate && row.numberPlate !== 'N/A' ? row.numberPlate : (row.observationId || `Detection #${i + 1}`)
       const loc = row.roadName || row.location
+      const vType = row.type || row.vehicleType
 
       nodes.push({
         id: obsId,
@@ -133,7 +134,7 @@ export default function QueryKnowledgeGraph({
         properties: {
           'Observation ID': row.id || row.observationId || `OBS-${i + 1}`,
           'Number Plate': row.vehicleNumberPlate || row.numberPlate || 'N/A',
-          'Vehicle Type': row.vehicleType || row.type || 'Car',
+          'Vehicle Type': vType || 'Car',
           'Timestamp (IST)': row.timestampIst || row.timestamp || 'N/A',
           'Plate Confidence': `${Math.round(((row.plateConfidence || row.confidence) > 1 ? (row.plateConfidence || row.confidence) : (row.plateConfidence || row.confidence || 0.95) * 100))}%`,
           'Speed (km/h)': `${row.speed || 0} km/h`,
@@ -151,11 +152,11 @@ export default function QueryKnowledgeGraph({
       })
 
       // Link to vehicle type
-      if (row.type) {
+      if (vType) {
         edges.push({
           id: `edge-${edgeIndex++}`,
           source: obsId,
-          target: `type-${row.type}`,
+          target: `type-${vType}`,
           label: 'OF_TYPE',
         })
       }
@@ -259,29 +260,46 @@ export default function QueryKnowledgeGraph({
       layout: {
         name: 'cose',
         animate: false,
-        padding: 40,
-        nodeRepulsion: 7500,
-        idealEdgeLength: 110,
-        gravity: 0.25,
+        padding: 70,
+        componentSpacing: 160,
+        nodeDimensionsIncludeLabels: true,
+        nodeOverlap: 80,
+        nodeRepulsion: (node) => {
+          const cat = node.data('category')
+          if (cat === 'Location') return 240000
+          if (cat === 'Camera' || cat === 'VehicleType') return 150000
+          return 80000
+        },
+        idealEdgeLength: (edge) => {
+          const lbl = edge.data('label')
+          if (lbl === 'OF_TYPE') return 220
+          return 280
+        },
+        gravity: 0.018,
+        numIter: 1000,
       },
       style: [
         {
           selector: 'node',
           style: {
-            width: 44,
-            height: 44,
+            width: (node) => (node.data('category') === 'Observation' ? 38 : 50),
+            height: (node) => (node.data('category') === 'Observation' ? 38 : 50),
             label: 'data(label)',
             'background-color': 'data(color)',
             color: '#0f172a',
-            'font-size': 11,
-            'font-weight': 600,
+            'font-size': (node) => (node.data('category') === 'Observation' ? 10 : 12),
+            'font-weight': (node) => (node.data('category') === 'Observation' ? 600 : 700),
             'text-valign': 'bottom',
-            'text-margin-y': 6,
+            'text-margin-y': 8,
             'text-wrap': 'wrap',
-            'text-max-width': 95,
+            'text-max-width': (node) => (node.data('category') === 'Observation' ? 85 : 110),
             'border-width': 2.5,
             'border-color': '#ffffff',
-            'border-opacity': 0.95,
+            'border-opacity': 1,
+            'text-background-color': '#ffffff',
+            'text-background-opacity': 0.94,
+            'text-background-padding': 3,
+            'text-background-shape': 'roundrectangle',
           },
         },
         {
@@ -290,26 +308,28 @@ export default function QueryKnowledgeGraph({
             'border-width': 4,
             'border-color': '#2563eb',
             'underlay-color': '#2563eb',
-            'underlay-padding': 5,
-            'underlay-opacity': 0.3,
+            'underlay-padding': 6,
+            'underlay-opacity': 0.35,
           },
         },
         {
           selector: 'edge',
           style: {
-            width: 1.8,
-            'line-color': '#cbd5e1',
+            width: 1.2,
+            'line-color': '#94a3b8',
+            opacity: 0.55,
             'curve-style': 'bezier',
+            'control-point-step-size': 35,
             'target-arrow-shape': 'triangle',
             'target-arrow-color': '#94a3b8',
-            'arrow-scale': 0.9,
+            'arrow-scale': 0.75,
             label: 'data(label)',
-            'font-size': 8,
+            'font-size': 7.5,
             color: '#64748b',
             'text-rotation': 'autorotate',
-            'text-margin-y': -7,
+            'text-margin-y': -6,
             'text-background-color': '#ffffff',
-            'text-background-opacity': 0.9,
+            'text-background-opacity': 0.85,
             'text-background-padding': 2,
             'text-background-shape': 'roundrectangle',
           },
@@ -321,9 +341,17 @@ export default function QueryKnowledgeGraph({
             'line-color': '#2563eb',
             'target-arrow-color': '#2563eb',
             color: '#2563eb',
+            opacity: 1,
           },
         },
       ],
+    })
+
+    cy.ready(() => {
+      cy.animate({
+        fit: { eles: cy.elements(), padding: 50 },
+        duration: 250,
+      })
     })
 
     cy.on('tap', 'node', (evt) => {
@@ -345,20 +373,74 @@ export default function QueryKnowledgeGraph({
     }
   }, [visibleNodes, visibleEdges, graphData.nodes])
 
+  // Viewport-centered smooth animated zoom controls
   function handleZoomIn() {
-    cyRef.current?.zoom(cyRef.current.zoom() * 1.25)
+    const cy = cyRef.current
+    if (!cy) return
+    const currentZoom = cy.zoom()
+    const targetZoom = Math.min(3.5, currentZoom * 1.3)
+    cy.animate({
+      zoom: {
+        level: targetZoom,
+        renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
+      },
+      duration: 180,
+    })
   }
 
   function handleZoomOut() {
-    cyRef.current?.zoom(cyRef.current.zoom() * 0.8)
+    const cy = cyRef.current
+    if (!cy) return
+    const currentZoom = cy.zoom()
+    const targetZoom = Math.max(0.04, currentZoom * 0.75)
+    cy.animate({
+      zoom: {
+        level: targetZoom,
+        renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
+      },
+      duration: 180,
+    })
   }
 
   function handleFit() {
-    cyRef.current?.fit(undefined, 35)
+    const cy = cyRef.current
+    if (!cy) return
+    cy.animate({
+      fit: {
+        eles: cy.elements(),
+        padding: 50,
+      },
+      duration: 260,
+    })
   }
 
   function handleRelayout() {
-    cyRef.current?.layout({ name: 'cose', animate: true, animationDuration: 400, padding: 40 }).run()
+    const cy = cyRef.current
+    if (!cy) return
+    cy.layout({
+      name: 'cose',
+      animate: true,
+      animationDuration: 500,
+      padding: 70,
+      componentSpacing: 160,
+      nodeDimensionsIncludeLabels: true,
+      nodeOverlap: 80,
+      nodeRepulsion: (node) => {
+        const cat = node.data('category')
+        if (cat === 'Location') return 240000
+        if (cat === 'Camera' || cat === 'VehicleType') return 150000
+        return 80000
+      },
+      idealEdgeLength: (edge) => (edge.data('label') === 'OF_TYPE' ? 220 : 280),
+      gravity: 0.018,
+      numIter: 1000,
+      stop: () => {
+        cy.animate({
+          fit: { eles: cy.elements(), padding: 50 },
+          duration: 260,
+        })
+      },
+    }).run()
   }
 
   return (

@@ -1,10 +1,12 @@
-require('dotenv').config()
+const path = require('path')
+require('dotenv').config({ path: path.join(__dirname, '.env') })
 
 const cors = require('cors')
 const express = require('express')
 const http = require('http')
 const { Server } = require('socket.io')
 const authRoutes = require('./routes/authRoutes')
+const queryRoutes = require('./routes/queryRoutes')
 const { initializeDatabase } = require('./config/database')
 const { getLatestStreamStatus, getStoredVehicles, runVehicleStream } = require('./services/vehicleStream')
 
@@ -18,16 +20,21 @@ const configuredFrontendOrigins = (process.env.FRONTEND_URL || 'http://localhost
 function isAllowedOrigin(origin) {
   if (!origin) return true
   if (configuredFrontendOrigins.includes('*')) return true
-  return configuredFrontendOrigins.includes(origin) || /^https?:\/\/((localhost)|(127\.0\.0\.1)|(\d{1,3}\.){3}\d{1,3})(:\d+)?$/.test(origin)
+  return (
+    configuredFrontendOrigins.includes(origin) ||
+    /^https?:\/\/((localhost)|(127\.0\.0\.1)|(\d{1,3}\.){3}\d{1,3})(:\d+)?$/.test(origin)
+  )
 }
 
 const corsOptions = {
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
+  credentials: true,
 }
 
 const io = new Server(httpServer, {
   cors: corsOptions,
 })
+
 io.on('connection', async (socket) => {
   try {
     let afterId = 0
@@ -45,14 +52,16 @@ io.on('connection', async (socket) => {
   const latestStatus = getLatestStreamStatus()
   if (latestStatus) socket.emit('vehicleStreamStatus', latestStatus)
 })
-const port = process.env.PORT || 5000
 
-if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD || !process.env.MYSQL_DATABASE || !process.env.JWT_SECRET) {
-  throw new Error('MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE, and JWT_SECRET must be set in backend/.env')
+const port = Number(process.env.PORT || 5000)
+
+if (!process.env.JWT_SECRET) {
+  process.env.JWT_SECRET = 'visioniq_dev_secret_fallback_key_2025'
 }
 
 app.use(cors(corsOptions))
 app.use(express.json())
+
 app.get('/api/health', (req, res) => res.json({ success: true, message: 'VisionIQ API is running.' }))
 app.get('/api/vehicles', async (req, res) => {
   try {
@@ -62,12 +71,29 @@ app.get('/api/vehicles', async (req, res) => {
     res.status(500).json({ success: false, message: 'Unable to load vehicle events.' })
   }
 })
+
 app.use('/api/auth', authRoutes)
+app.use('/api/query', queryRoutes)
 
 async function startServer() {
-  await initializeDatabase()
+  const dbStatus = await initializeDatabase()
   const host = process.env.HOST || '0.0.0.0'
-  httpServer.listen(port, host, () => console.log(`VisionIQ API listening on http://${host}:${port}`))
+
+  httpServer.listen(port, host, () => {
+    console.log(`\n==============================================`)
+    console.log(`🚀 VisionIQ API listening on http://${host}:${port}`)
+    if (dbStatus && dbStatus.mock) {
+      console.log(`⚠️  Database Mode: In-Memory Dev (MySQL offline)`)
+      console.log(`🔑 Default Admin Credentials:`)
+      console.log(`   - Email: ${process.env.ADMIN1_EMAIL || 'admin@visioniq.local'}`)
+      console.log(`   - Username: ${process.env.ADMIN1_USERNAME || 'admin'}`)
+      console.log(`   - Password: ${process.env.ADMIN1_PASSWORD || 'AdminPassword123!'}`)
+    } else {
+      console.log(` Connected to MySQL database "${process.env.MYSQL_DATABASE || 'vision_iq'}"`)
+    }
+    console.log(`==============================================\n`)
+  })
+
   runVehicleStream(io).catch((error) => console.error('Vehicle stream stopped:', error))
 }
 

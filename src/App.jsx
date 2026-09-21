@@ -15,9 +15,9 @@ import RulesEventsPage from './components/RulesEventsPage'
 import ProfilePage from './components/ProfilePage'
 import SettingsPage from './components/SettingsPage'
 import VehicleInformation from './components/VehicleInformation'
-
 import PlaceholderPage from './components/PlaceholderPage'
-import ProjectMainBar from './components/ProjectMainBar'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import ProjectsPage from './components/projects/ProjectsPage'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import LoginPage from './components/auth/LoginPage'
@@ -126,50 +126,104 @@ export default function App() {
 
   function playNotificationTone() {
     if (!notificationSoundEnabledRef.current) return
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext
+      if (!AudioContextClass) return
+      const ctx = new AudioContextClass()
+      const now = ctx.currentTime
 
-    const notificationSound = new Audio('/notification_sound.mp3')
-    notificationSound.volume = 1
-    notificationSound.currentTime = 0
-    notificationSound.play().catch(() => undefined)
-    window.setTimeout(() => {
-      notificationSound.pause()
+      const notificationSound = new Audio('/notification_sound.mp3')
+      notificationSound.volume = 1
       notificationSound.currentTime = 0
-    }, 1000)
+      notificationSound.play().catch(() => undefined)
+      window.setTimeout(() => {
+        notificationSound.pause()
+        notificationSound.currentTime = 0
+      }, 1000)
+      const osc1 = ctx.createOscillator()
+      const osc2 = ctx.createOscillator()
+      const gain = ctx.createGain()
+
+      osc1.type = 'sine'
+      osc2.type = 'triangle'
+      osc1.frequency.setValueAtTime(587.33, now)
+      osc1.frequency.exponentialRampToValueAtTime(880, now + 0.12)
+      osc2.frequency.setValueAtTime(293.66, now)
+      osc2.frequency.exponentialRampToValueAtTime(440, now + 0.12)
+
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22)
+
+      osc1.connect(gain)
+      osc2.connect(gain)
+      gain.connect(ctx.destination)
+
+      osc1.start(now)
+      osc2.start(now)
+      osc1.stop(now + 0.23)
+      osc2.stop(now + 0.23)
+      setTimeout(() => ctx.close().catch(() => { }), 400)
+    } catch {
+      // audio autoplay policies can suppress this until first user gesture
+    }
   }
 
   useEffect(() => {
     if (!isAuthenticated) return undefined
 
-    let active = true
-    const socket = io(apiBaseUrl, { transports: ['websocket', 'polling'] })
+    let isCancelled = false
 
-    socket.on('newVehicleBatch', (newRows = []) => {
-      if (!newRows.length) return
-      const normalizedRows = normalizeStreamRows(newRows)
-      if (normalizedRows[0]?.sourceFile) {
-        setFileName((currentFileName) => currentFileName || normalizedRows[0].sourceFile)
+    async function loadInitialVehicles() {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/vehicles`)
+        if (!response.ok) return
+        const data = await response.json()
+        if (!isCancelled && Array.isArray(data.vehicles) && data.vehicles.length) {
+          const streamRows = normalizeStreamRows(data.vehicles)
+          setTrafficData((currentRows) => appendUniqueRows(currentRows, streamRows))
+          setFileName((currentName) => currentName || 'Live vehicle database stream')
+        }
+      } catch (error) {
+        console.warn('Unable to load initial vehicles from database:', error.message)
       }
-      setTrafficData((currentRows) => appendUniqueRows(currentRows, normalizedRows))
-      const nextNotification = {
-        id: `batch-${normalizedRows[0]?.sourceFile || 'stream'}-${Date.now()}`,
-        receivedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        type: 'batch',
-        fileName: normalizedRows[0]?.sourceFile || 'Live vehicle stream',
-        batchCount: normalizedRows.length,
-        events: normalizedRows.filter((row) => row.events).length,
-        overspeeding: normalizedRows.filter((row) => row.isOverSpeed || row.overSpeed === 'Yes').length,
-        totalProcessed: normalizedRows.length,
-      }
-      setStreamNotifications((current) => [nextNotification, ...current].slice(0, 8))
+    }
+
+    loadInitialVehicles()
+
+    const socket = io(apiBaseUrl, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 10,
+    })
+
+    socket.on('newVehicleBatch', (incomingVehicles) => {
+      if (!Array.isArray(incomingVehicles) || !incomingVehicles.length || isCancelled) return
+      const streamRows = normalizeStreamRows(incomingVehicles)
+      setTrafficData((currentRows) => appendUniqueRows(currentRows, streamRows))
+      setFileName((currentName) => currentName || 'Live vehicle database stream')
+      const firstRow = streamRows[0]
+      const label = firstRow.vehicleNumberPlate || firstRow.plateNumber || firstRow.id || 'Live vehicle'
+      const type = firstRow.vehicleType || firstRow.type || 'Detection'
+      setStreamNotifications((prev) => [
+        {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+          title: `New telemetry: ${label}`,
+          message: `${type} captured at ${firstRow.location || firstRow.roadName || 'active site'}.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+        ...prev.slice(0, 11),
+      ])
       playNotificationTone()
     })
 
     socket.on('vehicleStreamStatus', (status) => {
-      if (status.fileName) setFileName(status.fileName)
+      if (!isCancelled && status?.fileName) {
+        setFileName(status.fileName)
+      }
     })
 
     return () => {
-      active = false
+      isCancelled = true
       socket.disconnect()
     }
   }, [isAuthenticated])
@@ -211,6 +265,15 @@ export default function App() {
 
   const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
 
+  if (loading) return <div className="auth-loading">Checking your session...</div>
+  if (!isAuthenticated || pathname === '/login') {
+    return (
+      <Routes>
+        <Route path="*" element={isAuthenticated ? <Navigate replace to="/home" /> : <LoginPage />} />
+      </Routes>
+    )
+  }
+
   async function handleLoadSampleData() {
     try {
       const res = await fetch('/sample_traffic_feed.xlsx')
@@ -233,15 +296,6 @@ export default function App() {
     setImportError('')
   }
 
-  if (loading) return <div className="auth-loading">Checking your session...</div>
-  if (!isAuthenticated || pathname === '/login') {
-    return (
-      <Routes>
-        <Route path="*" element={isAuthenticated ? <Navigate replace to="/home" /> : <LoginPage />} />
-      </Routes>
-    )
-  }
-
   function handleSelectProject(project) {
     setSelectedProject(project)
   }
@@ -249,51 +303,39 @@ export default function App() {
   function handleCreateProject(name) {
     const newProject = {
       name,
-      caption: 'New project',
-      status: 'Coming soon',
-      modules: 'No modules yet',
-      dashboards: 'No dashboards yet',
-      data: 'Not connected',
-      key: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`,
-      comingSoon: true,
+      caption: 'Created project',
+      status: 'Active',
+      modules: '7 modules',
+      dashboards: '3 dashboards',
+      data: 'CSV analytics',
       created: true,
+      createdAt: new Date().toISOString(),
     }
-    setProjectList((currentProjects) => [...currentProjects, newProject])
+    setProjectList((current) => [...current, newProject])
     setSelectedProject(newProject)
   }
 
-  function handleDeleteProject(targetProject) {
-    const target = targetProject || selectedProject
-    if (!target || !target.created) return
-    const confirmed = window.confirm(`Delete ${target.name}?`)
-    if (!confirmed) return
-
-    setProjectList((currentProjects) => {
-      const remaining = currentProjects.filter((p) => p.key !== target.key)
-      setSelectedProject(remaining[0] || projects[0])
-      return remaining
-    })
-
-    if (connectedProject?.key === target.key) {
-      handleProjectDisconnect()
+  function handleDeleteProject(name) {
+    setProjectList((current) => current.filter((p) => p.name !== name))
+    if (selectedProject?.name === name) {
+      setSelectedProject(projectList.find((p) => p.name !== name) || projects[0])
+    }
+    if (connectedProject?.name === name) {
+      setConnectedProject(null)
+      setTrafficData([])
+      setFileName('')
     }
   }
 
   function handleProjectConnect(project) {
-    const target = project || selectedProject
-    if (!target) return
-    if (target.comingSoon && !target.created) return
-    setConnectedProject(target)
-    setTrafficData([])
-    setFileName('')
-    setImportError('')
+    setConnectedProject(project)
+    setSelectedProject(project)
   }
 
   function handleProjectDisconnect() {
     setConnectedProject(null)
     setTrafficData([])
     setFileName('')
-    setImportError('')
   }
 
   function handleAddCamera(camera) {
@@ -306,7 +348,7 @@ export default function App() {
   }
 
   async function handleImport(event) {
-    const [file] = event.target.files || []
+    const file = event.target.files?.[0]
     if (!file) return
 
     try {
@@ -315,7 +357,7 @@ export default function App() {
       setFileName(file.name)
       setImportError('')
     } catch (error) {
-      setImportError(error.message || 'Unable to import this file (supported: .csv, .xlsx).')
+      setImportError(error.message || 'Unable to import file.')
     } finally {
       event.target.value = ''
     }
@@ -323,233 +365,216 @@ export default function App() {
 
   return (
     <ProtectedRoute>
-      <div className="app-shell">
-      <Sidebar
-        connectedProject={connectedProject}
-        onCreateProject={handleCreateProject}
-        onSelectProject={handleSelectProject}
-        projectList={projectList}
-        selectedProject={selectedProject}
-      />
+      <ErrorBoundary>
+        <div className="app-shell">
+          <Sidebar
+            connectedProject={connectedProject}
+            onCreateProject={handleCreateProject}
+            onSelectProject={handleSelectProject}
+            projectList={projectList}
+            selectedProject={selectedProject}
+          />
 
-      <main className="main-content">
-        <Topbar
-          notificationSoundEnabled={notificationSoundEnabled}
-          searchOpen={searchOpen}
-          setSearchOpen={setSearchOpen}
-          setNotificationSoundEnabled={setNotificationSoundEnabled}
-          streamNotifications={streamNotifications}
-        />
-
-        <ProjectMainBar
-          connectedProject={connectedProject}
-          fileName={fileName}
-          hasImportedFile={hasImportedFile}
-          importError={importError}
-          onDeleteProject={handleDeleteProject}
-          onImport={handleImport}
-          onLoadSampleData={handleLoadSampleData}
-          onProjectConnect={handleProjectConnect}
-          onProjectDisconnect={handleProjectDisconnect}
-          rows={trafficData}
-          selectedProject={selectedProject}
-        />
-
-        <section className="content-wrap">
-          <Routes>
-            {/* HOME */}
-            <Route path="/" element={<Navigate replace to="/home" />} />
-            <Route path="/home" element={<PlaceholderPage cameraCount={addedCameras.length} fileName={fileName} rows={trafficData} />} />
-
-            {/* ONTOLOGY */}
-            <Route
-              path="/ontology"
-              element={
-                !connectedProject ? (
-                  <ProjectConnectionRequired />
-                ) : connectedProject.comingSoon ? (
-                  <ProjectComingSoon projectName={connectedProject.name} />
-                ) : !hasImportedFile ? (
-                  <DataImportRequired
-                    featureName="Ontology Knowledge Model"
-                    onImport={handleImport}
-                    onLoadSample={handleLoadSampleData}
-                    projectName={connectedProject.name}
-                  />
-                ) : (
-                  <OntologyPage fileName={fileName} rows={trafficData} />
-                )
-              }
+          <main className="main-content">
+            <Topbar
+              notificationSoundEnabled={notificationSoundEnabled}
+              searchOpen={searchOpen}
+              setSearchOpen={setSearchOpen}
+              setNotificationSoundEnabled={setNotificationSoundEnabled}
+              streamNotifications={streamNotifications}
             />
 
-            {/* KNOWLEDGE GRAPH */}
-            <Route
-              path="/knowledge-graph"
-              element={
-                !connectedProject ? (
-                  <ProjectConnectionRequired />
-                ) : connectedProject.comingSoon ? (
-                  <ProjectComingSoon projectName={connectedProject.name} />
-                ) : !hasImportedFile ? (
-                  <DataImportRequired
-                    featureName="Knowledge Graph Network"
-                    onImport={handleImport}
-                    onLoadSample={handleLoadSampleData}
-                    projectName={connectedProject.name}
-                  />
-                ) : (
-                  <KnowledgeGraphPage fileName={fileName} rows={trafficData} />
-                )
-              }
-            />
-
-            {/* QUERY ENGINE */}
-            <Route
-              path="/query"
-              element={
-                !connectedProject ? (
-                  <ProjectConnectionRequired />
-                ) : connectedProject.comingSoon ? (
-                  <ProjectComingSoon projectName={connectedProject.name} />
-                ) : !hasImportedFile ? (
-                  <DataImportRequired
-                    featureName="Traffic Query Engine"
-                    onImport={handleImport}
-                    onLoadSample={handleLoadSampleData}
-                    projectName={connectedProject.name}
-                  />
-                ) : (
-                  <QueryPage fileName={fileName} rows={trafficData} />
-                )
-              }
-            />
-
-            {/* DASHBOARDS HUB */}
-            <Route
-              path="/dashboards"
-              element={
-                !connectedProject ? (
-                  <ProjectConnectionRequired />
-                ) : connectedProject.comingSoon ? (
-                  <ProjectComingSoon projectName={connectedProject.name} />
-                ) : !hasImportedFile ? (
-                  <DataImportRequired
-                    featureName="Dashboards Analytics"
-                    onImport={handleImport}
-                    onLoadSample={handleLoadSampleData}
-                    projectName={connectedProject.name}
-                  />
-                ) : (
-                  <DashboardHub
-                    fileName={fileName}
-                    importError={importError}
-                    onImport={handleImport}
-                    projectName={connectedProject.name}
-                    rows={trafficData}
-                  />
-                )
-              }
-            />
-
-            {/* DASHBOARD DETAIL */}
-            <Route
-              path="/dashboards/:kind"
-              element={
-                !connectedProject ? (
-                  <ProjectConnectionRequired />
-                ) : connectedProject.comingSoon ? (
-                  <ProjectComingSoon projectName={connectedProject.name} />
-                ) : !hasImportedFile ? (
-                  <DataImportRequired
-                    featureName="Dashboard View"
-                    onImport={handleImport}
-                    onLoadSample={handleLoadSampleData}
-                    projectName={connectedProject.name}
-                  />
-                ) : (
-                  <DashboardDetail
-                    addedCameras={addedCameras}
-                    onRemoveCamera={handleRemoveCamera}
-                    removedCameras={removedCameras}
-                    fileName={fileName}
-                    importError={importError}
-                    onImport={handleImport}
-                    onAddCamera={handleAddCamera}
-                    projectName={connectedProject.name}
-                    rows={trafficData}
-                  />
-                )
-              }
-            />
-
-            {/* DOCUMENT INTELLIGENCE */}
-            <Route
-              path="/document-intelligence"
-              element={
-                !connectedProject ? (
-                  <ProjectConnectionRequired />
-                ) : connectedProject.comingSoon ? (
-                  <ProjectComingSoon projectName={connectedProject.name} />
-                ) : !hasImportedFile ? (
-                  <DataImportRequired
-                    featureName="Document Intelligence"
-                    onImport={handleImport}
-                    onLoadSample={handleLoadSampleData}
-                    projectName={connectedProject.name}
-                  />
-                ) : (
-                  <DocumentIntelligence
-                    fileName={fileName}
-                    projectName={connectedProject.name}
-                    rows={trafficData}
-                  />
-                )
-              }
-            />
-
-            {/* VEHICLE INFORMATION */}
-            <Route path="/vehicle-information" element={<VehicleInformation />} />
-
-            {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
-            <Route path="/rules-events" element={<RulesEventsPage />} />
-
-            {/* ACCOUNT */}
-            <Route path="/profile" element={<ProfilePage />} />
-            <Route
-              path="/settings"
-              element={
-                <SettingsPage
-                  notificationSoundEnabled={notificationSoundEnabled}
-                  setNotificationSoundEnabled={setNotificationSoundEnabled}
+            <section className="content-wrap">
+              <Routes>
+                {/* HOME */}
+                <Route path="/" element={<Navigate replace to="/home" />} />
+                <Route
+                  path="/home"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <PlaceholderPage cameraCount={addedCameras.length} fileName={fileName} rows={trafficData} />
+                    )
+                  }
                 />
-              }
-            />
 
-            {/* OTHER PLATFORM PAGES */}
-            {routePaths
-              .filter(
-                (path) =>
-                  path !== '/home' &&
-                  path !== '/dashboards' &&
-                  path !== '/ontology' &&
-                  path !== '/knowledge-graph' &&
-                  path !== '/query' &&
-                  path !== '/document-intelligence' &&
-                  path !== '/vehicle-information' &&
-                  path !== '/rules-events' &&
-                  path !== '/profile' &&
-                  path !== '/settings'
-              )
-              .map((path) => (
-                <Route element={<PlaceholderPage />} key={path} path={path} />
-              ))}
+                {/* PROJECTS MANAGEMENT (NEO4J DESKTOP STYLE) */}
+                <Route
+                  path="/projects"
+                  element={
+                    <ProjectsPage
+                      connectedProject={connectedProject}
+                      fileName={fileName}
+                      hasImportedFile={hasImportedFile}
+                      importError={importError}
+                      onCreateProject={handleCreateProject}
+                      onDeleteProject={handleDeleteProject}
+                      onImport={handleImport}
+                      onLoadSampleData={handleLoadSampleData}
+                      onProjectConnect={handleProjectConnect}
+                      onProjectDisconnect={handleProjectDisconnect}
+                      onSelectProject={handleSelectProject}
+                      projectList={projectList}
+                      rows={trafficData}
+                      selectedProject={selectedProject}
+                    />
+                  }
+                />
 
-            {/* UNKNOWN URL */}
-            <Route path="*" element={<Navigate replace to="/home" />} />
-          </Routes>
-        </section>
-      </main>
-      </div>
+                {/* ONTOLOGY */}
+                <Route
+                  path="/ontology"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <OntologyPage
+                        fileName={fileName}
+                        importError={importError}
+                        onImport={handleImport}
+                        onLoadSampleData={handleLoadSampleData}
+                        projectName={connectedProject.name}
+                        rows={trafficData}
+                      />
+                    )
+                  }
+                />
+
+                {/* KNOWLEDGE GRAPH */}
+                <Route
+                  path="/knowledge-graph"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <KnowledgeGraphPage
+                        fileName={fileName}
+                        importError={importError}
+                        onImport={handleImport}
+                        projectName={connectedProject.name}
+                        rows={trafficData}
+                      />
+                    )
+                  }
+                />
+
+                {/* QUERY */}
+                <Route
+                  path="/query"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <QueryPage fileName={fileName} rows={trafficData} />
+                    )
+                  }
+                />
+
+                {/* DOCUMENT INTELLIGENCE */}
+                <Route
+                  path="/document-intelligence"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <DocumentIntelligence
+                        fileName={fileName}
+                        importError={importError}
+                        onImport={handleImport}
+                        projectName={connectedProject.name}
+                        rows={trafficData}
+                      />
+                    )
+                  }
+                />
+
+                {/* DASHBOARDS HUB */}
+                <Route
+                  path="/dashboards"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <DashboardHub
+                        fileName={fileName}
+                        hasImportedFile={hasImportedFile}
+                        importError={importError}
+                        onImport={handleImport}
+                        onLoadSampleData={handleLoadSampleData}
+                        projectName={connectedProject.name}
+                        rows={trafficData}
+                      />
+                    )
+                  }
+                />
+
+                {/* DASHBOARD DETAILS */}
+                <Route
+                  path="/dashboards/:kind"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <DashboardDetail
+                        addedCameras={addedCameras}
+                        onRemoveCamera={handleRemoveCamera}
+                        removedCameras={removedCameras}
+                        fileName={fileName}
+                        importError={importError}
+                        onImport={handleImport}
+                        onAddCamera={handleAddCamera}
+                        projectName={connectedProject.name}
+                        rows={trafficData}
+                      />
+                    )
+                  }
+                />
+
+                {/* VEHICLE INFORMATION */}
+                <Route path="/vehicle-information" element={<VehicleInformation />} />
+
+                {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
+                <Route path="/rules-events" element={<RulesEventsPage />} />
+
+                {/* PROFILE & SETTINGS */}
+                <Route path="/profile" element={<ProfilePage />} />
+                <Route
+                  path="/settings"
+                  element={
+                    <SettingsPage
+                      notificationSoundEnabled={notificationSoundEnabled}
+                      setNotificationSoundEnabled={setNotificationSoundEnabled}
+                    />
+                  }
+                />
+
+                {/* OTHER PLATFORM PAGES */}
+                {routePaths
+                  .filter(
+                    (path) =>
+                      path !== '/home' &&
+                      path !== '/dashboards' &&
+                      path !== '/ontology' &&
+                      path !== '/knowledge-graph' &&
+                      path !== '/query' &&
+                      path !== '/document-intelligence' &&
+                      path !== '/vehicle-information' &&
+                      path !== '/rules-events' &&
+                      path !== '/profile' &&
+                      path !== '/settings'
+                  )
+                  .map((path) => (
+                    <Route element={<PlaceholderPage />} key={path} path={path} />
+                  ))}
+
+                {/* UNKNOWN URL */}
+                <Route path="*" element={<Navigate replace to="/home" />} />
+              </Routes>
+            </section>
+          </main>
+        </div>
+      </ErrorBoundary>
     </ProtectedRoute>
   )
 }

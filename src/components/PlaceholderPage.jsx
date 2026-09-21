@@ -12,8 +12,22 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { navigation } from '../data/navigation'
 import { useAuth } from '../context/AuthContext'
+import { navigation } from '../data/navigation'
+
+function getTimeBasedGreeting() {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 12) {
+    return 'Good morning'
+  }
+  if (hour >= 12 && hour < 17) {
+    return 'Good afternoon'
+  }
+  if (hour >= 17 && hour < 22) {
+    return 'Good evening'
+  }
+  return 'Good night'
+}
 
 const pageContent = {
   Home: {
@@ -58,13 +72,19 @@ export default function PlaceholderPage({ cameraCount = 0, rows = [], fileName =
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const [now, setNow] = useState(() => new Date())
+  const [greeting, setGreeting] = useState(() => getTimeBasedGreeting())
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setGreeting(getTimeBasedGreeting())
+    }, 30000)
+    return () => clearInterval(timer)
+  }, [])
+
   const page = navigation.find(({ path }) => path === pathname) ?? navigation[0]
   const content = pageContent[page.label] ?? pageContent.Home
   const Icon = iconFor[page.label] ?? page.icon
-  const displayName = user?.displayName || user?.username || 'VisionIQ user'
-  const hour = now.getHours()
-  const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+  const userName = user?.displayName || user?.username || 'User'
 
   const importedSourceCount = new Set(
     (rows || []).map((row) => row.sourceFile || row.fileName || row.camera || fileName || 'VisionIQ feed')
@@ -101,13 +121,12 @@ export default function PlaceholderPage({ cameraCount = 0, rows = [], fileName =
         cta: 'View details',
       }))
 
-  useEffect(() => {
-    if (page.label !== 'Home') return undefined
-    const timer = window.setInterval(() => setNow(new Date()), 60000)
-    return () => window.clearInterval(timer)
-  }, [page.label])
-
-  const title = page.label === 'Home' ? `${timeGreeting}, ${displayName}` : content.title
+  const isHomePage = page.label === 'Home' || pathname === '/home' || pathname === '/'
+  const title = isHomePage
+    ? `${greeting}, ${userName}`
+    : (content.title.includes('Alex')
+      ? content.title.replace('Alex', userName)
+      : content.title)
 
   return (
     <div className="workspace-page">

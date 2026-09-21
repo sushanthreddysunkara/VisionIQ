@@ -120,17 +120,6 @@ export default function Dashboard() {
               <strong>410</strong>
             </div>
           </div>
-
-          <div className="traffic-stat-card">
-            <div className="traffic-stat-icon">
-              <Users size={19} />
-            </div>
-
-            <div>
-              <span>Pedestrians</span>
-              <strong>386</strong>
-            </div>
-          </div>
         </div>
 
         {/* CHART + SUMMARY */}

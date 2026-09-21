@@ -1,19 +1,19 @@
 import {
   Check,
   ChevronDown,
+  Database,
   FolderKanban,
   HelpCircle,
   LogOut,
-  Plus,
   Settings2,
   Sparkles,
   UserCircle,
 } from 'lucide-react'
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 import { navigation } from '../data/navigation'
 import { projects as defaultProjects } from '../data/projects'
-import { useAuth } from '../context/AuthContext'
 
 export default function Sidebar({
   projectList = defaultProjects,
@@ -22,23 +22,16 @@ export default function Sidebar({
   onSelectProject,
   onCreateProject,
 }) {
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
   const { user, logout } = useAuth()
   const [expanded, setExpanded] = useState(true)
-  const [showCreate, setShowCreate] = useState(false)
-  const [newProjectName, setNewProjectName] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
+
   const initials = (user?.displayName || user?.username || 'VI').slice(0, 2).toUpperCase()
 
-  function handleCreateSubmit(e) {
-    e.preventDefault()
-    const trimmed = newProjectName.trim()
-    if (!trimmed) return
-    onCreateProject?.(trimmed)
-    setNewProjectName('')
-    setShowCreate(false)
-  }
-
   const activeProject = selectedProject || projectList[0] || defaultProjects[0]
+  const isProjectsRoute = pathname === '/projects'
 
   return (
     <aside className="sidebar">
@@ -53,88 +46,59 @@ export default function Sidebar({
       </div>
 
       <section aria-labelledby="projects-heading" className="projects-section">
-        <button
-          aria-controls="projects-content"
-          aria-expanded={expanded}
-          className="projects-heading-row"
-          onClick={() => setExpanded((value) => !value)}
-          type="button"
-        >
-          <p className="nav-eyebrow" id="projects-heading">
+        <div className="projects-heading-row">
+          <button
+            className="nav-eyebrow"
+            id="projects-heading"
+            onClick={() => navigate('/projects')}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              textAlign: 'left',
+              width: '100%',
+              fontFamily: 'inherit',
+            }}
+            type="button"
+          >
             Projects
-          </p>
-          <span className="projects-heading-actions">
-            <span className="projects-count">{projectList.length}</span>
-            <ChevronDown
-              className={`projects-chevron ${expanded ? 'expanded' : ''}`}
-              size={15}
-            />
-          </span>
-        </button>
+          </button>
+        </div>
 
-        <div
-          className={`projects-content ${expanded ? 'expanded' : ''}`}
-          id="projects-content"
-        >
-          <div className="projects-list">
-            {projectList.map((project) => {
-              const isSelected =
-                activeProject &&
-                (activeProject.key === project.key || activeProject.name === project.name)
-              const isConnected =
-                connectedProject &&
-                (connectedProject.key === project.key || connectedProject.name === project.name)
-
-              return (
-                <button
-                  aria-pressed={isSelected}
-                  className={`project-item ${isSelected ? 'active' : ''}`}
-                  key={project.key || project.name}
-                  onClick={() => onSelectProject?.(project)}
-                  type="button"
-                >
-                  <span className="project-icon">
-                    <FolderKanban size={16} strokeWidth={1.8} />
-                  </span>
-                  <span className="project-copy">
-                    <strong>{project.name}</strong>
-                    <small>
-                      {isConnected ? '● Connected' : project.caption}
-                    </small>
-                  </span>
-                  {isSelected && (
-                    <Check className="project-check" size={16} strokeWidth={2.2} />
-                  )}
-                </button>
-              )
-            })}
-          </div>
-
-          {showCreate ? (
-            <form className="create-project-form" onSubmit={handleCreateSubmit}>
-              <input
-                autoFocus
-                onChange={(event) => setNewProjectName(event.target.value)}
-                placeholder="Project name"
-                value={newProjectName}
+        <div className="projects-content expanded" id="projects-content">
+          <button
+            aria-pressed={isProjectsRoute}
+            className={`nav-item ${isProjectsRoute ? 'active' : ''}`}
+            onClick={() => {
+              onSelectProject?.(defaultProjects[0])
+              navigate('/projects')
+            }}
+            style={{
+              width: '100%',
+              cursor: 'pointer',
+              textAlign: 'left',
+              border: 'none',
+              fontFamily: 'inherit',
+            }}
+            type="button"
+          >
+            <Database size={18} strokeWidth={1.8} />
+            <span style={{ flex: 1 }}>Instances</span>
+            {connectedProject && (
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  backgroundColor: '#22c55e',
+                  boxShadow: '0 0 6px rgba(34, 197, 94, 0.7)',
+                  display: 'inline-block',
+                }}
+                title="Connected"
               />
-              <div className="create-project-actions">
-                <button type="submit">Create</button>
-                <button onClick={() => setShowCreate(false)} type="button">
-                  Cancel
-                </button>
-              </div>
-            </form>
-          ) : (
-            <button
-              className="create-project-button"
-              onClick={() => setShowCreate(true)}
-              type="button"
-            >
-              <Plus size={14} />
-              <span>Create project</span>
-            </button>
-          )}
+            )}
+          </button>
         </div>
       </section>
 

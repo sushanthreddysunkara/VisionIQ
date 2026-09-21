@@ -68,6 +68,7 @@ export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemo
 
       <div className="traffic-stat-grid detail-stat-grid">
         <div className="traffic-stat-card"><div className="traffic-stat-icon"><Car size={19} /></div><div><span>Traffic volume</span><strong>{summary.total.toLocaleString()}</strong></div></div>
+        <div className="traffic-stat-card"><div className="traffic-stat-icon"><Users size={19} /></div><div><span>Pedestrians</span><strong>{summary.pedestrians.toLocaleString()}</strong></div></div>
         <div className="traffic-stat-card"><div className="traffic-stat-icon"><MapPin size={19} /></div><div><span>Locations</span><strong>{summary.uniqueLocations}</strong></div></div>
         <div className="traffic-stat-card"><div className="traffic-stat-icon"><Camera size={19} /></div><div><span>Cameras</span><strong>{summary.uniqueCameras}</strong></div></div>
       </div>
