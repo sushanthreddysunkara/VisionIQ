@@ -283,7 +283,11 @@ export default function App() {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         })
         const importedRows = await parseTrafficCsv(file)
-        setTrafficData((currentRows) => appendUniqueRows(currentRows, importedRows))
+        setTrafficData((currentRows) => {
+          const importedKeySet = new Set(importedRows.map(rowKey))
+          const remainingRows = currentRows.filter((r) => !importedKeySet.has(rowKey(r)))
+          return [...importedRows, ...remainingRows]
+        })
         setFileName('sample_traffic_feed.xlsx')
         setImportError('')
         return
@@ -291,7 +295,12 @@ export default function App() {
     } catch (e) {
       console.warn('Could not load sample_traffic_feed.xlsx, falling back:', e)
     }
-    setTrafficData((currentRows) => appendUniqueRows(currentRows, normalizeTrafficData(sampleTrafficData)))
+    const fallbackRows = normalizeTrafficData(sampleTrafficData)
+    setTrafficData((currentRows) => {
+      const importedKeySet = new Set(fallbackRows.map(rowKey))
+      const remainingRows = currentRows.filter((r) => !importedKeySet.has(rowKey(r)))
+      return [...fallbackRows, ...remainingRows]
+    })
     setFileName('sample_traffic_feed.csv')
     setImportError('')
   }
@@ -353,7 +362,12 @@ export default function App() {
 
     try {
       const importedRows = await parseTrafficCsv(file)
-      setTrafficData((currentRows) => appendUniqueRows(currentRows, importedRows))
+      // Prioritize uploaded Excel/CSV records with their extracted images at the front
+      setTrafficData((currentRows) => {
+        const importedKeySet = new Set(importedRows.map(rowKey))
+        const remainingRows = currentRows.filter((r) => !importedKeySet.has(rowKey(r)))
+        return [...importedRows, ...remainingRows]
+      })
       setFileName(file.name)
       setImportError('')
     } catch (error) {

@@ -859,23 +859,17 @@ export async function extractImagesFromXlsx(arrayBuffer) {
   try {
     const zip = await JSZip.loadAsync(arrayBuffer)
 
-    // 1. Collect all media files in the archive
+    // 1. Collect all media files in the archive regardless of directory casing or folder depth
     const mediaMap = {}
     const allImages = []
+    const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.svg', '.tiff', '.tif', '.jfif', '.heic', '.avif']
 
     for (const [filePath, zipEntry] of Object.entries(zip.files)) {
       if (zipEntry.dir) continue
       const lower = filePath.toLowerCase()
-      if (
-        (lower.includes('media/') || lower.includes('pictures/') || lower.includes('drawings/')) &&
-        (lower.endsWith('.png') ||
-          lower.endsWith('.jpg') ||
-          lower.endsWith('.jpeg') ||
-          lower.endsWith('.webp') ||
-          lower.endsWith('.gif') ||
-          lower.endsWith('.bmp') ||
-          lower.endsWith('.svg'))
-      ) {
+      const hasImageExt = imageExtensions.some((ext) => lower.endsWith(ext))
+
+      if (hasImageExt) {
         const ext = lower.split('.').pop()
         const mime =
           ext === 'png'
@@ -906,6 +900,11 @@ export async function extractImagesFromXlsx(arrayBuffer) {
 
         mediaMap[filePath] = mediaObj
         mediaMap[fileName] = mediaObj
+        mediaMap[fileName.toLowerCase()] = mediaObj
+        mediaMap[filePath.toLowerCase()] = mediaObj
+        mediaMap[`../media/${fileName}`] = mediaObj
+        mediaMap[`media/${fileName}`] = mediaObj
+        mediaMap[`xl/media/${fileName}`] = mediaObj
         allImages.push(mediaObj)
       }
     }
@@ -914,14 +913,11 @@ export async function extractImagesFromXlsx(arrayBuffer) {
       return { imagesByRow: {}, allImages: [] }
     }
 
-    // 2. Parse drawing rels to map rId -> media object
-    const drawingRels = {}
+    // 2. Parse relationship files (.rels) across the entire archive
+    const relsMap = {}
     for (const [filePath, zipEntry] of Object.entries(zip.files)) {
       const lower = filePath.toLowerCase()
-      if (
-        lower.includes('rels') &&
-        (lower.includes('drawing') || lower.includes('cellimage') || lower.includes('sheet'))
-      ) {
+      if (lower.endsWith('.rels')) {
         try {
           const xmlText = await zipEntry.async('text')
           const rels = {}
@@ -931,50 +927,87 @@ export async function extractImagesFromXlsx(arrayBuffer) {
             const target = m[2]
             const baseName = target.split('/').pop()
             const mediaMatch =
-              mediaMap[baseName] || mediaMap[target] || mediaMap['xl/media/' + baseName]
+              mediaMap[target] ||
+              mediaMap[baseName] ||
+              mediaMap[baseName.toLowerCase()] ||
+              mediaMap[`xl/media/${baseName}`] ||
+              mediaMap[`../media/${baseName}`]
             if (mediaMatch) {
               rels[id] = mediaMatch
             }
           }
-          drawingRels[filePath] = rels
+          relsMap[filePath] = rels
           const baseRelName = filePath.split('/').pop()
-          drawingRels[baseRelName] = rels
+          relsMap[baseRelName] = rels
         } catch {
-          // ignore xml parse error
+          // ignore xml parse errors
         }
       }
     }
 
-    // 3. Parse drawings to locate anchors
     const imagesByRow = {}
+
+    // 3. Parse drawings XML (xl/drawings/drawing*.xml)
     for (const [filePath, zipEntry] of Object.entries(zip.files)) {
       const lower = filePath.toLowerCase()
-      if (lower.includes('drawings/') && lower.endsWith('.xml') && !lower.includes('rels')) {
+      if (lower.includes('drawing') && lower.endsWith('.xml') && !lower.endsWith('.rels')) {
         try {
           const xmlText = await zipEntry.async('text')
           const baseName = filePath.split('/').pop()
           const rels =
-            drawingRels[`xl/drawings/_rels/${baseName}.rels`] ||
-            drawingRels[`${baseName}.rels`] ||
-            Object.values(drawingRels)[0] ||
+            relsMap[`xl/drawings/_rels/${baseName}.rels`] ||
+            relsMap[`${baseName}.rels`] ||
+            relsMap[Object.keys(relsMap).find((k) => k.includes(baseName))] ||
             {}
 
+          // Match anchors: twoCellAnchor, oneCellAnchor, absoluteAnchor
           const anchorRegex =
-            /<(?:xdr:)?(?:twoCellAnchor|oneCellAnchor)[^>]*>([\s\S]*?)<\/(?:xdr:)?(?:twoCellAnchor|oneCellAnchor)>/gi
+            /<(?:[a-zA-Z0-9_-]+:)?(?:twoCellAnchor|oneCellAnchor)[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_-]+:)?(?:twoCellAnchor|oneCellAnchor)>/gi
           let anchorMatch
           while ((anchorMatch = anchorRegex.exec(xmlText)) !== null) {
             const content = anchorMatch[1]
-            const rowMatch = content.match(/<(?:xdr:)?row>(\d+)<\/(?:xdr:)?row>/i)
-            const blipMatch = content.match(/<(?:a:)?blip[^>]*r:embed="([^"]+)"/i)
-            if (rowMatch && blipMatch) {
-              const excelRow = parseInt(rowMatch[1], 10)
+            // Extract row from the <from> coordinate
+            const fromMatch = content.match(/<(?:[a-zA-Z0-9_-]+:)?from[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_-]+:)?from>/i)
+            const rowStr = fromMatch ? fromMatch[1].match(/<(?:[a-zA-Z0-9_-]+:)?row>(\d+)<\/(?:[a-zA-Z0-9_-]+:)?row>/i)?.[1] : null
+            // Extract embed / link / id attribute
+            const blipMatch = content.match(/(?:embed|link|id)="([^"]+)"/i)
+
+            if (rowStr && blipMatch) {
+              const excelRow = parseInt(rowStr, 10)
               const rId = blipMatch[1]
-              const media = rels[rId]
+              const media = rels[rId] || mediaMap[rId]
               if (media) {
-                // row 0 is header in Excel, so row 1 corresponds to data index 0
-                const dataIndex = excelRow >= 1 ? excelRow - 1 : excelRow
-                imagesByRow[dataIndex] = media
+                // In Excel drawings, row 0 is usually header, so row 1 is data row 0
+                if (excelRow >= 1) {
+                  imagesByRow[excelRow - 1] = media
+                }
+                imagesByRow[excelRow] = media
               }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // 4. Parse modern Excel In-Cell Images (xl/cellimages.xml)
+    for (const [filePath, zipEntry] of Object.entries(zip.files)) {
+      const lower = filePath.toLowerCase()
+      if (lower.includes('cellimage') && lower.endsWith('.xml') && !lower.endsWith('.rels')) {
+        try {
+          const xmlText = await zipEntry.async('text')
+          const cellRelKey = Object.keys(relsMap).find((k) => k.toLowerCase().includes('cellimage'))
+          const rels = cellRelKey ? relsMap[cellRelKey] : {}
+
+          const blipMatches = xmlText.matchAll(/(?:embed|link|id)="([^"]+)"/gi)
+          let cellImgIdx = 0
+          for (const bm of blipMatches) {
+            const rId = bm[1]
+            const media = rels[rId] || mediaMap[rId]
+            if (media && !imagesByRow[cellImgIdx]) {
+              imagesByRow[cellImgIdx] = media
+              cellImgIdx++
             }
           }
         } catch {
@@ -1069,30 +1102,59 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
       }
       const confidence = plateConfidence
 
-      // 6. Extracted Image resolution from Excel archive
+      // 6. Extracted Image resolution from Excel archive or direct cell data
       let extractedImage = row.extractedImage || null
       let hasExtractedImage = Boolean(row.hasExtractedImage)
       let extractedImageName = row.extractedImageName || null
 
+      // Check if any cell in this row contains base64 image data
+      if (!extractedImage) {
+        for (const val of Object.values(row)) {
+          if (typeof val === 'string') {
+            const s = val.trim()
+            if (s.startsWith('data:image/')) {
+              extractedImage = s
+              hasExtractedImage = true
+              break
+            }
+            if (s.length > 80 && /^[A-Za-z0-9+/=]+$/.test(s.slice(0, 80))) {
+              if (s.startsWith('iVBORw0KGgo')) {
+                extractedImage = `data:image/png;base64,${s}`
+                hasExtractedImage = true
+                break
+              } else if (s.startsWith('/9j/')) {
+                extractedImage = `data:image/jpeg;base64,${s}`
+                hasExtractedImage = true
+                break
+              }
+            }
+          }
+        }
+      }
+
       if (!extractedImage && extractedMedia) {
-        // Priority 1: Match by drawing anchor row
+        // Priority 1: Match by drawing anchor row (check index and index+1 for 0/1-offset)
         if (mediaByRow[index]) {
           extractedImage = mediaByRow[index].dataUrl
           hasExtractedImage = true
           extractedImageName = mediaByRow[index].fileName
+        } else if (mediaByRow[index + 1]) {
+          extractedImage = mediaByRow[index + 1].dataUrl
+          hasExtractedImage = true
+          extractedImageName = mediaByRow[index + 1].fileName
+        } else if (index > 0 && mediaByRow[index - 1]) {
+          extractedImage = mediaByRow[index - 1].dataUrl
+          hasExtractedImage = true
+          extractedImageName = mediaByRow[index - 1].fileName
         }
 
-        // Priority 2: Match by filename if row mentions image name
+        // Priority 2: Match if any cell in the row mentions the image filename
         if (!extractedImage && allMediaList.length > 0) {
-          const rawImgVal = String(valueFor(row, aliases.vehicleImage) || '').toLowerCase()
-          const rawPathVal = String(valueFor(row, aliases.vehicleImagePath) || '').toLowerCase()
+          const allCellTexts = Object.values(row).map((v) => String(v || '').toLowerCase())
           const match = allMediaList.find((img) => {
-            const name = (img.fileName || '').toLowerCase()
+            const name = (img.fileName || img.name || '').toLowerCase()
             const baseName = name.replace(/\.[^.]+$/, '')
-            return (
-              (rawImgVal && (rawImgVal.includes(name) || rawImgVal.includes(baseName))) ||
-              (rawPathVal && (rawPathVal.includes(name) || rawPathVal.includes(baseName)))
-            )
+            return allCellTexts.some((txt) => txt.includes(name) || (baseName.length >= 3 && txt.includes(baseName)))
           })
           if (match) {
             extractedImage = match.dataUrl
@@ -1101,18 +1163,21 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
           }
         }
 
-        // Priority 3: Single image in uploaded Excel workbook -> assign to row
+        // Priority 3: Single image in workbook -> assign to all rows
         if (!extractedImage && allMediaList.length === 1) {
           extractedImage = allMediaList[0].dataUrl
           hasExtractedImage = true
           extractedImageName = allMediaList[0].fileName
         }
 
-        // Priority 4: Sequential row matching
-        if (!extractedImage && allMediaList[index]) {
-          extractedImage = allMediaList[index].dataUrl
-          hasExtractedImage = true
-          extractedImageName = allMediaList[index].fileName
+        // Priority 4: Sequential matching to images extracted from Excel archive
+        if (!extractedImage && allMediaList.length > 0) {
+          const seq = allMediaList[index] || allMediaList[index % allMediaList.length]
+          if (seq) {
+            extractedImage = seq.dataUrl
+            hasExtractedImage = true
+            extractedImageName = seq.fileName
+          }
         }
       }
 
@@ -1315,21 +1380,40 @@ export function parseTrafficDataFile(file) {
           const buffer = e.target.result
           const data = new Uint8Array(buffer)
           const workbook = XLSX.read(data, { type: 'array', cellDates: true })
-          const sheetName = workbook.SheetNames[0]
+          let sheetName = workbook.SheetNames[0]
           if (!sheetName) {
             reject(new Error('The Excel workbook does not contain any sheets.'))
             return
           }
-          const worksheet = workbook.Sheets[sheetName]
-          const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+          let worksheet = workbook.Sheets[sheetName]
+          let rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' })
 
-          // Extract images embedded in the Excel archive (xl/media, drawings, anchors)
+          // If first sheet is empty or an intro tab, find the sheet that actually contains rows
+          if (!rows.length && workbook.SheetNames.length > 1) {
+            for (const name of workbook.SheetNames) {
+              const ws = workbook.Sheets[name]
+              const candidate = XLSX.utils.sheet_to_json(ws, { defval: '' })
+              if (candidate.length > 0) {
+                sheetName = name
+                worksheet = ws
+                rows = candidate
+                break
+              }
+            }
+          }
+
+          // Extract images embedded in the Excel archive (xl/media, drawings, anchors, cellimages)
           const extractedMedia = await extractImagesFromXlsx(buffer)
           const normalized = normalizeTrafficData(rows, extractedMedia)
 
           if (!normalized.length) {
             reject(new Error('The Excel sheet does not contain any valid data rows.'))
             return
+          }
+
+          for (const r of normalized) {
+            r.sourceFile = file.name
+            r.fileName = file.name
           }
 
           normalized.extractedMediaCount = extractedMedia.allImages?.length || 0
@@ -1357,6 +1441,10 @@ export function parseTrafficDataFile(file) {
         if (!normalized.length) {
           reject(new Error('The CSV does not contain any valid data rows.'))
           return
+        }
+        for (const r of normalized) {
+          r.sourceFile = file.name
+          r.fileName = file.name
         }
         resolve(normalized)
       },
