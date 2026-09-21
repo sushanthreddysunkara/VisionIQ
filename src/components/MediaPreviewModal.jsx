@@ -150,18 +150,20 @@ export default function MediaPreviewModal({
     document.body.removeChild(link)
   }
 
-  // Determine actual image source for vehicle
-  const vehicleSrc = !imgLoadError && (
+  // Determine actual image source for vehicle: Prioritize extracted image from Excel archive
+  const vehicleSrc =
     row.extractedImage ||
-    row.vehicleImageDataUrl ||
-    (vehicleImagePath && (vehicleImagePath.startsWith('http') || vehicleImagePath.startsWith('/')) ? vehicleImagePath : '')
-  )
+    (!imgLoadError && vehicleImagePath && (vehicleImagePath.startsWith('http') || vehicleImagePath.startsWith('data:') || vehicleImagePath.startsWith('/'))
+      ? vehicleImagePath
+      : (!imgLoadError && row.vehicleImage && (row.vehicleImage.startsWith('http') || row.vehicleImage.startsWith('data:') || row.vehicleImage.startsWith('/'))
+        ? row.vehicleImage
+        : row.vehicleImageDataUrl))
 
   // Determine actual image source for plate
   const plateSrc =
-    (!plateLoadError && plateImagePath && (plateImagePath.startsWith('http') || plateImagePath.startsWith('/')))
+    (!plateLoadError && plateImagePath && (plateImagePath.startsWith('http') || plateImagePath.startsWith('data:') || plateImagePath.startsWith('/'))
       ? plateImagePath
-      : null
+      : null)
 
   return (
     <div className="media-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">

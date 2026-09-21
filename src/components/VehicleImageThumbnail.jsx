@@ -9,16 +9,30 @@ export default function VehicleImageThumbnail({
   showBadge = true,
 }) {
   const [imageLoadError, setImageLoadError] = useState(false)
-  const imgSrc = row?.extractedImage || row?.vehicleImageDataUrl || row?.vehicleImagePath || row?.vehicleImage
-
   if (!row) return null
-
-  const hasExtracted = Boolean(row.hasExtractedImage)
-  const hasVideo = Boolean(row.videoClipPath || row.videoUrl || row.video)
 
   useEffect(() => {
     setImageLoadError(false)
-  }, [row.id, row.observationId, imgSrc])
+  }, [row.id, row.observationId])
+
+  // Priority 1: Image directly extracted from Excel (.xlsx) archive
+  // Priority 2: Direct URL or base64 image from CSV / Excel row (unless failed to load)
+  // Priority 3: Generated surveillance telemetry graphic
+  const directPath =
+    (!imageLoadError && row.vehicleImagePath && (row.vehicleImagePath.startsWith('http') || row.vehicleImagePath.startsWith('data:') || row.vehicleImagePath.startsWith('/')))
+      ? row.vehicleImagePath
+      : (!imageLoadError && row.vehicleImage && (row.vehicleImage.startsWith('http') || row.vehicleImage.startsWith('data:') || row.vehicleImage.startsWith('/')))
+        ? row.vehicleImage
+        : null
+
+  const imgSrc =
+    row.extractedImage ||
+    directPath ||
+    row.vehicleImageDataUrl ||
+    (!imageLoadError ? row.vehicleImagePath || row.vehicleImage : null)
+
+  const hasExtracted = Boolean(row.hasExtractedImage || row.extractedImage)
+  const hasVideo = Boolean(row.videoClipPath || row.videoUrl || row.video)
 
   const sizeClasses = {
     sm: 'veh-thumb-sm', // 44x30

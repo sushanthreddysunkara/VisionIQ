@@ -1218,7 +1218,32 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
       const volume = rawVolume !== '' ? numberOrFallback(rawVolume, 1) : 1
       const pedestrians = rawPeds !== '' ? numberOrFallback(rawPeds, isPed ? 1 : 0) : (isPed ? 1 : 0)
 
-      const vehicleImageDataUrl = extractedImage || row.vehicleImageDataUrl || ''
+      // Prioritize image extracted from Excel archive or explicit URL/data from CSV
+      const explicitImg =
+        extractedImage ||
+        (vehicleImagePath && (vehicleImagePath.startsWith('data:image') || vehicleImagePath.startsWith('http') || vehicleImagePath.startsWith('/')) ? vehicleImagePath : null) ||
+        (rawVehicleImage && (rawVehicleImage.startsWith('data:image') || rawVehicleImage.startsWith('http') || rawVehicleImage.startsWith('/')) ? rawVehicleImage : null)
+
+      const vehicleImageDataUrl =
+        explicitImg ||
+        row.vehicleImageDataUrl ||
+        generateSurveillanceSvgDataUrl(
+          {
+            id,
+            vehicleType,
+            type,
+            vehicleNumberPlate,
+            numberPlate,
+            speed,
+            speedLimit,
+            overSpeed,
+            isOverSpeed,
+            plateConfidence,
+            timestampIst: timestamp,
+            camera,
+          },
+          index
+        )
 
       return {
         // Exact 14 CSV parameters

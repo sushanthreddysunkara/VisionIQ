@@ -22,6 +22,7 @@ import {
   SunMedium,
   Table2,
   TrafficCone,
+  Upload,
   X,
 } from 'lucide-react'
 import VehicleBadge from './VehicleBadge'
@@ -84,7 +85,14 @@ function downloadCsv(rows, projectName) {
   URL.revokeObjectURL(url)
 }
 
-export default function DocumentIntelligence({ rows = [], projectName = 'Platform A', fileName = 'Active Dataset' }) {
+export default function DocumentIntelligence({
+  rows = [],
+  projectName = 'Platform A',
+  fileName = 'Active Dataset',
+  onImport,
+  onLoadSampleData,
+  importError,
+}) {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterType, setFilterType] = useState('ALL')
   const [filterSignal, setFilterSignal] = useState('ALL')
@@ -200,6 +208,29 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
           </p>
         </div>
         <div className="document-actions">
+          {onImport && (
+            <label className="document-action secondary" style={{ cursor: 'pointer' }} title="Import CSV or Excel spreadsheet with telemetry & images">
+              <Upload size={16} />
+              <span>Import CSV / XLSX</span>
+              <input
+                accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel"
+                onChange={onImport}
+                style={{ display: 'none' }}
+                type="file"
+              />
+            </label>
+          )}
+          {onLoadSampleData && (
+            <button
+              className="document-action secondary"
+              onClick={onLoadSampleData}
+              title="Load sample Excel feed with extracted vehicle images and video clips"
+              type="button"
+            >
+              <FileSpreadsheet size={16} />
+              <span>Load Sample Excel</span>
+            </button>
+          )}
           <button className="document-action secondary" onClick={() => window.print()} type="button">
             <Printer size={16} />
             <span>Export PDF / Print</span>
@@ -210,6 +241,12 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
           </button>
         </div>
       </div>
+
+      {importError && (
+        <div className="csv-import-error no-print" role="alert" style={{ margin: '0 0 16px 0' }}>
+          {importError}
+        </div>
+      )}
 
       {/* Official Document Canvas Paper */}
       <div className="document-paper">

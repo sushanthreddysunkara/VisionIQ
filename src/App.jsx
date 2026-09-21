@@ -482,6 +482,7 @@ export default function App() {
                         fileName={fileName}
                         importError={importError}
                         onImport={handleImport}
+                        onLoadSampleData={handleLoadSampleData}
                         projectName={connectedProject.name}
                         rows={trafficData}
                       />
