@@ -499,7 +499,7 @@ export default function QueryKnowledgeGraph({
             'border-style': 'dashed',
             'border-color': 'data(borderColor)',
             'border-opacity': 0.8,
-            'border-radius': 16,
+            'corner-radius': 16,
             label: 'data(label)',
             'text-valign': 'top',
             'text-halign': 'center',
