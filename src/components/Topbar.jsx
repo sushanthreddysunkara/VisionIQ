@@ -18,6 +18,7 @@ export default function Topbar({
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const seenNotificationIds = useRef(new Set())
+  const notificationWrapRef = useRef(null)
   const activeItem = navigation.find(({ path }) => path === pathname)?.label ?? 'Home'
 
   useEffect(() => {
@@ -32,6 +33,17 @@ export default function Topbar({
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000)
     return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    function closeNotifications(event) {
+      if (notificationWrapRef.current && !notificationWrapRef.current.contains(event.target)) {
+        setNotificationsOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', closeNotifications)
+    return () => document.removeEventListener('pointerdown', closeNotifications)
   }, [])
 
   const dateLabel = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
@@ -71,7 +83,7 @@ export default function Topbar({
         >
           <Search size={18} />
         </button>
-        <div className="notification-wrap">
+        <div className="notification-wrap" ref={notificationWrapRef}>
           <button
             aria-expanded={notificationsOpen}
             aria-haspopup="menu"

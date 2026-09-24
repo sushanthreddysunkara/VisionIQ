@@ -2587,6 +2587,180 @@ body { background: #f4f7fc; }
 .placeholder-status { color: #3d6de0; background: #edf2ff; }
 .ontology-page { padding: 10px 0 0; }
 .ontology-topbar h1 { color: var(--ink); }
+.vehicle-information-page { display: grid; gap: 20px; }
+.vehicle-information-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.vehicle-information-intro h1 { max-width: 780px; }
+.vehicle-hero-mark { display: grid; place-items: center; width: 58px; height: 58px; color: #fff; border-radius: 16px; background: linear-gradient(135deg, #2769cf, #2a9a86); box-shadow: 0 12px 25px rgba(39,105,207,.2); }
+.vehicle-search { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 8px 9px 8px 17px; border: 1px solid #d7e3f3; border-radius: 14px; background: #fff; box-shadow: 0 8px 22px rgba(31,55,93,.05); color: #5d7ba6; }
+.vehicle-search input { flex: 1; min-width: 0; border: 0; outline: 0; color: #18355e; background: transparent; font-size: 12px; }
+.vehicle-search-clear { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 50%; color: #6c84a5; background: #f1f5fb; }
+.vehicle-search-submit { min-height: 40px; padding: 0 20px; }
+.vehicle-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.vehicle-stat-grid > div { display: grid; gap: 8px; padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: 0 8px 20px rgba(31,55,93,.04); }
+.vehicle-stat-grid span { display: flex; align-items: center; gap: 7px; color: #7185a1; font-size: 10px; }
+.vehicle-stat-grid span svg { color: #3475d1; }
+.vehicle-stat-grid strong { color: #1d3b67; font: 700 27px/1 'Space Grotesk', sans-serif; }
+.vehicle-stat-grid small { color: #8a9bb3; font-size: 10px; }
+.vehicle-panel { border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 10px 25px rgba(31,55,93,.045); }
+.vehicle-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 20px 20px 13px; }
+.vehicle-panel-heading h2 { margin: 5px 0 0; color: #253b60; font-size: 18px; }
+.vehicle-panel-heading > span { display: inline-flex; align-items: center; gap: 5px; color: #7186a4; font-size: 10px; }
+.vehicle-list { padding: 0 12px 12px; }
+.vehicle-list-item { display: grid; grid-template-columns: 38px minmax(130px, 1fr) minmax(160px, .7fr) auto 17px; align-items: center; gap: 12px; width: 100%; padding: 13px 9px; border: 0; border-top: 1px solid #edf2f8; color: inherit; background: transparent; text-align: left; transition: background .15s ease, transform .15s ease; }
+.vehicle-list-item:hover, .vehicle-list-item.selected { background: #f3f8ff; transform: translateX(2px); }
+.vehicle-list-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: #cf4a55; background: #fff0f1; }
+.vehicle-list-copy, .vehicle-list-meta { display: grid; gap: 4px; }
+.vehicle-list-copy strong { color: #29466f; font-size: 12px; }
+.vehicle-list-copy span, .vehicle-list-meta span { color: #8193ad; font-size: 10px; }
+.vehicle-list-meta span { display: flex; align-items: center; gap: 5px; }
+.vehicle-list-meta svg { color: #6c91c5; }
+.vehicle-status { display: inline-flex; width: fit-content; padding: 5px 8px; border-radius: 999px; font-size: 9px; font-weight: 700; }
+.status-tracking { color: #21744e; background: #e6f7ed; }
+.status-escaped { color: #a85d21; background: #fff1dd; }
+.status-detected { color: #3269ba; background: #e8f1ff; }
+.vehicle-detail-layout { display: grid; grid-template-columns: minmax(340px, .85fr) minmax(0, 1.15fr); gap: 18px; align-items: start; }
+.vehicle-detail-column { display: grid; gap: 16px; }
+.vehicle-back-button { display: inline-flex; align-items: center; gap: 6px; width: fit-content; padding: 0; border: 0; color: #3b70cb; background: transparent; font-size: 11px; font-weight: 700; }
+.vehicle-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 0 20px 20px; overflow: hidden; border: 1px solid #e7eef7; border-radius: 12px; background: #e7eef7; }
+.vehicle-summary-grid > div { display: grid; grid-template-columns: 18px 1fr; gap: 5px 8px; padding: 13px; background: #fff; }
+.vehicle-summary-grid svg { grid-row: span 2; color: #3d76d1; }
+.vehicle-summary-grid span { color: #8496ad; font-size: 9px; }
+.vehicle-summary-grid strong { color: #29466f; font-size: 11px; }
+.vehicle-timeline-panel { overflow: hidden; }
+.vehicle-timeline { position: relative; padding: 8px 20px 22px 38px; }
+.vehicle-timeline-event { position: relative; display: grid; grid-template-columns: 24px 1fr; gap: 13px; padding: 10px 0; }
+.vehicle-timeline-marker { position: relative; z-index: 1; display: grid; place-items: center; width: 25px; height: 25px; margin-left: -31px; border: 3px solid #fff; border-radius: 50%; color: #fff; background: #2c9a7d; box-shadow: 0 0 0 2px #bfe8dc; }
+.vehicle-timeline-marker.collision { background: #d94d58; box-shadow: 0 0 0 2px #ffd0d4; }
+.vehicle-timeline-line { position: absolute; top: 34px; bottom: -10px; left: -18px; width: 2px; background: #d6e9e3; }
+.vehicle-timeline-event:last-child .vehicle-timeline-line { display: none; }
+.vehicle-timeline-card { padding: 13px; border: 1px solid #e5edf7; border-radius: 12px; background: #fbfdff; }
+.vehicle-timeline-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.vehicle-timeline-top strong { color: #29466f; font-size: 11px; }
+.vehicle-timeline-top span { padding: 4px 7px; border-radius: 999px; color: #34745f; background: #e8f7f1; font-size: 9px; font-weight: 700; }
+.vehicle-timeline-top span.timeline-danger { color: #bd3f4b; background: #fff0f1; }
+.vehicle-timeline-card h3 { margin: 8px 0 4px; color: #1d3d69; font-size: 13px; }
+.vehicle-timeline-card p { display: flex; align-items: center; gap: 5px; margin: 0; color: #647d9e; font-size: 10px; }
+.vehicle-timeline-meta { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-top: 10px; color: #899ab1; font-size: 9px; }
+.vehicle-timeline-meta span { display: inline-flex; align-items: center; gap: 4px; }
+.vehicle-timeline-meta svg { color: #3d9a7e; }
+.vehicle-timeline-arrow { position: absolute; bottom: -3px; left: -24px; z-index: 1; color: #7db6a5; }
+.vehicle-map-panel { min-width: 0; overflow: hidden; }
+.vehicle-map-shell { position: relative; min-height: 560px; margin: 0 12px; overflow: hidden; border: 1px solid #dce8f5; border-radius: 13px; }
+.vehicle-google-map, .vehicle-map-fallback { position: absolute; inset: 0; }
+.vehicle-map-fallback { overflow: hidden; background: #e8f1f8; background-image: linear-gradient(32deg, transparent 46%, rgba(255,255,255,.8) 47%, rgba(255,255,255,.8) 50%, transparent 51%), linear-gradient(-18deg, transparent 45%, rgba(255,255,255,.7) 46%, rgba(255,255,255,.7) 49%, transparent 50%); }
+.vehicle-map-fallback-grid { position: absolute; inset: 0; opacity: .45; background-size: 42px 42px; background-image: linear-gradient(#c8dce9 1px, transparent 1px), linear-gradient(90deg, #c8dce9 1px, transparent 1px); }
+.vehicle-map-fallback-label { position: absolute; top: 14px; left: 14px; display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px; color: #456987; background: rgba(255,255,255,.9); font-size: 10px; font-weight: 700; }
+.vehicle-map-fallback-note { position: absolute; right: 14px; bottom: 14px; padding: 8px 10px; border-radius: 8px; color: #5b7189; background: rgba(255,255,255,.9); font-size: 9px; }
+.vehicle-map-fallback-note strong { color: #376ccb; }
+.map-camera-dot, .map-route-dot { position: absolute; z-index: 2; display: grid; place-items: center; transform: translate(-50%, -50%); }
+.map-camera-dot { width: 24px; height: 24px; border: 2px solid #fff; border-radius: 50%; color: #fff; background: #3677d3; box-shadow: 0 3px 10px rgba(37,88,157,.35); }
+.map-route-dot { width: 14px; height: 14px; border: 3px solid #fff; border-radius: 50%; background: #2b9c7b; box-shadow: 0 2px 8px rgba(31,100,79,.4); }
+.map-route-dot.collision { width: 18px; height: 18px; background: #d94d58; }
+.map-route-line { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; }
+.map-route-line polyline { stroke: #299a7b; stroke-width: 1.1; stroke-dasharray: 2 1; }
+.vehicle-map-legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 13px 20px 17px; color: #7186a2; font-size: 10px; }
+.vehicle-map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.vehicle-map-legend i { display: block; width: 10px; height: 10px; border-radius: 50%; }
+.legend-camera { background: #3677d3; }.legend-route { background: #2b9c7b; }.legend-collision { background: #d94d58; }
+.vehicle-empty-state { display: grid; justify-items: center; gap: 8px; padding: 60px 20px; border: 1px dashed #cbdced; border-radius: 16px; background: #fbfdff; text-align: center; color: #6f84a0; }
+.vehicle-empty-state svg { color: #d27a3d; }.vehicle-empty-state h2 { margin: 0; color: #29466f; font-size: 20px; }.vehicle-empty-state p { margin: 0; font-size: 12px; }
+.collision-intelligence-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(260px, .8fr) minmax(0, 1.1fr); gap: 16px; }
+.collision-chart-panel, .collision-donut-panel, .collision-column-panel { min-width: 0; overflow: hidden; }
+.collision-bars { display: grid; gap: 17px; padding: 12px 20px 23px; }
+.collision-bar-row { display: grid; grid-template-columns: 70px minmax(0, 1fr) 20px; align-items: center; gap: 10px; }
+.collision-bar-label { display: inline-flex; align-items: center; gap: 6px; color: #536e92; font-size: 10px; font-weight: 700; }
+.collision-bar-label svg { color: #3978db; }
+.collision-bar-track { height: 9px; overflow: hidden; border-radius: 99px; background: #edf2f8; }
+.collision-bar-track i { display: block; height: 100%; min-width: 4px; border-radius: inherit; }
+.collision-bar-row strong { color: #29466f; font-size: 11px; text-align: right; }
+.collision-donut { position: relative; height: 145px; }
+.collision-donut > strong, .collision-donut > span { position: absolute; left: 50%; transform: translateX(-50%); }
+.collision-donut > strong { top: 51px; color: #26476f; font: 700 22px/1 'Space Grotesk', sans-serif; }
+.collision-donut > span { top: 78px; color: #8498b0; font-size: 9px; }
+.collision-legend { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px 12px; padding: 0 20px 20px; }
+.collision-legend span { display: flex; align-items: center; gap: 6px; color: #7185a1; font-size: 9px; }
+.collision-legend i { width: 8px; height: 8px; border-radius: 50%; }
+.collision-legend b { margin-left: auto; color: #29466f; }
+.collision-recharts { height: 196px; padding: 5px 14px 13px 7px; }
+.camera-add-button { flex: 0 0 auto; min-height: 35px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; font-size: 10px; }
+.camera-control-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.camera-remove-button, .camera-remove-confirm { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid rgba(255, 214, 214, .55); border-radius: 7px; color: #fff0f0; background: rgba(126, 38, 55, .55); font-size: 10px; font-weight: 700; }
+.camera-remove-button { min-height: 35px; padding: 0 12px; }
+.camera-remove-button:hover, .camera-remove-confirm:hover { background: #9d3448; }
+.camera-dialog-copy { margin: -4px 0 0; color: #7185a1; font-size: 11px; line-height: 1.45; }
+.camera-remove-list { display: grid; gap: 8px; max-height: min(430px, 55vh); overflow-y: auto; padding-right: 2px; }
+.camera-remove-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px; border: 1px solid #e1eaf4; border-radius: 9px; background: #f8fbff; }
+.camera-remove-row > div { display: grid; gap: 4px; min-width: 0; }
+.camera-remove-row strong { overflow: hidden; color: #29466f; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.camera-remove-row span { overflow: hidden; color: #7c90aa; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.camera-remove-confirm { flex: 0 0 auto; min-height: 30px; padding: 0 9px; color: #a92f43; border-color: #f0c5cb; background: #fff1f2; }
+.modal-backdrop { position: fixed !important; inset: 0 !important; z-index: 150000 !important; display: grid; place-items: center; padding: 20px; background: rgba(17, 34, 61, .42); }
+.camera-dialog { display: grid; gap: 15px; width: min(430px, 100%); padding: 22px; border: 1px solid #d9e5f2; border-radius: 16px; background: #fff; box-shadow: 0 25px 70px rgba(15, 39, 73, .25); }
+.camera-dialog .panel-heading { padding: 0 0 4px; }
+.camera-dialog label { display: grid; gap: 7px; color: #536e92; font-size: 10px; font-weight: 700; }
+.camera-dialog label span { color: #91a2b8; font-weight: 400; }
+.camera-dialog input { min-height: 40px; padding: 0 11px; border: 1px solid #dce6f1; border-radius: 8px; color: #233f67; background: #fbfdff; outline: 0; font-size: 11px; }
+.camera-dialog input:focus { border-color: #3978db; box-shadow: 0 0 0 3px rgba(57, 120, 219, .12); }
+.modal-close { width: 28px; height: 28px; border: 0; border-radius: 7px; color: #6e86a5; background: #f2f6fb; font-size: 20px; line-height: 1; }
+@media (max-width: 1120px) { .collision-intelligence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.collision-column-panel { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .collision-intelligence-grid { grid-template-columns: 1fr; }.collision-column-panel { grid-column: auto; }.camera-coverage-hero { flex-wrap: wrap; }.camera-control-actions { width: 100%; justify-content: stretch; }.camera-control-actions button { flex: 1; }.camera-add-button { width: auto; justify-content: center; } }
+@media (max-width: 1000px) { .vehicle-stat-grid { grid-template-columns: repeat(2, 1fr); }.vehicle-detail-layout { grid-template-columns: 1fr; }.vehicle-map-shell { min-height: 460px; } }
+@media (max-width: 640px) { .vehicle-information-intro { align-items: flex-start; }.vehicle-hero-mark { width: 46px; height: 46px; }.vehicle-search { flex-wrap: wrap; padding: 10px 12px; }.vehicle-search input { flex-basis: calc(100% - 30px); }.vehicle-search-submit { width: 100%; }.vehicle-stat-grid { grid-template-columns: 1fr 1fr; }.vehicle-list-item { grid-template-columns: 34px 1fr auto; }.vehicle-list-meta { display: none; }.vehicle-list-item > svg { display: none; }.vehicle-summary-grid { grid-template-columns: 1fr; }.vehicle-map-shell { min-height: 380px; } }
+
+/* Keep global navigation and live alerts above page content. */
+.topbar {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 1200 !important;
+}
+.notification-wrap {
+  position: relative;
+  z-index: 1300;
+}
+.notification-menu {
+  z-index: 1400 !important;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(560px, calc(100vh - 100px));
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid #c5d9f4;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .99);
+  box-shadow: 0 24px 60px rgba(24, 61, 112, .24), 0 4px 14px rgba(24, 61, 112, .1);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.notification-menu-heading {
+  padding: 10px 10px 13px;
+}
+.notification-menu-heading strong {
+  font-size: 13px;
+}
+.notification-item {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #edf2f8;
+  border-radius: 10px;
+  background: transparent;
+  transition: background .16s ease, transform .16s ease;
+}
+.notification-item:hover {
+  background: #f1f7ff;
+  transform: translateX(2px);
+}
+.notification-setting {
+  margin: 10px 0;
+  border-color: #d3e2f7;
+  background: #f3f8ff;
+}
+@media (max-width: 560px) {
+  .notification-menu {
+    position: fixed;
+    top: 70px;
+    right: 12px;
+    width: min(380px, calc(100vw - 24px));
+  }
+}
 .ontology-workspace { border-color: var(--line); border-radius: 16px; box-shadow: 0 10px 28px rgba(31,55,93,.06); }
 .ontology-toolbar, .ontology-sidebar { background: #fff; border-color: var(--line); }
 .ontology-search { border-color: #dbe4f0; background: #f9fbfe; }

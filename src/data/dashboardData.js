@@ -765,14 +765,14 @@ function valueFor(row, candidates = []) {
     candidates.some((c) => c.trim().toLowerCase() === k.trim().toLowerCase())
   )
   if (exactKey && row[exactKey] !== undefined && row[exactKey] !== null) {
-    return String(row[exactKey]).trim()
+    return row[exactKey] instanceof Date ? row[exactKey].toISOString() : String(row[exactKey]).trim()
   }
 
   // 2. Alphanumeric match ignoring spaces, brackets, slashes
   const cleanedCandidates = candidates.map(cleanKey)
   const fuzzyKey = rowKeys.find((k) => cleanedCandidates.includes(cleanKey(k)))
   if (fuzzyKey && row[fuzzyKey] !== undefined && row[fuzzyKey] !== null) {
-    return String(row[fuzzyKey]).trim()
+    return row[fuzzyKey] instanceof Date ? row[fuzzyKey].toISOString() : String(row[fuzzyKey]).trim()
   }
 
   return ''
@@ -1027,6 +1027,17 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
           date = rawTimestamp
         }
       }
+      const numericTimestamp = Number(rawTimestamp)
+      if (Number.isFinite(numericTimestamp) && numericTimestamp > 1 && numericTimestamp < 100000) {
+        const excelDate = new Date(Date.UTC(1899, 11, 30) + numericTimestamp * 86400000)
+        date = `${excelDate.getUTCFullYear()}-${String(excelDate.getUTCMonth() + 1).padStart(2, '0')}-${String(excelDate.getUTCDate()).padStart(2, '0')}`
+        time = `${String(excelDate.getUTCHours()).padStart(2, '0')}:${String(excelDate.getUTCMinutes()).padStart(2, '0')}:${String(excelDate.getUTCSeconds()).padStart(2, '0')}`
+      }
+      const numericTime = Number(rawTime)
+      if (!time && Number.isFinite(numericTime) && numericTime >= 0 && numericTime < 1) {
+        const totalSeconds = Math.round(numericTime * 86400) % 86400
+        time = `${String(Math.floor(totalSeconds / 3600)).padStart(2, '0')}:${String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0')}:${String(totalSeconds % 60).padStart(2, '0')}`
+      }
       if (!time) {
         time = `08:${String(12 + (Math.floor(index * 1.2) % 48)).padStart(2, '0')}:${String((index * 17) % 60).padStart(2, '0')}`
       }
@@ -1179,17 +1190,11 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
           videoClipPath = String(foundUrl).trim()
         }
       }
-      if (!videoClipPath) {
-        videoClipPath = 'https://www.youtube.com/watch?v=1EiC9bvVGnk'
-      }
-
       // 13. Vehicle Image Path
-      const vehicleImagePath =
-        valueFor(row, aliases.vehicleImagePath) || `/evidence/vehicles/veh_${String(index + 1).padStart(4, '0')}.jpg`
+      const vehicleImagePath = valueFor(row, aliases.vehicleImagePath)
 
       // 14. Plate Image Path
-      const plateImagePath =
-        valueFor(row, aliases.plateImagePath) || `/evidence/plates/plate_${String(index + 1).padStart(4, '0')}.jpg`
+      const plateImagePath = valueFor(row, aliases.plateImagePath)
 
       // Derived & backward-compatible context
       const roadName =
@@ -1213,26 +1218,7 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
       const volume = rawVolume !== '' ? numberOrFallback(rawVolume, 1) : 1
       const pedestrians = rawPeds !== '' ? numberOrFallback(rawPeds, isPed ? 1 : 0) : (isPed ? 1 : 0)
 
-      const vehicleImageDataUrl =
-        extractedImage ||
-        row.vehicleImageDataUrl ||
-        generateSurveillanceSvgDataUrl(
-          {
-            id,
-            vehicleType,
-            type,
-            vehicleNumberPlate,
-            numberPlate,
-            speed,
-            speedLimit,
-            overSpeed,
-            isOverSpeed,
-            plateConfidence,
-            timestampIst: timestamp,
-            camera,
-          },
-          index
-        )
+      const vehicleImageDataUrl = extractedImage || row.vehicleImageDataUrl || ''
 
       return {
         // Exact 14 CSV parameters
@@ -1303,7 +1289,7 @@ export function parseTrafficDataFile(file) {
         try {
           const buffer = e.target.result
           const data = new Uint8Array(buffer)
-          const workbook = XLSX.read(data, { type: 'array' })
+          const workbook = XLSX.read(data, { type: 'array', cellDates: true })
           const sheetName = workbook.SheetNames[0]
           if (!sheetName) {
             reject(new Error('The Excel workbook does not contain any sheets.'))
@@ -1373,4 +1359,46 @@ export function groupBy(rows, key) {
       return groups
     }, {})
   ).map(([name, value]) => ({ name, value }))
+}
+
+export function formatTimestampIst(row) {
+  const rawValue = row?.timestampIst || row?.timestamp || ''
+  const rawDate = row?.date || ''
+  const rawTime = row?.time || ''
+  const value = String(rawValue || '').trim()
+  const source = value || `${rawDate} ${rawTime}`.trim()
+  const numericTime = Number(rawTime)
+  const normalizedRawTime = Number.isFinite(numericTime) && numericTime >= 0 && numericTime < 1
+    ? `${String(Math.floor(numericTime * 24)).padStart(2, '0')}:${String(Math.floor((numericTime * 1440) % 60)).padStart(2, '0')}:${String(Math.floor((numericTime * 86400) % 60)).padStart(2, '0')}`
+    : rawTime
+  const ymdMatch = source.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/)
+  const dmyMatch = source.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/)
+  const timeMatch = `${source} ${normalizedRawTime}`.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i)
+  let datePart = ''
+  let timePart = ''
+
+  if (ymdMatch || dmyMatch) {
+    const dateMatch = ymdMatch || dmyMatch
+    const year = ymdMatch ? Number(dateMatch[1]) : Number(dateMatch[3])
+    const month = ymdMatch ? Number(dateMatch[2]) : Number(dateMatch[2])
+    const day = ymdMatch ? Number(dateMatch[3]) : Number(dateMatch[1])
+    datePart = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`
+  }
+
+  if (timeMatch) {
+    let hours = Number(timeMatch[1])
+    const meridiem = timeMatch[4]?.toUpperCase()
+    if (meridiem === 'PM' && hours < 12) hours += 12
+    if (meridiem === 'AM' && hours === 12) hours = 0
+    timePart = `${String(hours).padStart(2, '0')}:${timeMatch[2]}:${timeMatch[3] || '00'}`
+  }
+
+  if (!datePart && source) {
+    const parsed = new Date(source)
+    if (!Number.isNaN(parsed.getTime())) {
+      datePart = `${String(parsed.getDate()).padStart(2, '0')}/${String(parsed.getMonth() + 1).padStart(2, '0')}/${parsed.getFullYear()}`
+    }
+  }
+
+  return [datePart || '11/09/2026', timePart || '00:00:00', 'IST'].join(' ')
 }

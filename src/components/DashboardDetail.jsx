@@ -1,8 +1,9 @@
+import { createPortal } from 'react-dom'
 import { useState } from 'react'
-import { Activity, ArrowLeft, BarChart3, Camera, Car, FileText, Gauge, MapPin, Radio, Upload } from 'lucide-react'
+import { Activity, ArrowLeft, BarChart3, Camera, Car, FileText, Gauge, MapPin, Radio, Trash2, Upload } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { groupBy, summarizeData } from '../data/dashboardData'
+import { formatTimestampIst, groupBy, summarizeData } from '../data/dashboardData'
 import { getVehicleMeta } from '../data/vehicleTypes'
 import VehicleBadge from './VehicleBadge'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
@@ -14,9 +15,11 @@ const configs = {
   cameras: { number: '03', title: 'Camera & Location Monitoring', eyebrow: 'COVERAGE INTELLIGENCE', description: 'Review camera sources and the locations represented in your dataset.', icon: Camera, chartTitle: 'Records by camera', chartKey: 'camera', color: '#417987' },
 }
 
-export default function DashboardDetail({ rows, fileName, onImport, importError, projectName }) {
+export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemoveCamera, removedCameras = [], rows, fileName, onImport, importError, projectName }) {
   const [previewModalRow, setPreviewModalRow] = useState(null)
   const [initialModalTab, setInitialModalTab] = useState('vehicle')
+  const [cameraDialogOpen, setCameraDialogOpen] = useState(false)
+  const [cameraForm, setCameraForm] = useState({ name: '', location: '', streamUrl: '' })
   const { kind } = useParams()
   const config = configs[kind] || configs.vehicles
   const Icon = config.icon
@@ -24,9 +27,20 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
   const chartData = groupBy(rows, config.chartKey).sort((a, b) => b.value - a.value).slice(0, 10)
   const pieData = groupBy(rows, 'type').sort((a, b) => b.value - a.value).slice(0, 12)
   const topLocations = groupBy(rows, 'location').sort((a, b) => b.value - a.value).slice(0, 5)
-  const topCameras = groupBy(rows, 'camera').sort((a, b) => b.value - a.value).slice(0, 6)
+  const importedCameras = groupBy(rows, 'camera').map((camera) => ({ ...camera, id: camera.name, status: 'READY' }))
+  const cameraRecords = [...importedCameras, ...addedCameras].filter((camera) => !removedCameras.includes(camera.id))
+  const topCameras = cameraRecords.sort((a, b) => b.value - a.value).slice(0, 6)
   const averageSpeed = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.speed || 0), 0) / rows.length) : 0
   const overspeedCount = rows.filter((row) => row.overSpeed === 'Yes' || row.isOverSpeed).length
+  const [cameraRemoveDialogOpen, setCameraRemoveDialogOpen] = useState(false)
+
+  function submitCamera(event) {
+    event.preventDefault()
+    if (!cameraForm.name.trim() || !onAddCamera) return
+    onAddCamera({ id: `CAM-NEW-${Date.now().toString().slice(-4)}`, name: cameraForm.name.trim(), location: cameraForm.location.trim() || 'Location pending', streamUrl: cameraForm.streamUrl.trim(), value: 0, status: 'Active' })
+    setCameraForm({ name: '', location: '', streamUrl: '' })
+    setCameraDialogOpen(false)
+  }
 
   return (
     <div className={`dashboard-page dashboard-detail-page dashboard-kind-${kind || 'vehicles'}`}>
@@ -77,9 +91,9 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
 
       {kind === 'cameras' && (
         <section className="alternate-dashboard-layout camera-coverage-layout">
-          <div className="camera-coverage-hero"><div><p className="section-kicker">COVERAGE CONTROL</p><h2>Camera network health</h2><span>Every active source represented in the live stream</span></div><div className="coverage-ring"><strong>{summary.uniqueCameras}</strong><span>sources</span></div></div>
+          <div className="camera-coverage-hero"><div><p className="section-kicker">COVERAGE CONTROL</p><h2>Camera network health</h2><span>Every active source represented in the live stream</span></div><div className="coverage-ring"><strong>{cameraRecords.length}</strong><span>sources</span></div><div className="camera-control-actions"><button className="primary-action camera-add-button" onClick={() => setCameraDialogOpen(true)} type="button"><Camera size={15} />Add new camera</button><button className="camera-remove-button" onClick={() => setCameraRemoveDialogOpen(true)} type="button"><Trash2 size={15} />Remove camera</button></div></div>
           <div className="camera-source-grid">
-            {topCameras.length ? topCameras.map((camera, index) => <div className="camera-source-card" key={camera.name}><div className="camera-source-icon"><Camera size={17} /></div><div><strong>{camera.name}</strong><span>{camera.value} records captured</span></div><b className={index === 0 ? 'active' : ''}>{index === 0 ? 'LIVE' : 'READY'}</b></div>) : <p className="alternate-empty">Waiting for camera records...</p>}
+            {topCameras.length ? topCameras.map((camera, index) => <div className="camera-source-card" key={camera.id || camera.name}><div className="camera-source-icon"><Camera size={17} /></div><div><strong>{camera.name}</strong><span>{camera.value} records captured{camera.location ? ` · ${camera.location}` : ''}</span></div><b className={camera.status === 'Active' || index === 0 ? 'active' : ''}>{camera.status || (index === 0 ? 'LIVE' : 'READY')}</b></div>) : <p className="alternate-empty">Waiting for camera records...</p>}
           </div>
         </section>
       )}
@@ -138,6 +152,9 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
         </div>
       </div>
 
+      {cameraDialogOpen && createPortal(<div className="modal-backdrop" onMouseDown={() => setCameraDialogOpen(false)}><form className="camera-dialog" onMouseDown={(event) => event.stopPropagation()} onSubmit={submitCamera}><div className="panel-heading"><div><p className="section-kicker">CAMERA SETUP</p><h2>Add new camera</h2></div><button className="modal-close" onClick={() => setCameraDialogOpen(false)} type="button">×</button></div><label>Camera name<input autoFocus onChange={(event) => setCameraForm({ ...cameraForm, name: event.target.value })} placeholder="e.g. Jubilee Hills Gate" value={cameraForm.name} /></label><label>Location<input onChange={(event) => setCameraForm({ ...cameraForm, location: event.target.value })} placeholder="Intersection or road" value={cameraForm.location} /></label><label>Stream URL <span>(optional)</span><input onChange={(event) => setCameraForm({ ...cameraForm, streamUrl: event.target.value })} placeholder="rtsp:// or https://" value={cameraForm.streamUrl} /></label><button className="primary-action" type="submit"><Camera size={15} />Add camera</button></form></div>, document.body)}
+      {cameraRemoveDialogOpen && createPortal(<div className="modal-backdrop" onMouseDown={() => setCameraRemoveDialogOpen(false)}><div className="camera-dialog camera-remove-dialog" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><p className="section-kicker">CAMERA ADMINISTRATION</p><h2>Remove camera</h2></div><button className="modal-close" onClick={() => setCameraRemoveDialogOpen(false)} type="button">×</button></div><p className="camera-dialog-copy">Select a camera to remove it from monitoring and data sources.</p><div className="camera-remove-list">{cameraRecords.length ? cameraRecords.map((camera) => <div className="camera-remove-row" key={camera.id}><div><strong>{camera.name}</strong><span>{camera.location || `${camera.value || 0} records captured`} · {camera.status || 'READY'}</span></div><button className="camera-remove-confirm" onClick={() => { onRemoveCamera?.(camera.id); setCameraRemoveDialogOpen(false) }} type="button"><Trash2 size={14} />Remove</button></div>) : <p className="alternate-empty">No cameras are currently available.</p>}</div></div></div>, document.body)}
+
       <div className="dashboard-panel traffic-table-panel">
         <div className="panel-heading">
           <div><p className="section-kicker">SOURCE RECORDS</p><h2>Latest imported rows</h2></div>
@@ -174,7 +191,7 @@ export default function DashboardDetail({ rows, fileName, onImport, importError,
                       size="table"
                     />
                   </td>
-                  <td>{row.timestampIst || row.time || row.timestamp}</td>
+                  <td>{formatTimestampIst(row)}</td>
                   <td>
                     <VehicleBadge type={row.vehicleType || row.type} />
                   </td>

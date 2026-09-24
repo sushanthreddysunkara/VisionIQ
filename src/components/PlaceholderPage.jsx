@@ -54,7 +54,7 @@ function formatCompactNumber(value) {
   return value.toLocaleString()
 }
 
-export default function PlaceholderPage({ rows = [], fileName = '' }) {
+export default function PlaceholderPage({ cameraCount = 0, rows = [], fileName = '' }) {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -66,9 +66,11 @@ export default function PlaceholderPage({ rows = [], fileName = '' }) {
   const hour = now.getHours()
   const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
 
-  const sourceCount = new Set(
+  const importedSourceCount = new Set(
     (rows || []).map((row) => row.sourceFile || row.fileName || row.camera || fileName || 'VisionIQ feed')
-  ).size || (fileName ? 1 : 2)
+  ).size || (fileName ? 1 : 0)
+  const importedCameraCount = new Set((rows || []).map((row) => row.camera).filter(Boolean)).size
+  const sourceCount = (importedSourceCount || (fileName ? 1 : 2)) + cameraCount
 
   const processedCount = rows.length ? rows.length : 1284
   const processedValue = formatCompactNumber(processedCount)
@@ -80,7 +82,7 @@ export default function PlaceholderPage({ rows = [], fileName = '' }) {
 
   const metricCards = page.label === 'Home'
     ? [
-        ['Data sources', String(sourceCount), '+2 this month'],
+        ['Data sources', String(sourceCount), `${importedCameraCount + cameraCount} cameras connected`],
         ['Records processed', processedValue, `${processedCount > 0 ? '+' : ''}${Math.max(8, Math.round((processedCount / 1200) * 18))}% vs last week`],
         ['Model confidence', confidenceValue, rows.length ? 'Live signal quality' : 'Within target range'],
       ]

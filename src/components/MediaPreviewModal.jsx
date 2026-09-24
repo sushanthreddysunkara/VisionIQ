@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react'
 import SurveillanceVideoPlayer from './SurveillanceVideoPlayer'
+import { formatTimestampIst } from '../data/dashboardData'
 
 export default function MediaPreviewModal({
   isOpen,
@@ -98,7 +99,7 @@ export default function MediaPreviewModal({
     row['video_url'] ||
     row['URL'] ||
     row['link'] ||
-    'https://www.youtube.com/watch?v=1EiC9bvVGnk'
+    ''
 
   const vehicleImagePath =
     row.vehicleImagePath ||
@@ -124,8 +125,8 @@ export default function MediaPreviewModal({
     activeMediaTab === 'video'
       ? videoUrl
       : activeMediaTab === 'plate'
-      ? plateImagePath || 'plate_crop.jpg'
-      : vehicleImagePath || row.extractedImageName || 'vehicle_capture.jpg'
+      ? plateImagePath
+      : vehicleImagePath
 
   function handleCopyPath() {
     if (navigator.clipboard) {
@@ -150,51 +151,17 @@ export default function MediaPreviewModal({
   }
 
   // Determine actual image source for vehicle
-  const vehicleSrc =
-    (!imgLoadError && vehicleImagePath && (vehicleImagePath.startsWith('http') || vehicleImagePath.startsWith('/')))
-      ? vehicleImagePath
-      : row.extractedImage || row.vehicleImageDataUrl
+  const vehicleSrc = !imgLoadError && (
+    row.extractedImage ||
+    row.vehicleImageDataUrl ||
+    (vehicleImagePath && (vehicleImagePath.startsWith('http') || vehicleImagePath.startsWith('/')) ? vehicleImagePath : '')
+  )
 
   // Determine actual image source for plate
   const plateSrc =
     (!plateLoadError && plateImagePath && (plateImagePath.startsWith('http') || plateImagePath.startsWith('/')))
       ? plateImagePath
       : null
-
-  // Fallback High-Security Registration Plate (HSRP) graphic
-  const plateCropSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 250" width="100%" height="100%">
-    <rect width="460" height="250" fill="#060913" />
-    <!-- CCTV Grid Lines -->
-    <line x1="0" y1="40" x2="460" y2="40" stroke="rgba(56,189,248,0.08)" stroke-width="1" />
-    <line x1="0" y1="210" x2="460" y2="210" stroke="rgba(56,189,248,0.08)" stroke-width="1" />
-    <!-- Plate Frame with 3D Emboss -->
-    <rect x="40" y="60" width="380" height="120" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="3" />
-    <rect x="42" y="62" width="376" height="116" rx="6" fill="none" stroke="#0f172a" stroke-width="1" opacity="0.15" />
-    <!-- IND Blue Band -->
-    <rect x="40" y="60" width="46" height="120" rx="6" fill="#003893" />
-    <!-- Ashok Chakra Circle -->
-    <circle cx="63" cy="105" r="12" fill="none" stroke="#ffffff" stroke-width="1.5" />
-    <circle cx="63" cy="105" r="3" fill="#ffffff" />
-    <text x="63" y="148" font-size="12" font-family="sans-serif" font-weight="900" fill="#ffffff" text-anchor="middle" letter-spacing="1">IND</text>
-    <!-- Laser Hologram Seal -->
-    <rect x="53" y="70" width="20" height="14" rx="2" fill="#38bdf8" opacity="0.75" />
-    <!-- Registration Number -->
-    <text x="250" y="142" font-size="44" font-family="'Consolas', 'Courier New', monospace" font-weight="900" fill="#0f172a" text-anchor="middle" letter-spacing="6">
-      ${row.vehicleNumberPlate || row.numberPlate || 'TG 08 Z 07'}
-    </text>
-    <!-- ANPR Bounding Box -->
-    <rect x="34" y="54" width="392" height="132" rx="4" fill="none" stroke="#10b981" stroke-width="2" stroke-dasharray="8 4" />
-    <text x="40" y="44" font-size="11.5" font-family="monospace" font-weight="bold" fill="#10b981">
-      ● ANPR OCR MATCH: ${plateConfidencePercent}% CONFIDENCE
-    </text>
-    <text x="420" y="44" font-size="11" font-family="monospace" fill="#94a3b8" text-anchor="end">
-      STROBE: 850nm IR
-    </text>
-    <text x="230" y="235" font-size="11" font-family="monospace" fill="#64748b" text-anchor="middle">
-      Source: ${plateImagePath || 'plate_photos/track_1383.jpg'}
-    </text>
-  </svg>`
-  const plateCropDataUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent(plateCropSvg)
 
   return (
     <div className="media-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">
@@ -233,7 +200,7 @@ export default function MediaPreviewModal({
               </h2>
               <p className="media-tactical-coords">
                 <Clock size={12} />
-                <span>{row.timestampIst || row.timestamp || '2026-08-31 13:22:04'} IST</span>
+                <span>{formatTimestampIst(row)}</span>
                 <span style={{ color: '#475569' }}>·</span>
                 <MapPin size={12} />
                 <span>
@@ -390,13 +357,15 @@ export default function MediaPreviewModal({
 
           {/* High-Resolution Tactical Viewport Screen */}
           <div className="media-tactical-viewport">
-            {activeMediaTab === 'video' ? (
+            {activeMediaTab === 'video' && videoUrl ? (
               /* Video Player Mode */
               <SurveillanceVideoPlayer
                 autoPlay={true}
                 row={row}
                 videoClipPath={videoUrl}
               />
+            ) : activeMediaTab === 'video' ? (
+              <div className="media-tactical-placeholder"><FileVideo size={48} /><p>No video URL was provided in the Excel file.</p></div>
             ) : activeMediaTab === 'plate' ? (
               /* Plate Crop View */
               <div className="media-tactical-frame">
@@ -408,11 +377,7 @@ export default function MediaPreviewModal({
                     src={plateSrc}
                   />
                 ) : (
-                  <img
-                    alt={`Synthesized ANPR for ${row.vehicleNumberPlate || 'Vehicle'}`}
-                    className="media-tactical-img"
-                    src={plateCropDataUrl}
-                  />
+                  <div className="media-tactical-placeholder"><ImageIcon size={48} /><p>No number plate image URL was provided in the Excel file.</p></div>
                 )}
 
                 {/* CCTV HUD Overlay */}
@@ -421,7 +386,7 @@ export default function MediaPreviewModal({
                     <Camera size={12} />
                     {row.camera || 'CAM-04-HYD'} · ANPR CROP
                   </span>
-                  <span className="media-hud-time">{row.timestampIst || row.timestamp || 'LIVE'} IST</span>
+                  <span className="media-hud-time">{formatTimestampIst(row)}</span>
                 </div>
 
                 <div className="media-cctv-hud-bottom">
@@ -465,7 +430,7 @@ export default function MediaPreviewModal({
                     <span>REC</span>
                   </div>
                   <span className="media-hud-cam">{row.camera || 'CAM-04-HYD'} · OPTICAL</span>
-                  <span className="media-hud-time">{row.timestampIst || row.timestamp || 'LIVE'} IST</span>
+                  <span className="media-hud-time">{formatTimestampIst(row)}</span>
                 </div>
 
                 {/* CCTV Bottom Overlay */}

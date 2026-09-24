@@ -91,7 +91,7 @@ export default function SurveillanceVideoPlayer({
     row?.['Video URL'] ||
     row?.['Video Clip Path'] ||
     row?.['Vedio Clip Path'] ||
-    'https://www.youtube.com/watch?v=1EiC9bvVGnk'
+    ''
 
   const videoSource = useMemo(() => parseVideoSource(resolvedUrl), [resolvedUrl])
 

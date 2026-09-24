@@ -28,6 +28,7 @@ import VehicleBadge from './VehicleBadge'
 import { getVehicleMeta } from '../data/vehicleTypes'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
 import MediaPreviewModal from './MediaPreviewModal'
+import { formatTimestampIst } from '../data/dashboardData'
 
 function escapeCsvValue(value) {
   const text = String(value ?? '')
@@ -432,7 +433,7 @@ export default function DocumentIntelligence({ rows = [], projectName = 'Platfor
                   </td>
                   <td>
                     <div className="doc-time-cell">
-                      <span>{row.timestampIst || row.time || row.timestamp}</span>
+                      <span>{formatTimestampIst(row)}</span>
                     </div>
                   </td>
                   <td>

@@ -14,6 +14,7 @@ import QueryPage from './components/QueryPage'
 import RulesEventsPage from './components/RulesEventsPage'
 import ProfilePage from './components/ProfilePage'
 import SettingsPage from './components/SettingsPage'
+import VehicleInformation from './components/VehicleInformation'
 
 import PlaceholderPage from './components/PlaceholderPage'
 import ProjectMainBar from './components/ProjectMainBar'
@@ -32,6 +33,9 @@ import { routePaths } from './data/navigation'
 import { projects } from './data/projects'
 
 const storedProjectsKey = 'vision-iq-created-projects'
+const storedCamerasKey = 'vision-iq-added-cameras'
+const storedRemovedCamerasKey = 'vision-iq-removed-cameras'
+const storedNotificationsKey = 'vision-iq-stream-notifications'
 const apiBaseUrl = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/$/, '')
 
 function rowKey(row) {
@@ -76,9 +80,29 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState(projects[0])
   const [connectedProject, setConnectedProject] = useState(projects[0])
   const [trafficData, setTrafficData] = useState([])
+  const [addedCameras, setAddedCameras] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storedCamerasKey) || '[]')
+    } catch {
+      return []
+    }
+  })
+  const [removedCameras, setRemovedCameras] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storedRemovedCamerasKey) || '[]')
+    } catch {
+      return []
+    }
+  })
   const [fileName, setFileName] = useState('')
   const [importError, setImportError] = useState('')
-  const [streamNotifications, setStreamNotifications] = useState([])
+  const [streamNotifications, setStreamNotifications] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storedNotificationsKey) || '[]')
+    } catch {
+      return []
+    }
+  })
   const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => {
     try {
       return localStorage.getItem('vision-iq-notification-sound') !== 'off'
@@ -103,29 +127,14 @@ export default function App() {
   function playNotificationTone() {
     if (!notificationSoundEnabledRef.current) return
 
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext
-    if (!AudioContextClass) return
-
-    const audioContext = new AudioContextClass()
-    const oscillator = audioContext.createOscillator()
-    const gainNode = audioContext.createGain()
-
-    oscillator.type = 'triangle'
-    oscillator.frequency.setValueAtTime(920, audioContext.currentTime)
-    oscillator.frequency.exponentialRampToValueAtTime(620, audioContext.currentTime + 0.9)
-
-    gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime)
-    gainNode.gain.exponentialRampToValueAtTime(0.09, audioContext.currentTime + 0.04)
-    gainNode.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 1)
-
-    oscillator.connect(gainNode)
-    gainNode.connect(audioContext.destination)
-
-    oscillator.start()
-    oscillator.stop(audioContext.currentTime + 1)
-    oscillator.onended = () => {
-      audioContext.close().catch(() => undefined)
-    }
+    const notificationSound = new Audio('/notification_sound.mp3')
+    notificationSound.volume = 1
+    notificationSound.currentTime = 0
+    notificationSound.play().catch(() => undefined)
+    window.setTimeout(() => {
+      notificationSound.pause()
+      notificationSound.currentTime = 0
+    }, 1000)
   }
 
   useEffect(() => {
@@ -141,18 +150,22 @@ export default function App() {
         setFileName((currentFileName) => currentFileName || normalizedRows[0].sourceFile)
       }
       setTrafficData((currentRows) => appendUniqueRows(currentRows, normalizedRows))
+      const nextNotification = {
+        id: `batch-${normalizedRows[0]?.sourceFile || 'stream'}-${Date.now()}`,
+        receivedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        type: 'batch',
+        fileName: normalizedRows[0]?.sourceFile || 'Live vehicle stream',
+        batchCount: normalizedRows.length,
+        events: normalizedRows.filter((row) => row.events).length,
+        overspeeding: normalizedRows.filter((row) => row.isOverSpeed || row.overSpeed === 'Yes').length,
+        totalProcessed: normalizedRows.length,
+      }
+      setStreamNotifications((current) => [nextNotification, ...current].slice(0, 8))
+      playNotificationTone()
     })
 
     socket.on('vehicleStreamStatus', (status) => {
       if (status.fileName) setFileName(status.fileName)
-      if (status.type !== 'batch') return
-      const nextNotification = {
-        id: `${status.fileName}-${Date.now()}`,
-        receivedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        ...status,
-      }
-      setStreamNotifications((current) => [nextNotification, ...current].slice(0, 8))
-      playNotificationTone()
     })
 
     return () => {
@@ -171,6 +184,30 @@ export default function App() {
       // ignore localStorage write errors
     }
   }, [projectList])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storedCamerasKey, JSON.stringify(addedCameras))
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, [addedCameras])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storedRemovedCamerasKey, JSON.stringify(removedCameras))
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, [removedCameras])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storedNotificationsKey, JSON.stringify(streamNotifications))
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, [streamNotifications])
 
   const hasImportedFile = Boolean(trafficData.length > 0 && fileName)
 
@@ -259,6 +296,15 @@ export default function App() {
     setImportError('')
   }
 
+  function handleAddCamera(camera) {
+    setAddedCameras((currentCameras) => [...currentCameras, camera])
+  }
+
+  function handleRemoveCamera(cameraId) {
+    setAddedCameras((currentCameras) => currentCameras.filter((camera) => camera.id !== cameraId))
+    setRemovedCameras((currentCameras) => currentCameras.includes(cameraId) ? currentCameras : [...currentCameras, cameraId])
+  }
+
   async function handleImport(event) {
     const [file] = event.target.files || []
     if (!file) return
@@ -313,7 +359,7 @@ export default function App() {
           <Routes>
             {/* HOME */}
             <Route path="/" element={<Navigate replace to="/home" />} />
-            <Route path="/home" element={<PlaceholderPage fileName={fileName} rows={trafficData} />} />
+            <Route path="/home" element={<PlaceholderPage cameraCount={addedCameras.length} fileName={fileName} rows={trafficData} />} />
 
             {/* ONTOLOGY */}
             <Route
@@ -422,9 +468,13 @@ export default function App() {
                   />
                 ) : (
                   <DashboardDetail
+                    addedCameras={addedCameras}
+                    onRemoveCamera={handleRemoveCamera}
+                    removedCameras={removedCameras}
                     fileName={fileName}
                     importError={importError}
                     onImport={handleImport}
+                    onAddCamera={handleAddCamera}
                     projectName={connectedProject.name}
                     rows={trafficData}
                   />
@@ -457,6 +507,9 @@ export default function App() {
               }
             />
 
+            {/* VEHICLE INFORMATION */}
+            <Route path="/vehicle-information" element={<VehicleInformation />} />
+
             {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
             <Route path="/rules-events" element={<RulesEventsPage />} />
 
@@ -482,6 +535,7 @@ export default function App() {
                   path !== '/knowledge-graph' &&
                   path !== '/query' &&
                   path !== '/document-intelligence' &&
+                  path !== '/vehicle-information' &&
                   path !== '/rules-events' &&
                   path !== '/profile' &&
                   path !== '/settings'

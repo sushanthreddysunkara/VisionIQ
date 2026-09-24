@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Eye, FileVideo, Image as ImageIcon, Play, Sparkles } from 'lucide-react'
 
 export default function VehicleImageThumbnail({
@@ -8,11 +8,17 @@ export default function VehicleImageThumbnail({
   size = 'table', // 'sm' | 'md' | 'lg' | 'table'
   showBadge = true,
 }) {
+  const [imageLoadError, setImageLoadError] = useState(false)
+  const imgSrc = row?.extractedImage || row?.vehicleImageDataUrl || row?.vehicleImagePath || row?.vehicleImage
+
   if (!row) return null
 
-  const imgSrc = row.extractedImage || row.vehicleImageDataUrl || row.vehicleImagePath || row.vehicleImage
   const hasExtracted = Boolean(row.hasExtractedImage)
-  const hasVideo = Boolean(row.videoClipPath)
+  const hasVideo = Boolean(row.videoClipPath || row.videoUrl || row.video)
+
+  useEffect(() => {
+    setImageLoadError(false)
+  }, [row.id, row.observationId, imgSrc])
 
   const sizeClasses = {
     sm: 'veh-thumb-sm', // 44x30
@@ -44,11 +50,12 @@ export default function VehicleImageThumbnail({
         }
       }}
     >
-      {imgSrc ? (
+      {imgSrc && !imageLoadError ? (
         <img
           alt={row.vehicleImage || 'Vehicle capture'}
           className="vehicle-image-thumb-img"
           loading="lazy"
+          onError={() => setImageLoadError(true)}
           src={imgSrc}
         />
       ) : (
