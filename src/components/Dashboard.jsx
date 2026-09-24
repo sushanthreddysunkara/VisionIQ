@@ -239,7 +239,7 @@ export default function Dashboard() {
             </div>
 
             <span className="record-count">
-              300 records
+              Latest {Math.min(10, recentDetections.length)} records
             </span>
           </div>
 
@@ -259,7 +259,7 @@ export default function Dashboard() {
 
               <tbody>
 
-                {recentDetections.map((item, index) => (
+                {recentDetections.slice(0, 10).map((item, index) => (
                   <tr key={index}>
 
                     <td>{item.time}</td>

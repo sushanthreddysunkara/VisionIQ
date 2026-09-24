@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Activity, ArrowLeft, BarChart3, Camera, Car, FileText, Gauge, MapPin, Radio, Trash2, Upload, Users } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -8,6 +8,18 @@ import { getVehicleMeta } from '../data/vehicleTypes'
 import VehicleBadge from './VehicleBadge'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
 import MediaPreviewModal from './MediaPreviewModal'
+
+function getRecordTimestampScore(row) {
+  const raw = String(row.timestampIst || row.timestamp || row.time || row.date || '')
+  const parsed = Date.parse(raw)
+  if (!isNaN(parsed)) return parsed
+  const timeMatch = raw.match(/(\d{1,2}):(\d{2}):(\d{2})/)
+  if (timeMatch) {
+    return Number(timeMatch[1]) * 3600 + Number(timeMatch[2]) * 60 + Number(timeMatch[3])
+  }
+  const idNum = Number(String(row.id || row.csvRecordId || '').replace(/\D/g, ''))
+  return idNum || 0
+}
 
 const configs = {
   vehicles: { number: '01', title: 'Vehicle Analytics', eyebrow: 'VEHICLE INTELLIGENCE', description: 'Understand vehicle mix and traffic volume from every imported detection.', icon: Car, chartTitle: 'Vehicles by type', chartKey: 'type', color: '#467c62' },
@@ -42,6 +54,25 @@ export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemo
     setCameraForm({ name: '', location: '', streamUrl: '' })
     setCameraDialogOpen(false)
   }
+
+  // Select strictly the latest 10 records for display at the bottom of the dashboard
+  const latestTenRows = useMemo(() => {
+    if (!safeRows.length) return []
+    const scored = safeRows.map((row, idx) => ({
+      row,
+      originalIdx: idx,
+      score: getRecordTimestampScore(row),
+    }))
+    const hasScores = scored.some((s) => s.score > 0)
+    if (hasScores) {
+      scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score
+        return b.originalIdx - a.originalIdx
+      })
+      return scored.slice(0, 10).map((s) => s.row)
+    }
+    return [...safeRows].reverse().slice(0, 10)
+  }, [safeRows])
 
   return (
     <div className={`dashboard-page dashboard-detail-page dashboard-kind-${kind || 'vehicles'}`}>
@@ -159,8 +190,13 @@ export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemo
 
       <div className="dashboard-panel traffic-table-panel">
         <div className="panel-heading">
-          <div><p className="section-kicker">SOURCE RECORDS</p><h2>Latest imported rows</h2></div>
-          <span className="record-count">{rows.length} records</span>
+          <div>
+            <p className="section-kicker">SOURCE RECORDS</p>
+            <h2>Latest 10 Detections</h2>
+          </div>
+          <span className="record-count">
+            Latest {latestTenRows.length} of {safeRows.length} records
+          </span>
         </div>
         <div className="traffic-table-wrapper">
           <table className="traffic-table">
@@ -177,7 +213,7 @@ export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemo
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, index) => (
+              {latestTenRows.map((row, index) => (
                 <tr key={`${row.id || row.observationId || row.camera}-${index}`}>
                   <td style={{ minWidth: '120px' }}>
                     <VehicleImageThumbnail
@@ -249,7 +285,7 @@ export default function DashboardDetail({ addedCameras = [], onAddCamera, onRemo
 
       {previewModalRow && (
         <MediaPreviewModal
-          allRows={rows}
+          allRows={latestTenRows}
           initialTab={initialModalTab}
           isOpen={Boolean(previewModalRow)}
           onClose={() => setPreviewModalRow(null)}

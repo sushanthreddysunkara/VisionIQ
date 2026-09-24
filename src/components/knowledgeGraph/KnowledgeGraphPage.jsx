@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Eye,
   Filter,
+  Layers,
   MapPin,
   Maximize,
   Minus,
@@ -18,13 +19,15 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { getVehicleMeta } from '../../data/vehicleTypes'
+import { getCanonicalVehicleDomain, getVehicleMeta, isVehicleTypeMatch } from '../../data/vehicleTypes'
 import MediaPreviewModal from '../MediaPreviewModal'
 
 export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Dataset' }) {
   const location = useLocation()
   const [searchTerm, setSearchTerm] = useState('')
   const [activeCategory, setActiveCategory] = useState('ALL')
+  const [vehicleDomainFilter, setVehicleDomainFilter] = useState('ALL')
+  const [segregatedView, setSegregatedView] = useState(true) // Segregate all types together into clusters by default
   const [selectedNode, setSelectedNode] = useState(null)
   const [previewModalRow, setPreviewModalRow] = useState(null)
   const [recordLimit, setRecordLimit] = useState('ALL')
@@ -46,14 +49,7 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         if (Array.isArray(segmentFilter.vehicleType)) rawTypes.push(...segmentFilter.vehicleType)
         else if (typeof segmentFilter.vehicleType === 'string') rawTypes.push(segmentFilter.vehicleType)
         if (rawTypes.length) {
-          const matchType = rawTypes.some((t) => {
-            if (!t || typeof t !== 'string') return false
-            const vt = t.toLowerCase().trim()
-            if (vt === 'all') return true
-            const vtSingular = vt.endsWith('s') && vt.length > 3 ? vt.slice(0, -1) : vt
-            const rowSingular = typeLower.endsWith('s') && typeLower.length > 3 ? typeLower.slice(0, -1) : typeLower
-            return typeLower.includes(vt) || vt.includes(typeLower) || rowSingular.includes(vtSingular) || vtSingular.includes(rowSingular)
-          })
+          const matchType = rawTypes.some((t) => isVehicleTypeMatch(r.vehicleType || r.type, t))
           if (!matchType) return false
         }
       }
@@ -83,6 +79,28 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
     })
   }, [rows, segmentFilter])
 
+  // Compute breakdown of vehicle types for the domain color legend
+  const domainBreakdown = useMemo(() => {
+    const counts = {}
+    activeRows.forEach((r) => {
+      const rawType = r.vehicleType || r.type || 'Car'
+      const domain = getCanonicalVehicleDomain(rawType)
+      const meta = getVehicleMeta(domain)
+      if (!counts[domain]) {
+        counts[domain] = {
+          label: domain,
+          rawType: domain,
+          count: 0,
+          color: meta.color,
+          bg: meta.bg,
+          border: meta.border,
+        }
+      }
+      counts[domain].count += 1
+    })
+    return Object.values(counts).sort((a, b) => b.count - a.count)
+  }, [activeRows])
+
   // Construct instance knowledge graph from CSV rows (or isolated segment)
   const graphData = useMemo(() => {
     if (!activeRows || !activeRows.length) {
@@ -91,11 +109,69 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
 
     const cameras = Array.from(new Set(activeRows.map((r) => r.camera).filter(Boolean)))
     const locations = Array.from(new Set(activeRows.map((r) => r.location || r.roadName).filter(Boolean)))
-    const types = Array.from(new Set(activeRows.map((r) => r.type).filter(Boolean)))
+    const domains = Array.from(new Set(activeRows.map((r) => getCanonicalVehicleDomain(r.vehicleType || r.type)).filter(Boolean)))
+    const types = domains
 
     const nodes = []
     const edges = []
     let edgeIndex = 1
+
+    // 0. Segregated Compound Group Parent Nodes (when segregatedView is enabled)
+    // Encapsulates all instances of each vehicle domain, cameras, and locations into clean, distinct bounding clusters
+    if (segregatedView) {
+      // Vehicle type clusters
+      domains.forEach((domain) => {
+        const meta = getVehicleMeta(domain)
+        const typeRows = activeRows.filter((r) => getCanonicalVehicleDomain(r.vehicleType || r.type) === domain)
+        nodes.push({
+          id: `group-type-${domain}`,
+          label: `${domain.toUpperCase()} DOMAIN · ${typeRows.length} RECORDS`,
+          category: 'Group',
+          vehicleType: domain,
+          color: meta.bg || '#eff6ff',
+          borderColor: meta.color || '#2563eb',
+          isGroup: true,
+          properties: {
+            'Cluster Domain': `${domain} Domain`,
+            'Total Vehicles': typeRows.length,
+            'Assigned Color': meta.color,
+          },
+        })
+      })
+
+
+      // Surveillance Cameras cluster
+      if (cameras.length > 0) {
+        nodes.push({
+          id: 'group-cameras',
+          label: `CAMERAS NETWORK · ${cameras.length} UNITS`,
+          category: 'Group',
+          color: '#f8fafc',
+          borderColor: '#475569',
+          isGroup: true,
+          properties: {
+            'Cluster Domain': 'Surveillance Network',
+            'Active Cameras': cameras.length,
+          },
+        })
+      }
+
+      // Monitored Locations cluster
+      if (locations.length > 0) {
+        nodes.push({
+          id: 'group-locations',
+          label: `MONITORED LOCATIONS · ${locations.length} ZONES`,
+          category: 'Group',
+          color: '#f0fdf4',
+          borderColor: '#10b981',
+          isGroup: true,
+          properties: {
+            'Cluster Domain': 'Roads & Corridors',
+            'Monitored Zones': locations.length,
+          },
+        })
+      }
+    }
 
     // 1. Location Nodes
     locations.forEach((loc) => {
@@ -107,7 +183,9 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         label: loc,
         category: 'Location',
         color: '#10b981',
+        borderColor: '#ffffff',
         icon: 'MapPin',
+        parent: segregatedView ? 'group-locations' : undefined,
         properties: {
           'Total Volume': vol,
           'Pedestrian Activity': peds,
@@ -124,8 +202,10 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         id: `cam-${cam}`,
         label: cam,
         category: 'Camera',
-        color: '#0ea5e9',
+        color: '#475569',
+        borderColor: '#ffffff',
         icon: 'Camera',
+        parent: segregatedView ? 'group-cameras' : undefined,
         properties: {
           'Assigned Location': loc,
           'Frames Captured': camRows.length,
@@ -140,30 +220,35 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
           source: `cam-${cam}`,
           target: `loc-${loc}`,
           label: 'MONITORS',
+          color: '#94a3b8',
         })
       }
     })
 
-    // 3. Vehicle Type Nodes
-    types.forEach((type) => {
-      const typeRows = activeRows.filter((r) => r.type === type)
+    // 3. Vehicle Type Domain Nodes
+    domains.forEach((domain) => {
+      const typeRows = activeRows.filter((r) => getCanonicalVehicleDomain(r.vehicleType || r.type) === domain)
       const vol = typeRows.reduce((sum, r) => sum + (r.volume || 1), 0)
-      const meta = getVehicleMeta(type)
+      const meta = getVehicleMeta(domain)
       nodes.push({
-        id: `type-${type}`,
-        label: type,
+        id: `type-${domain}`,
+        label: domain,
         category: 'VehicleType',
+        vehicleType: domain,
         color: meta.color,
-        icon: meta.label,
+        borderColor: '#ffffff',
+        icon: domain,
+        parent: segregatedView ? `group-type-${domain}` : undefined,
         properties: {
-          Classification: type,
+          'Vehicle Domain': domain,
           'Total Detections': typeRows.length,
           'Calculated Volume': vol,
         },
       })
     })
 
-    // 4. Observation Nodes (all active records by default, or user-selected limit)
+    // 4. Observation Nodes (each individual vehicle detection)
+    // Vehicle nodes inherit the consistent domain color of their vehicle type (Car, Bike, Bus, etc.)
     const targetRows = recordLimit === 'ALL'
       ? activeRows
       : activeRows.slice(0, Math.min(Number(recordLimit) || activeRows.length, activeRows.length))
@@ -174,17 +259,23 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         ? row.numberPlate
         : (row.observationId || row.id || `Record #${i + 1}`)
       const loc = row.location || row.roadName
+      const domain = getCanonicalVehicleDomain(row.vehicleType || row.type)
+      const meta = getVehicleMeta(domain)
 
       nodes.push({
         id: obsId,
         label: obsLabel,
         category: 'Observation',
-        color: '#8b5cf6',
-        icon: 'Sparkles',
+        vehicleType: domain,
+        color: meta.color, // All vehicles of this domain share this exact same color!
+        borderColor: meta.border || '#ffffff',
+        icon: meta.label,
+        parent: segregatedView ? `group-type-${domain}` : undefined,
         properties: {
           'Observation ID': row.id || row.observationId || `OBS-${i + 1}`,
+          'Vehicle Domain': domain,
           'Timestamp (IST)': row.timestampIst || row.timestamp || 'N/A',
-          'Vehicle Type': row.vehicleType || row.type || 'Car',
+          'Vehicle Type': domain,
           'Number Plate': row.vehicleNumberPlate || row.numberPlate || 'N/A',
           'Plate Confidence': `${Math.round(((row.plateConfidence || row.confidence) > 1 ? (row.plateConfidence || row.confidence) : (row.plateConfidence || row.confidence || 0.95) * 100))}%`,
           'Speed (km/h)': `${row.speed || 0} km/h`,
@@ -201,32 +292,35 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         rawRow: row,
       })
 
-      // Links
-      if (row.type) {
-        edges.push({
-          id: `edge-${edgeIndex++}`,
-          source: obsId,
-          target: `type-${row.type}`,
-          label: 'OF_TYPE',
-        })
-      }
-      if (row.camera) {
+      // Links: All links share the exact same uniform color (#94a3b8)
+      edges.push({
+        id: `edge-${edgeIndex++}`,
+        source: obsId,
+        target: `type-${domain}`,
+        label: 'OF_TYPE',
+        color: '#94a3b8',
+      })
+
+      if (row.camera && cameras.includes(row.camera)) {
         edges.push({
           id: `edge-${edgeIndex++}`,
           source: obsId,
           target: `cam-${row.camera}`,
           label: 'CAPTURED_BY',
+          color: '#94a3b8',
         })
       }
-      if (loc) {
+      if (loc && locations.includes(loc)) {
         edges.push({
           id: `edge-${edgeIndex++}`,
           source: obsId,
           target: `loc-${loc}`,
           label: 'OCCURRED_AT',
+          color: '#94a3b8',
         })
       }
     })
+
 
     return {
       nodes,
@@ -239,19 +333,75 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         totalDatasetRows: activeRows.length,
       },
     }
-  }, [activeRows, recordLimit])
+  }, [activeRows, recordLimit, segregatedView])
 
-  // Filter nodes by category and search
+  // Filter nodes by category, vehicle domain, and search
   const visibleNodes = useMemo(() => {
-    return graphData.nodes.filter((node) => {
+    const rawFiltered = graphData.nodes.filter((node) => {
+      if (node.category === 'Group') return true // keep candidate groups
+
       const matchCat = activeCategory === 'ALL' || node.category === activeCategory
+
+      let matchDomain = true
+      if (vehicleDomainFilter !== 'ALL') {
+        const targetDomain = vehicleDomainFilter.toLowerCase()
+        if (node.category === 'Observation') {
+          matchDomain = (node.vehicleType || '').toLowerCase() === targetDomain
+        } else if (node.category === 'VehicleType') {
+          matchDomain = (node.vehicleType || node.label || '').toLowerCase() === targetDomain
+        }
+      }
+
+      const searchLower = searchTerm.toLowerCase()
       const matchSearch =
         !searchTerm ||
-        node.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        node.category.toLowerCase().includes(searchTerm.toLowerCase())
-      return matchCat && matchSearch
+        node.label.toLowerCase().includes(searchLower) ||
+        node.category.toLowerCase().includes(searchLower) ||
+        (node.vehicleType && node.vehicleType.toLowerCase().includes(searchLower))
+
+      return matchCat && matchDomain && matchSearch
     })
-  }, [graphData.nodes, activeCategory, searchTerm])
+
+    let candidateNodes = rawFiltered
+
+    if (vehicleDomainFilter !== 'ALL') {
+      const activeObs = rawFiltered.filter((n) => n.category === 'Observation')
+      const activeObsIds = new Set(activeObs.map((n) => n.id))
+      const connectedEntityIds = new Set()
+
+      graphData.edges.forEach((e) => {
+        if (activeObsIds.has(e.source)) {
+          connectedEntityIds.add(e.target)
+        }
+        if (activeObsIds.has(e.target)) {
+          connectedEntityIds.add(e.source)
+        }
+      })
+
+      candidateNodes = rawFiltered.filter((n) => {
+        if (n.category === 'Group') return true
+        if (n.category === 'Observation') return true
+        if (n.category === 'VehicleType') {
+          return (n.vehicleType || n.label || '').toLowerCase() === vehicleDomainFilter.toLowerCase()
+        }
+        return connectedEntityIds.has(n.id)
+      })
+    }
+
+    // Only keep parent group nodes that actually have visible children
+    const visibleChildParentIds = new Set(
+      candidateNodes
+        .filter((n) => n.category !== 'Group' && n.parent)
+        .map((n) => n.parent)
+    )
+
+    return candidateNodes.filter((n) => {
+      if (n.category === 'Group') {
+        return visibleChildParentIds.has(n.id)
+      }
+      return true
+    })
+  }, [graphData.nodes, graphData.edges, activeCategory, vehicleDomainFilter, searchTerm])
 
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes])
 
@@ -262,31 +412,36 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
   }, [graphData.edges, visibleNodeIds])
 
   const layoutConfig = useMemo(() => {
-    // Force (COSE) layout only - collision-free, anti-overlap, spacious physics
+    // Clustered Force (COSE) layout - segregates all types together into compound domain containers
     return {
       name: 'cose',
       animate: false,
-      padding: 80,
-      componentSpacing: 160,
+      padding: 60,
+      componentSpacing: 180,
       nodeDimensionsIncludeLabels: true,
-      nodeOverlap: 80,
+      nodeOverlap: 25,
+      nestingFactor: 1.25,
+      gravityCompound: 1.0,
+      gravityRangeCompound: 1.5,
       nodeRepulsion: (node) => {
+        if (node.isParent?.() || node.data('category') === 'Group') return 650000
         const cat = node.data('category')
         if (cat === 'Location') return 240000
-        if (cat === 'Camera' || cat === 'VehicleType') return 150000
-        return 80000
+        if (cat === 'Camera' || cat === 'VehicleType') return 160000
+        return 75000
       },
       idealEdgeLength: (edge) => {
         const lbl = edge.data('label')
-        if (lbl === 'MONITORS') return 280
-        if (lbl === 'OF_TYPE') return 240
-        return 320
+        if (lbl === 'OF_TYPE') return 75 // gathers same vehicle types tightly together around their domain hub!
+        if (lbl === 'MONITORS') return 240
+        return 280
       },
-      edgeElasticity: 25,
-      nestingFactor: 1.1,
-      gravity: 0.018, // weak gravity allows nodes to spread out broadly without clumping
+      edgeElasticity: (edge) => {
+        if (edge.data('label') === 'OF_TYPE') return 90 // high elasticity inside domain cluster
+        return 18
+      },
+      gravity: 0.015,
       numIter: 1000,
-      initialTemp: 400,
       coolingFactor: 0.95,
       stop: () => {
         cyRef.current?.animate({
@@ -295,7 +450,7 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         })
       },
     }
-  }, [])
+  }, [segregatedView])
 
   // Cytoscape initialization
   useEffect(() => {
@@ -308,6 +463,9 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
           label: n.label,
           category: n.category,
           color: n.color,
+          borderColor: n.borderColor || '#ffffff',
+          vehicleType: n.vehicleType || '',
+          parent: n.parent || undefined,
         },
       })),
       ...visibleEdges.map((e) => ({
@@ -316,6 +474,7 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
           source: e.source,
           target: e.target,
           label: e.label,
+          color: e.color || '#94a3b8',
         },
       })),
     ]
@@ -334,28 +493,28 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
             width: (node) => {
               const cat = node.data('category')
               if (cat === 'Location') return 60
-              if (cat === 'Camera') return 50
-              if (cat === 'VehicleType') return 50
+              if (cat === 'Camera') return 48
+              if (cat === 'VehicleType') return 54
               return 38
             },
             height: (node) => {
               const cat = node.data('category')
               if (cat === 'Location') return 60
-              if (cat === 'Camera') return 50
-              if (cat === 'VehicleType') return 50
+              if (cat === 'Camera') return 48
+              if (cat === 'VehicleType') return 54
               return 38
             },
             label: 'data(label)',
             'background-color': 'data(color)',
             color: '#0f172a',
-            'font-size': (node) => (node.data('category') === 'Observation' ? 10 : 12),
+            'font-size': (node) => (node.data('category') === 'Observation' ? 9.5 : 12),
             'font-weight': (node) => (node.data('category') === 'Observation' ? 600 : 700),
             'text-valign': 'bottom',
-            'text-margin-y': 8,
+            'text-margin-y': 7,
             'text-wrap': 'wrap',
             'text-max-width': (node) => (node.data('category') === 'Observation' ? 85 : 120),
-            'border-width': 2.5,
-            'border-color': '#ffffff',
+            'border-width': (node) => (node.data('category') === 'VehicleType' ? 3.5 : 2.5),
+            'border-color': 'data(borderColor)',
             'border-opacity': 1,
             'text-background-color': '#ffffff',
             'text-background-opacity': 0.94,
@@ -363,22 +522,47 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
             'text-background-shape': 'roundrectangle',
           },
         },
+        // Style for Segregated Compound Parent Clusters
+        {
+          selector: ':parent',
+          style: {
+            'background-color': 'data(color)',
+            'background-opacity': 0.16,
+            'border-width': 2,
+            'border-style': 'dashed',
+            'border-color': 'data(borderColor)',
+            'border-opacity': 0.8,
+            'border-radius': 16,
+            label: 'data(label)',
+            'text-valign': 'top',
+            'text-halign': 'center',
+            'text-margin-y': -8,
+            'font-size': 11,
+            'font-weight': 800,
+            color: '#1e293b',
+            'text-background-color': '#ffffff',
+            'text-background-opacity': 0.94,
+            'text-background-padding': 3,
+            'text-background-shape': 'roundrectangle',
+            padding: 26,
+          },
+        },
         {
           selector: 'node:selected',
           style: {
-            'border-width': 4,
-            'border-color': '#2563eb',
-            'underlay-color': '#2563eb',
-            'underlay-padding': 6,
-            'underlay-opacity': 0.35,
+            'border-width': 3.5,
+            'border-color': '#0f172a',
+            'underlay-color': 'data(color)',
+            'underlay-padding': 8,
+            'underlay-opacity': 0.45,
           },
         },
         {
           selector: 'edge',
           style: {
-            width: 1.2,
+            width: 1.3,
             'line-color': '#94a3b8',
-            opacity: 0.55,
+            opacity: 0.6,
             'curve-style': 'bezier',
             'control-point-step-size': 35,
             'target-arrow-shape': 'triangle',
@@ -398,10 +582,10 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
         {
           selector: 'edge:selected',
           style: {
-            width: 2.8,
-            'line-color': '#2563eb',
-            'target-arrow-color': '#2563eb',
-            color: '#2563eb',
+            width: 3,
+            'line-color': '#0f172a',
+            'target-arrow-color': '#0f172a',
+            color: '#0f172a',
             opacity: 1,
           },
         },
@@ -614,6 +798,19 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
               </div>
 
               <div className="kg-control-group">
+                <span className="kg-control-label">Grouping:</span>
+                <button
+                  className={`kg-segregation-toggle ${segregatedView ? 'active' : ''}`}
+                  onClick={() => setSegregatedView(!segregatedView)}
+                  title="Toggle segregated type clusters"
+                  type="button"
+                >
+                  <Layers size={13} />
+                  <span>{segregatedView ? 'Segregated by Type' : 'Free Network'}</span>
+                </button>
+              </div>
+
+              <div className="kg-control-group">
                 <span className="kg-control-label">Format:</span>
                 <span className="kg-format-pill">Force (COSE)</span>
               </div>
@@ -636,13 +833,74 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
             </div>
           </div>
 
+          {/* Vehicle Domain Colors Legend & Quick-Filter Bar */}
+          <div className="kg-domain-bar">
+            <div className="kg-domain-bar-left">
+              <span className="kg-domain-title">
+                <Sparkles className="kg-domain-icon" size={13} />
+                Vehicle Domains:
+              </span>
+              <div className="kg-domain-pills">
+                <button
+                  className={`kg-domain-pill ${vehicleDomainFilter === 'ALL' ? 'active' : ''}`}
+                  onClick={() => setVehicleDomainFilter('ALL')}
+                  type="button"
+                >
+                  <span className="kg-swatch-all" />
+                  <span>All Domains ({activeRows.length})</span>
+                </button>
+                {domainBreakdown.map((item) => {
+                  const isActive = vehicleDomainFilter.toLowerCase() === item.label.toLowerCase()
+                  return (
+                    <button
+                      className={`kg-domain-pill ${isActive ? 'active' : ''}`}
+                      key={item.label}
+                      onClick={() => setVehicleDomainFilter(isActive ? 'ALL' : item.label)}
+                      style={{
+                        borderColor: isActive ? item.color : '#e2e8f0',
+                        backgroundColor: isActive ? item.bg : '#ffffff',
+                      }}
+                      title={`Show all ${item.label}s (${item.count} detections with color ${item.color})`}
+                      type="button"
+                    >
+                      <span
+                        className="kg-domain-dot"
+                        style={{ backgroundColor: item.color }}
+                      />
+                      <span className="kg-domain-name">{item.label}s</span>
+                      <span
+                        className="kg-domain-count"
+                        style={{
+                          backgroundColor: isActive ? item.color : '#f1f5f9',
+                          color: isActive ? '#ffffff' : '#475569',
+                        }}
+                      >
+                        {item.count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            {vehicleDomainFilter !== 'ALL' && (
+              <button
+                className="kg-domain-reset-btn"
+                onClick={() => setVehicleDomainFilter('ALL')}
+                type="button"
+              >
+                <X size={12} />
+                <span>Show All Vehicles</span>
+              </button>
+            )}
+          </div>
+
           {/* Graph Canvas */}
           <div className="ontology-graph-wrapper">
             <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 
             <div className="ontology-layout-badge">
               <Network size={15} />
-              <span>Force Layout (COSE) · Cytoscape Engine</span>
+              <span>{segregatedView ? 'Segregated Type Clusters (COSE Compound Engine)' : 'Force Layout (COSE) · Cytoscape Engine'}</span>
             </div>
 
             <div className="ontology-graph-info">
@@ -656,8 +914,10 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
           <div className="kg-details-panel">
             <div className="kg-details-header">
               <div className="kg-details-title-row">
-                <span className="kg-badge" style={{ backgroundColor: selectedNode.color }}>
-                  {selectedNode.category}
+                <span className="kg-badge" style={{ backgroundColor: selectedNode.color, color: '#ffffff' }}>
+                  {selectedNode.category === 'Observation'
+                    ? `${selectedNode.vehicleType || 'Vehicle'} · Detection`
+                    : selectedNode.category}
                 </span>
                 <button className="ontology-details-close" onClick={() => setSelectedNode(null)} type="button">
                   <X size={16} />
@@ -665,6 +925,30 @@ export default function KnowledgeGraphPage({ rows = [], fileName = 'Active Datas
               </div>
               <h2>{selectedNode.label}</h2>
               <span className="kg-node-id">ID: {selectedNode.id}</span>
+              {selectedNode.vehicleType && (
+                <div style={{ marginTop: '8px' }}>
+                  <button
+                    className="kg-domain-isolate-btn"
+                    onClick={() => setVehicleDomainFilter(selectedNode.vehicleType)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      fontSize: '11px',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      border: `1px solid ${selectedNode.color}`,
+                      color: selectedNode.color,
+                      background: 'transparent',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                    type="button"
+                  >
+                    <Filter size={12} /> Show all {selectedNode.vehicleType}s
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="kg-details-body">

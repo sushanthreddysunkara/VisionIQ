@@ -16,7 +16,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { getVehicleMeta } from '../../data/vehicleTypes'
+import { getCanonicalVehicleDomain, getVehicleMeta } from '../../data/vehicleTypes'
 import MediaPreviewModal from '../MediaPreviewModal'
 
 export default function QueryKnowledgeGraph({
@@ -27,24 +27,103 @@ export default function QueryKnowledgeGraph({
 }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [activeCategory, setActiveCategory] = useState('ALL')
+  const [vehicleDomainFilter, setVehicleDomainFilter] = useState('ALL')
+  const [segregatedView, setSegregatedView] = useState(true)
   const [selectedNode, setSelectedNode] = useState(null)
   const [previewModalRow, setPreviewModalRow] = useState(null)
   const containerRef = useRef(null)
   const cyRef = useRef(null)
 
+  // Compute breakdown of vehicle types for the domain color legend
+  const domainBreakdown = useMemo(() => {
+    const counts = {}
+    rows.forEach((r) => {
+      const rawType = r.type || r.vehicleType || 'Car'
+      const domain = getCanonicalVehicleDomain(rawType)
+      const meta = getVehicleMeta(domain)
+      if (!counts[domain]) {
+        counts[domain] = {
+          label: domain,
+          rawType: domain,
+          count: 0,
+          color: meta.color,
+          bg: meta.bg,
+          border: meta.border,
+        }
+      }
+      counts[domain].count += 1
+    })
+    return Object.values(counts).sort((a, b) => b.count - a.count)
+  }, [rows])
+
   // Construct instance knowledge graph specifically for the queried records
   const graphData = useMemo(() => {
     if (!rows || !rows.length) {
-      return { nodes: [], edges: [], stats: { cameras: 0, locations: 0, types: 0, observations: 0 } }
+      return { nodes: [], edges: [], stats: { cameras: 0, locations: 0, types: 0, observations: 0, totalQueried: 0 } }
     }
 
     const cameras = Array.from(new Set(rows.map((r) => r.camera).filter(Boolean)))
     const locations = Array.from(new Set(rows.map((r) => r.roadName || r.location).filter(Boolean)))
-    const types = Array.from(new Set(rows.map((r) => r.type || r.vehicleType).filter(Boolean)))
+    const domains = Array.from(new Set(rows.map((r) => getCanonicalVehicleDomain(r.type || r.vehicleType)).filter(Boolean)))
 
     const nodes = []
     const edges = []
     let edgeIndex = 1
+
+    // If segregatedView is active, create parent compound group nodes for each Vehicle Type,
+    // plus parent compound group nodes for Cameras and Locations so all types/domains are segregated together!
+    if (segregatedView) {
+      // Parent cluster for each vehicle domain
+      domains.forEach((domain) => {
+        const meta = getVehicleMeta(domain)
+        const count = rows.filter((r) => getCanonicalVehicleDomain(r.type || r.vehicleType) === domain).length
+        nodes.push({
+          id: `group-type-${domain}`,
+          label: `${domain.toUpperCase()} DOMAIN · ${count} RECORDS`,
+          category: 'Group',
+          color: meta.bg || '#f8fafc',
+          borderColor: meta.color || '#3b82f6',
+          isGroup: true,
+          properties: {
+            'Cluster Domain': domain,
+            'Vehicle Count': count,
+            'Color Classification': meta.color,
+          },
+        })
+      })
+
+      // Cameras cluster
+      if (cameras.length > 0) {
+        nodes.push({
+          id: 'group-cameras',
+          label: `CAMERAS NETWORK · ${cameras.length} UNITS`,
+          category: 'Group',
+          color: '#f8fafc',
+          borderColor: '#475569',
+          isGroup: true,
+          properties: {
+            'Cluster Domain': 'Surveillance Network',
+            'Active Cameras': cameras.length,
+          },
+        })
+      }
+
+      // Monitored Locations cluster
+      if (locations.length > 0) {
+        nodes.push({
+          id: 'group-locations',
+          label: `MONITORED ROADS · ${locations.length} ZONES`,
+          category: 'Group',
+          color: '#f0fdf4',
+          borderColor: '#10b981',
+          isGroup: true,
+          properties: {
+            'Cluster Domain': 'Roads & Corridors',
+            'Monitored Zones': locations.length,
+          },
+        })
+      }
+    }
 
     // 1. Location / Road Nodes
     locations.forEach((loc) => {
@@ -57,7 +136,9 @@ export default function QueryKnowledgeGraph({
         label: loc,
         category: 'Location',
         color: '#10b981',
+        borderColor: '#ffffff',
         icon: 'MapPin',
+        parent: segregatedView ? 'group-locations' : undefined,
         properties: {
           'Road / Junction': loc,
           'Matching Records': locRows.length,
@@ -70,77 +151,92 @@ export default function QueryKnowledgeGraph({
     // 2. Camera Nodes
     cameras.forEach((cam) => {
       const camRows = rows.filter((r) => r.camera === cam)
-      const loc = camRows[0]?.roadName || camRows[0]?.location || 'Monitored Road'
+      const assignedLoc = camRows[0]?.roadName || camRows[0]?.location || (locations.length > 0 ? locations[0] : null)
 
       nodes.push({
         id: `cam-${cam}`,
         label: cam,
         category: 'Camera',
-        color: '#0ea5e9',
+        color: '#475569',
+        borderColor: '#ffffff',
         icon: 'Camera',
+        parent: segregatedView ? 'group-cameras' : undefined,
         properties: {
           'Camera ID': cam,
-          'Assigned Road': loc,
+          'Assigned Road': assignedLoc || 'N/A',
           'Queried Detections': camRows.length,
           Heading: camRows[0]?.cameraDirection || 'North',
         },
       })
 
-      // Link camera to location
-      edges.push({
-        id: `edge-${edgeIndex++}`,
-        source: `cam-${cam}`,
-        target: `loc-${loc}`,
-        label: 'MONITORS',
-      })
+      // Link camera to location only if location node exists
+      if (assignedLoc && locations.includes(assignedLoc)) {
+        edges.push({
+          id: `edge-${edgeIndex++}`,
+          source: `cam-${cam}`,
+          target: `loc-${assignedLoc}`,
+          label: 'MONITORS',
+          color: '#94a3b8',
+        })
+      }
     })
 
-    // 3. Vehicle Type Nodes
-    types.forEach((type) => {
-      const typeRows = rows.filter((r) => (r.type || r.vehicleType) === type)
-      const meta = getVehicleMeta(type)
+    // 3. Vehicle Type Domain Nodes
+    domains.forEach((domain) => {
+      const domainRows = rows.filter((r) => getCanonicalVehicleDomain(r.type || r.vehicleType) === domain)
+      const meta = getVehicleMeta(domain)
 
       nodes.push({
-        id: `type-${type}`,
-        label: type,
+        id: `type-${domain}`,
+        label: domain,
         category: 'VehicleType',
-        color: meta.color || '#3b82f6',
-        icon: meta.label || type,
+        vehicleType: domain,
+        color: meta.color || '#2563eb',
+        borderColor: '#ffffff',
+        icon: domain,
+        parent: segregatedView ? `group-type-${domain}` : undefined,
         properties: {
-          'Vehicle Category': type,
-          'Matching Detections': typeRows.length,
+          'Vehicle Domain': domain,
+          'Matching Detections': domainRows.length,
           'Average Confidence': `${Math.round(
-            typeRows.reduce((sum, r) => sum + (r.confidence > 1 ? r.confidence : (r.confidence || 0.9) * 100), 0) /
-              typeRows.length
+            domainRows.reduce((sum, r) => sum + (r.confidence > 1 ? r.confidence : (r.confidence || 0.9) * 100), 0) /
+              (domainRows.length || 1)
           )}%`,
         },
       })
     })
 
-    // 4. Observation Nodes (all matching queried detections)
-    const sampleRows = rows
-    sampleRows.forEach((row, i) => {
-      const obsId = row.observationId ? `obs-${row.observationId}` : `obs-${i + 1}`
-      const obsLabel = row.numberPlate && row.numberPlate !== 'N/A' ? row.numberPlate : (row.observationId || `Detection #${i + 1}`)
+    // 4. Observation Nodes (each individual vehicle detection)
+    // Inherit consistent domain color from vehicle type (all cars blue, all bikes cyan, etc.)
+    rows.forEach((row, i) => {
+      const obsId = row.observationId ? `obs-${row.observationId}` : `obs-${row.id || i + 1}`
+      const obsLabel = row.numberPlate && row.numberPlate !== 'N/A' && row.numberPlate !== 'Unknown'
+        ? row.numberPlate
+        : (row.observationId || row.id || `Detection #${i + 1}`)
       const loc = row.roadName || row.location
-      const vType = row.type || row.vehicleType
+      const domain = getCanonicalVehicleDomain(row.type || row.vehicleType)
+      const meta = getVehicleMeta(domain)
 
       nodes.push({
         id: obsId,
         label: obsLabel,
         category: 'Observation',
-        color: '#8b5cf6',
-        icon: 'Sparkles',
+        vehicleType: domain,
+        color: meta.color, // Same color as all other vehicles in this domain!
+        borderColor: meta.border || '#ffffff',
+        icon: meta.label,
+        parent: segregatedView ? `group-type-${domain}` : undefined,
         properties: {
           'Observation ID': row.id || row.observationId || `OBS-${i + 1}`,
+          'Vehicle Domain': domain,
           'Number Plate': row.vehicleNumberPlate || row.numberPlate || 'N/A',
-          'Vehicle Type': vType || 'Car',
+          'Vehicle Type': domain,
           'Timestamp (IST)': row.timestampIst || row.timestamp || 'N/A',
           'Plate Confidence': `${Math.round(((row.plateConfidence || row.confidence) > 1 ? (row.plateConfidence || row.confidence) : (row.plateConfidence || row.confidence || 0.95) * 100))}%`,
           'Speed (km/h)': `${row.speed || 0} km/h`,
           'Speed Limit': `${row.speedLimit || 60} km/h`,
           'Over Speed': row.overSpeed || (row.speed > row.speedLimit ? 'Yes' : 'No'),
-          Coordinates: `${row.latitude?.toFixed(4) || '17.4485'}, ${row.longitude?.toFixed(4) || '78.3742'}`,
+          Coordinates: `${row.latitude?.toFixed?.(4) || '17.4485'}, ${row.longitude?.toFixed?.(4) || '78.3742'}`,
           'Vehicle Image': row.vehicleImage || 'N/A',
           'Vehicle Image Path': row.vehicleImagePath || 'N/A',
           'Plate Image Path': row.plateImagePath || 'N/A',
@@ -151,33 +247,34 @@ export default function QueryKnowledgeGraph({
         rawRow: row,
       })
 
-      // Link to vehicle type
-      if (vType) {
-        edges.push({
-          id: `edge-${edgeIndex++}`,
-          source: obsId,
-          target: `type-${vType}`,
-          label: 'OF_TYPE',
-        })
-      }
+      // Link to Domain Hub (all links share uniform #94a3b8)
+      edges.push({
+        id: `edge-${edgeIndex++}`,
+        source: obsId,
+        target: `type-${domain}`,
+        label: 'OF_TYPE',
+        color: '#94a3b8',
+      })
 
       // Link to camera
-      if (row.camera) {
+      if (row.camera && cameras.includes(row.camera)) {
         edges.push({
           id: `edge-${edgeIndex++}`,
           source: obsId,
           target: `cam-${row.camera}`,
           label: 'CAPTURED_BY',
+          color: '#94a3b8',
         })
       }
 
       // Link to location
-      if (loc) {
+      if (loc && locations.includes(loc)) {
         edges.push({
           id: `edge-${edgeIndex++}`,
           source: obsId,
           target: `loc-${loc}`,
           label: 'OCCURRED_AT',
+          color: '#94a3b8',
         })
       }
     })
@@ -188,24 +285,77 @@ export default function QueryKnowledgeGraph({
       stats: {
         cameras: cameras.length,
         locations: locations.length,
-        types: types.length,
-        observations: sampleRows.length,
+        types: domains.length,
+        observations: rows.length,
         totalQueried: rows.length,
       },
     }
-  }, [rows])
+  }, [rows, segregatedView])
 
-  // Filter nodes by category and search
+
+  // Filter nodes by category, vehicle domain, and search
   const visibleNodes = useMemo(() => {
-    return graphData.nodes.filter((node) => {
+    const rawFiltered = graphData.nodes.filter((node) => {
+      if (node.category === 'Group') return true // keep candidate groups
+
       const matchCat = activeCategory === 'ALL' || node.category === activeCategory
+
+      let matchDomain = true
+      if (vehicleDomainFilter !== 'ALL') {
+        const targetDomain = vehicleDomainFilter.toLowerCase()
+        if (node.category === 'Observation') {
+          matchDomain = (node.vehicleType || '').toLowerCase() === targetDomain
+        } else if (node.category === 'VehicleType') {
+          matchDomain = (node.vehicleType || node.label || '').toLowerCase() === targetDomain
+        }
+      }
+
+      const searchLower = searchTerm.toLowerCase()
       const matchSearch =
         !searchTerm ||
-        node.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        node.category.toLowerCase().includes(searchTerm.toLowerCase())
-      return matchCat && matchSearch
+        node.label.toLowerCase().includes(searchLower) ||
+        node.category.toLowerCase().includes(searchLower) ||
+        (node.vehicleType && node.vehicleType.toLowerCase().includes(searchLower))
+
+      return matchCat && matchDomain && matchSearch
     })
-  }, [graphData.nodes, activeCategory, searchTerm])
+
+    let candidateNodes = rawFiltered
+
+    if (vehicleDomainFilter !== 'ALL') {
+      const activeObs = rawFiltered.filter((n) => n.category === 'Observation')
+      const activeObsIds = new Set(activeObs.map((n) => n.id))
+      const connectedEntityIds = new Set()
+
+      graphData.edges.forEach((e) => {
+        if (activeObsIds.has(e.source)) connectedEntityIds.add(e.target)
+        if (activeObsIds.has(e.target)) connectedEntityIds.add(e.source)
+      })
+
+      candidateNodes = rawFiltered.filter((n) => {
+        if (n.category === 'Group') return true
+        if (n.category === 'Observation') return true
+        if (n.category === 'VehicleType') {
+          return (n.vehicleType || n.label || '').toLowerCase() === vehicleDomainFilter.toLowerCase()
+        }
+        return connectedEntityIds.has(n.id)
+      })
+    }
+
+    // Only keep parent group nodes that actually have visible children
+    const visibleChildParentIds = new Set(
+      candidateNodes
+        .filter((n) => n.category !== 'Group' && n.parent)
+        .map((n) => n.parent)
+    )
+
+    return candidateNodes.filter((n) => {
+      if (n.category === 'Group') {
+        return visibleChildParentIds.has(n.id)
+      }
+      return true
+    })
+  }, [graphData.nodes, graphData.edges, activeCategory, vehicleDomainFilter, searchTerm])
 
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes])
 
@@ -214,6 +364,46 @@ export default function QueryKnowledgeGraph({
       (e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
     )
   }, [graphData.edges, visibleNodeIds])
+
+  // Clustered Force (COSE) layout config
+  const layoutConfig = useMemo(() => {
+    return {
+      name: 'cose',
+      animate: false,
+      padding: 60,
+      componentSpacing: 180,
+      nodeDimensionsIncludeLabels: true,
+      nodeOverlap: 25,
+      nestingFactor: 1.25,
+      gravityCompound: 1.0,
+      gravityRangeCompound: 1.5,
+      nodeRepulsion: (node) => {
+        if (node.isParent?.() || node.data('category') === 'Group') return 650000
+        const cat = node.data('category')
+        if (cat === 'Location') return 240000
+        if (cat === 'Camera' || cat === 'VehicleType') return 160000
+        return 75000
+      },
+      idealEdgeLength: (edge) => {
+        const lbl = edge.data('label')
+        if (lbl === 'OF_TYPE') return 75 // gathers same vehicle types tightly together around their domain hub!
+        if (lbl === 'MONITORS') return 240
+        return 280
+      },
+      edgeElasticity: (edge) => {
+        if (edge.data('label') === 'OF_TYPE') return 90 // high elasticity inside domain cluster
+        return 18
+      },
+      gravity: 0.012,
+      numIter: 1100,
+      stop: () => {
+        cyRef.current?.animate({
+          fit: { eles: cyRef.current.elements(), padding: 50 },
+          duration: 250,
+        })
+      },
+    }
+  }, [segregatedView])
 
   // Set initial selected node if provided
   useEffect(() => {
@@ -239,6 +429,10 @@ export default function QueryKnowledgeGraph({
           label: n.label,
           category: n.category,
           color: n.color,
+          borderColor: n.borderColor || '#ffffff',
+          vehicleType: n.vehicleType || '',
+          parent: (n.parent && visibleNodeIds.has(n.parent)) ? n.parent : undefined,
+          isGroup: n.isGroup,
         },
       })),
       ...visibleEdges.map((e) => ({
@@ -247,6 +441,7 @@ export default function QueryKnowledgeGraph({
           source: e.source,
           target: e.target,
           label: e.label,
+          color: e.color || '#94a3b8',
         },
       })),
     ]
@@ -254,47 +449,39 @@ export default function QueryKnowledgeGraph({
     const cy = cytoscape({
       container: containerRef.current,
       elements,
-      minZoom: 0.1,
+      minZoom: 0.08,
       maxZoom: 3,
       wheelSensitivity: 0.15,
-      layout: {
-        name: 'cose',
-        animate: false,
-        padding: 70,
-        componentSpacing: 160,
-        nodeDimensionsIncludeLabels: true,
-        nodeOverlap: 80,
-        nodeRepulsion: (node) => {
-          const cat = node.data('category')
-          if (cat === 'Location') return 240000
-          if (cat === 'Camera' || cat === 'VehicleType') return 150000
-          return 80000
-        },
-        idealEdgeLength: (edge) => {
-          const lbl = edge.data('label')
-          if (lbl === 'OF_TYPE') return 220
-          return 280
-        },
-        gravity: 0.018,
-        numIter: 1000,
-      },
+      layout: layoutConfig,
       style: [
         {
           selector: 'node',
           style: {
-            width: (node) => (node.data('category') === 'Observation' ? 38 : 50),
-            height: (node) => (node.data('category') === 'Observation' ? 38 : 50),
+            width: (node) => {
+              const cat = node.data('category')
+              if (cat === 'Location') return 58
+              if (cat === 'Camera') return 48
+              if (cat === 'VehicleType') return 52
+              return 36
+            },
+            height: (node) => {
+              const cat = node.data('category')
+              if (cat === 'Location') return 58
+              if (cat === 'Camera') return 48
+              if (cat === 'VehicleType') return 52
+              return 36
+            },
             label: 'data(label)',
             'background-color': 'data(color)',
             color: '#0f172a',
-            'font-size': (node) => (node.data('category') === 'Observation' ? 10 : 12),
+            'font-size': (node) => (node.data('category') === 'Observation' ? 9.5 : 12),
             'font-weight': (node) => (node.data('category') === 'Observation' ? 600 : 700),
             'text-valign': 'bottom',
-            'text-margin-y': 8,
+            'text-margin-y': 7,
             'text-wrap': 'wrap',
             'text-max-width': (node) => (node.data('category') === 'Observation' ? 85 : 110),
-            'border-width': 2.5,
-            'border-color': '#ffffff',
+            'border-width': (node) => (node.data('category') === 'VehicleType' ? 3.5 : 2.5),
+            'border-color': 'data(borderColor)',
             'border-opacity': 1,
             'text-background-color': '#ffffff',
             'text-background-opacity': 0.94,
@@ -302,22 +489,47 @@ export default function QueryKnowledgeGraph({
             'text-background-shape': 'roundrectangle',
           },
         },
+        // Style for Segregated Compound Parent Clusters
+        {
+          selector: ':parent',
+          style: {
+            'background-color': 'data(color)',
+            'background-opacity': 0.16,
+            'border-width': 2,
+            'border-style': 'dashed',
+            'border-color': 'data(borderColor)',
+            'border-opacity': 0.8,
+            'border-radius': 16,
+            label: 'data(label)',
+            'text-valign': 'top',
+            'text-halign': 'center',
+            'text-margin-y': -8,
+            'font-size': 11,
+            'font-weight': 800,
+            color: '#1e293b',
+            'text-background-color': '#ffffff',
+            'text-background-opacity': 0.94,
+            'text-background-padding': 3,
+            'text-background-shape': 'roundrectangle',
+            padding: 24,
+          },
+        },
         {
           selector: 'node:selected',
           style: {
-            'border-width': 4,
-            'border-color': '#2563eb',
-            'underlay-color': '#2563eb',
-            'underlay-padding': 6,
-            'underlay-opacity': 0.35,
+            'border-width': 3.5,
+            'border-color': '#0f172a',
+            'underlay-color': 'data(color)',
+            'underlay-padding': 8,
+            'underlay-opacity': 0.45,
           },
         },
         {
           selector: 'edge',
           style: {
-            width: 1.2,
+            width: 1.3,
             'line-color': '#94a3b8',
-            opacity: 0.55,
+            opacity: 0.6,
             'curve-style': 'bezier',
             'control-point-step-size': 35,
             'target-arrow-shape': 'triangle',
@@ -337,10 +549,10 @@ export default function QueryKnowledgeGraph({
         {
           selector: 'edge:selected',
           style: {
-            width: 2.8,
-            'line-color': '#2563eb',
-            'target-arrow-color': '#2563eb',
-            color: '#2563eb',
+            width: 3,
+            'line-color': '#0f172a',
+            'target-arrow-color': '#0f172a',
+            color: '#0f172a',
             opacity: 1,
           },
         },
@@ -371,14 +583,14 @@ export default function QueryKnowledgeGraph({
     return () => {
       cy.destroy()
     }
-  }, [visibleNodes, visibleEdges, graphData.nodes])
+  }, [visibleNodes, visibleEdges, graphData.nodes, layoutConfig])
 
-  // Viewport-centered smooth animated zoom controls
+  // Viewport-centered smooth zoom controls
   function handleZoomIn() {
     const cy = cyRef.current
     if (!cy) return
     const currentZoom = cy.zoom()
-    const targetZoom = Math.min(3.5, currentZoom * 1.3)
+    const targetZoom = Math.min(3, currentZoom * 1.3)
     cy.animate({
       zoom: {
         level: targetZoom,
@@ -392,7 +604,7 @@ export default function QueryKnowledgeGraph({
     const cy = cyRef.current
     if (!cy) return
     const currentZoom = cy.zoom()
-    const targetZoom = Math.max(0.04, currentZoom * 0.75)
+    const targetZoom = Math.max(0.1, currentZoom * 0.75)
     cy.animate({
       zoom: {
         level: targetZoom,
@@ -418,28 +630,9 @@ export default function QueryKnowledgeGraph({
     const cy = cyRef.current
     if (!cy) return
     cy.layout({
-      name: 'cose',
+      ...layoutConfig,
       animate: true,
       animationDuration: 500,
-      padding: 70,
-      componentSpacing: 160,
-      nodeDimensionsIncludeLabels: true,
-      nodeOverlap: 80,
-      nodeRepulsion: (node) => {
-        const cat = node.data('category')
-        if (cat === 'Location') return 240000
-        if (cat === 'Camera' || cat === 'VehicleType') return 150000
-        return 80000
-      },
-      idealEdgeLength: (edge) => (edge.data('label') === 'OF_TYPE' ? 220 : 280),
-      gravity: 0.018,
-      numIter: 1000,
-      stop: () => {
-        cy.animate({
-          fit: { eles: cy.elements(), padding: 50 },
-          duration: 260,
-        })
-      },
     }).run()
   }
 
@@ -486,6 +679,17 @@ export default function QueryKnowledgeGraph({
           ))}
         </div>
 
+        {/* Segregation Toggle Button */}
+        <button
+          className={`kg-segregation-toggle ${segregatedView ? 'active' : ''}`}
+          onClick={() => setSegregatedView(!segregatedView)}
+          title="Toggle segregated type clusters"
+          type="button"
+        >
+          <Layers size={13} />
+          <span>{segregatedView ? 'Segregated by Type' : 'Free Network'}</span>
+        </button>
+
         {/* Zoom & Fit Actions */}
         <div className="query-kg-actions">
           <button onClick={handleZoomIn} title="Zoom in" type="button">
@@ -508,6 +712,69 @@ export default function QueryKnowledgeGraph({
         </div>
       </div>
 
+      {/* Vehicle Domain Colors Legend & Quick-Filter Bar */}
+      {domainBreakdown.length > 0 && (
+        <div className="kg-domain-bar">
+          <div className="kg-domain-bar-left">
+            <span className="kg-domain-title">
+              <Sparkles className="kg-domain-icon" size={13} />
+              Vehicle Domains:
+            </span>
+            <div className="kg-domain-pills">
+              <button
+                className={`kg-domain-pill ${vehicleDomainFilter === 'ALL' ? 'active' : ''}`}
+                onClick={() => setVehicleDomainFilter('ALL')}
+                type="button"
+              >
+                <span className="kg-swatch-all" />
+                <span>All Domains ({rows.length})</span>
+              </button>
+              {domainBreakdown.map((item) => {
+                const isActive = vehicleDomainFilter.toLowerCase() === item.label.toLowerCase()
+                return (
+                  <button
+                    className={`kg-domain-pill ${isActive ? 'active' : ''}`}
+                    key={item.label}
+                    onClick={() => setVehicleDomainFilter(isActive ? 'ALL' : item.label)}
+                    style={{
+                      borderColor: isActive ? item.color : '#e2e8f0',
+                      backgroundColor: isActive ? item.bg : '#ffffff',
+                    }}
+                    title={`Show all ${item.label}s (${item.count} detections with color ${item.color})`}
+                    type="button"
+                  >
+                    <span
+                      className="kg-domain-dot"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <span className="kg-domain-name">{item.label}s</span>
+                    <span
+                      className="kg-domain-count"
+                      style={{
+                        backgroundColor: isActive ? item.color : '#f1f5f9',
+                        color: isActive ? '#ffffff' : '#475569',
+                      }}
+                    >
+                      {item.count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {vehicleDomainFilter !== 'ALL' && (
+            <button
+              className="kg-domain-reset-btn"
+              onClick={() => setVehicleDomainFilter('ALL')}
+              type="button"
+            >
+              <X size={12} />
+              <span>Show All Vehicles</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Graph Canvas & Side Drawer */}
       <div className="query-kg-canvas-wrapper">
         <div className="query-kg-cy" ref={containerRef} />
@@ -521,8 +788,19 @@ export default function QueryKnowledgeGraph({
         {selectedNode && (
           <div className="query-kg-drawer">
             <div className="query-kg-drawer-header">
-              <div className="query-kg-drawer-badge" style={{ backgroundColor: selectedNode.color }}>
-                {selectedNode.category}
+              <div
+                className="query-kg-drawer-badge"
+                style={{
+                  backgroundColor: selectedNode.color,
+                  color: selectedNode.category === 'Group' ? '#0f172a' : '#ffffff',
+                  border: selectedNode.category === 'Group' ? '1px solid rgba(0,0,0,0.1)' : 'none',
+                }}
+              >
+                {selectedNode.category === 'Observation'
+                  ? `${selectedNode.vehicleType || 'Vehicle'} · Detection`
+                  : selectedNode.category === 'Group'
+                  ? 'Domain Cluster'
+                  : selectedNode.category}
               </div>
               <button
                 className="query-kg-drawer-close"
@@ -535,6 +813,30 @@ export default function QueryKnowledgeGraph({
 
             <h3 className="query-kg-drawer-title">{selectedNode.label}</h3>
             <span className="query-kg-drawer-id">ID: {selectedNode.id}</span>
+            {selectedNode.vehicleType && (
+              <div style={{ marginTop: '8px', marginBottom: '8px' }}>
+                <button
+                  className="kg-domain-isolate-btn"
+                  onClick={() => setVehicleDomainFilter(selectedNode.vehicleType)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    fontSize: '11px',
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    border: `1px solid ${selectedNode.color}`,
+                    color: selectedNode.color,
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                  }}
+                  type="button"
+                >
+                  Show all {selectedNode.vehicleType}s
+                </button>
+              </div>
+            )}
 
             {selectedNode.image && (
               <div

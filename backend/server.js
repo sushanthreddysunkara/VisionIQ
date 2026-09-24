@@ -35,22 +35,11 @@ const io = new Server(httpServer, {
   cors: corsOptions,
 })
 
-io.on('connection', async (socket) => {
-  try {
-    let afterId = 0
-    while (true) {
-      const storedVehicles = await getStoredVehicles({ afterId, limit: Math.floor(Math.random() * 20) + 1 })
-      if (!storedVehicles.length) break
-      socket.emit('newVehicleBatch', storedVehicles)
-      afterId = storedVehicles[storedVehicles.length - 1].id
-      await new Promise((resolve) => setTimeout(resolve, 5000))
-    }
-  } catch (error) {
-    console.error('Unable to sync stored vehicle events:', error.message)
-  }
-
+io.on('connection', (socket) => {
   const latestStatus = getLatestStreamStatus()
-  if (latestStatus) socket.emit('vehicleStreamStatus', latestStatus)
+  if (latestStatus) {
+    socket.emit('vehicleStreamStatus', latestStatus)
+  }
 })
 
 const port = Number(process.env.PORT || 5000)

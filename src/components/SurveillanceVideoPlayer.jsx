@@ -150,11 +150,23 @@ export default function SurveillanceVideoPlayer({
   }
 
   function togglePlay() {
-    setIsPlaying((prev) => !prev)
+    setIsPlaying((prev) => {
+      const willPlay = !prev
+      if (willPlay && currentTime >= duration) {
+        setCurrentTime(0)
+        if (videoRef.current) {
+          videoRef.current.currentTime = 0
+        }
+      }
+      return willPlay
+    })
     if (videoRef.current) {
       if (isPlaying) {
         videoRef.current.pause()
       } else {
+        if (videoRef.current.currentTime >= duration) {
+          videoRef.current.currentTime = 0
+        }
         videoRef.current.play().catch(() => {})
       }
     }
@@ -199,7 +211,8 @@ export default function SurveillanceVideoPlayer({
       if (isPlaying) {
         simTime += delta * playbackSpeed
         if (simTime >= duration) {
-          simTime = 0
+          simTime = duration
+          setIsPlaying(false)
         }
         setCurrentTime(simTime)
       }
@@ -590,8 +603,8 @@ export default function SurveillanceVideoPlayer({
             <video
               autoPlay={autoPlay}
               controls={false}
-              loop
               muted={isMuted}
+              onEnded={() => setIsPlaying(false)}
               onError={handleVideoError}
               onLoadedData={handleVideoLoadedData}
               onLoadedMetadata={(e) => {

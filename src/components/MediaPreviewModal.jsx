@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import {
+  Bike,
+  Bus,
   Camera,
+  Car,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -9,20 +12,37 @@ import {
   Download,
   ExternalLink,
   Eye,
+  EyeOff,
   FileSpreadsheet,
   FileVideo,
   Gauge,
   Image as ImageIcon,
-  Layers,
   MapPin,
-  Maximize2,
-  Play,
-  Shield,
+  RotateCcw,
   Sparkles,
+  Truck,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 import SurveillanceVideoPlayer from './SurveillanceVideoPlayer'
 import { formatTimestampIst } from '../data/dashboardData'
+
+
+function VehicleTypeIcon({ type, size = 15 }) {
+  const t = String(type || '').toLowerCase()
+  if (t.includes('bike') || t.includes('motorcycle') || t.includes('scooter') || t.includes('two')) {
+    return <Bike size={size} />
+  }
+  if (t.includes('bus')) {
+    return <Bus size={size} />
+  }
+  if (t.includes('truck') || t.includes('heavy') || t.includes('lorry')) {
+    return <Truck size={size} />
+  }
+  return <Car size={size} />
+}
+
 
 export default function MediaPreviewModal({
   isOpen,
@@ -30,20 +50,25 @@ export default function MediaPreviewModal({
   row,
   allRows = [],
   onSelectRow,
-  initialTab = 'video', // 'vehicle' | 'plate' | 'video'
+  initialTab = 'vehicle',
 }) {
   const [activeMediaTab, setActiveMediaTab] = useState(initialTab) // 'vehicle' | 'plate' | 'video'
   const [copiedPath, setCopiedPath] = useState(false)
+  const [copiedPlate, setCopiedPlate] = useState(false)
   const [imgLoadError, setImgLoadError] = useState(false)
   const [plateLoadError, setPlateLoadError] = useState(false)
+  const [showOverlays, setShowOverlays] = useState(true)
+  const [zoomLevel, setZoomLevel] = useState(1)
 
   useEffect(() => {
-    setActiveMediaTab(initialTab || 'video')
+    setActiveMediaTab(initialTab || 'vehicle')
+    setZoomLevel(1)
   }, [initialTab, row?.id, row?.observationId])
 
   useEffect(() => {
     setImgLoadError(false)
     setPlateLoadError(false)
+    setZoomLevel(1)
   }, [row?.id, row?.observationId])
 
   useEffect(() => {
@@ -71,7 +96,8 @@ export default function MediaPreviewModal({
 
   function navigateRow(direction) {
     if (currentIndex === -1 || !allRows.length) return
-    const nextIdx = (currentIndex + direction + allRows.length) % allRows.length
+    const nextIdx = currentIndex + direction
+    if (nextIdx < 0 || nextIdx >= allRows.length) return
     onSelectRow?.(allRows[nextIdx])
   }
 
@@ -86,8 +112,8 @@ export default function MediaPreviewModal({
       : (row.plateConfidence || row.confidence || 0.95) * 100
   )
 
-  // Extract raw path strings
-  const videoUrl =
+  // Extract raw paths
+  const rawVideo =
     row.videoClipPath ||
     row.videoUrl ||
     row.url ||
@@ -101,11 +127,20 @@ export default function MediaPreviewModal({
     row['link'] ||
     ''
 
+  const hasRealVideo = Boolean(
+    rawVideo &&
+    !rawVideo.includes('youtube.com/watch?v=1EiC9bvVGnk') &&
+    (rawVideo.startsWith('http') || rawVideo.startsWith('/') || rawVideo.includes('.'))
+  )
+
+  const videoUrl = rawVideo || 'https://www.youtube.com/watch?v=1EiC9bvVGnk'
+
   const vehicleImagePath =
     row.vehicleImagePath ||
     row.vehicleImage ||
     row['Vehicle Image Path'] ||
     row['vehicle_photos'] ||
+    row.extractedImageName ||
     ''
 
   const plateImagePath =
@@ -120,13 +155,12 @@ export default function MediaPreviewModal({
     return parts[parts.length - 1] || pathStr
   }
 
-  // Active path depending on current tab
   const currentActivePath =
     activeMediaTab === 'video'
-      ? videoUrl
+      ? (hasRealVideo ? rawVideo : 'No video clip linked')
       : activeMediaTab === 'plate'
-      ? plateImagePath
-      : vehicleImagePath
+      ? (plateImagePath || 'ANPR OCR extraction')
+      : (vehicleImagePath || 'vehicle_capture.jpg')
 
   function handleCopyPath() {
     if (navigator.clipboard) {
@@ -136,35 +170,23 @@ export default function MediaPreviewModal({
     }
   }
 
-  // Synthetic optical surveillance graphic for fallback
-  const syntheticVehicleSvg =
-    row.syntheticImageDataUrl ||
-    (typeof row.vehicleImageDataUrl === 'string' && row.vehicleImageDataUrl.startsWith('data:image')
-      ? row.vehicleImageDataUrl
-      : generateSurveillanceSvgDataUrl(row, currentIndex >= 0 ? currentIndex : 0))
-
-  function handleDownloadImage() {
-    const targetUrl =
-      (activeMediaTab === 'plate' && plateImagePath && !plateLoadError)
-        ? plateImagePath
-        : (!imgLoadError && vehicleImagePath ? vehicleImagePath : row.extractedImage || syntheticVehicleSvg)
-    if (!targetUrl) return
-    const link = document.createElement('a')
-    link.href = targetUrl
-    link.download = `${row.id || 'OBS'}_${activeMediaTab}_${row.vehicleType || 'Vehicle'}.jpg`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+  function handleCopyPlate() {
+    const plate = row.vehicleNumberPlate || row.numberPlate || ''
+    if (plate && navigator.clipboard) {
+      navigator.clipboard.writeText(plate)
+      setCopiedPlate(true)
+      setTimeout(() => setCopiedPlate(false), 2000)
+    }
   }
 
-  // Determine actual image source for vehicle: Prioritize extracted image from Excel archive
+  // Determine actual image source for vehicle
   const vehicleSrc =
     row.extractedImage ||
     (!imgLoadError && vehicleImagePath && (vehicleImagePath.startsWith('http') || vehicleImagePath.startsWith('data:') || vehicleImagePath.startsWith('/'))
       ? vehicleImagePath
       : (!imgLoadError && row.vehicleImage && (row.vehicleImage.startsWith('http') || row.vehicleImage.startsWith('data:') || row.vehicleImage.startsWith('/'))
         ? row.vehicleImage
-        : (row.extractedImage || syntheticVehicleSvg)))
+        : row.extractedImage || null))
 
   // Determine actual image source for plate
   const plateSrc =
@@ -172,79 +194,106 @@ export default function MediaPreviewModal({
       ? plateImagePath
       : null)
 
+  function handleDownloadAsset() {
+    const targetUrl =
+      activeMediaTab === 'plate' && plateSrc
+        ? plateSrc
+        : vehicleSrc
+    if (!targetUrl) return
+    const link = document.createElement('a')
+    link.href = targetUrl
+    link.download = `${row.id || 'capture'}_${activeMediaTab}_${row.vehicleType || 'vehicle'}.jpg`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  function handleZoom(delta) {
+    setZoomLevel((prev) => Math.min(2.5, Math.max(0.75, +(prev + delta).toFixed(2))))
+  }
+
+  function handleResetZoom() {
+    setZoomLevel(1)
+  }
+
+  const plateNumber = row.vehicleNumberPlate || row.numberPlate || 'Not Detected'
+  const vehicleTypeLabel = row.vehicleType || row.type || 'Vehicle'
+
   return (
     <div className="media-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">
       <div
-        className="media-modal-container media-modal-tactical"
+        className="media-modal-container media-modal-natural"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Tactical Surveillance Console Header */}
-        <div className="media-modal-tactical-header">
-          <div className="media-tactical-title-wrap">
-            <div className="media-tactical-pill-row">
-              <span className="media-tactical-rec-pill">
-                <span className="media-rec-dot" />
-                SURVEILLANCE EVIDENCE
-              </span>
-              <span className="media-tactical-track-pill">
-                TARGET ID: #{row.id || row.observationId || '1383'}
-              </span>
-              <span className="media-tactical-class-pill">
-                {String(row.vehicleType || row.type || 'Vehicle').toUpperCase()}
+        {/* Modern Clean Header */}
+        <div className="media-natural-header">
+          <div className="media-natural-title-col">
+            <div className="media-natural-meta-tags">
+              <span className="natural-tag tag-event">Detection Event</span>
+              <span className="natural-tag tag-id">#{row.id || row.observationId || 'Capture'}</span>
+              <span className="natural-tag tag-type">
+                <VehicleTypeIcon type={vehicleTypeLabel} size={13} />
+                <span>{vehicleTypeLabel}</span>
               </span>
               {row.hasExtractedImage && (
-                <span className="media-tactical-xlsx-pill">
-                  <Sparkles size={11} />
-                  Excel Asset
+                <span className="natural-tag tag-source">
+                  <FileSpreadsheet size={12} />
+                  <span>Excel Source</span>
                 </span>
               )}
             </div>
 
-            <div className="media-tactical-headline">
+            <div className="media-natural-heading-row">
               <h2>
-                {row.vehicleType || row.type || 'Vehicle'} —{' '}
-                <span style={{ color: '#38bdf8', letterSpacing: '1px' }}>
-                  {row.vehicleNumberPlate || row.numberPlate || 'TG 08 Z 07'}
-                </span>
+                <span className="vehicle-class-name">{vehicleTypeLabel}</span>
+                <span className="heading-sep">—</span>
+                <span className="plate-highlight">{plateNumber}</span>
               </h2>
-              <p className="media-tactical-coords">
+            </div>
+
+            <div className="media-natural-subline">
+              <span className="subline-item">
                 <Clock size={12} />
                 <span>{formatTimestampIst(row)}</span>
-                <span style={{ color: '#475569' }}>·</span>
+              </span>
+              <span className="subline-dot">·</span>
+              <span className="subline-item">
                 <MapPin size={12} />
                 <span>
-                  {row.latitude?.toFixed(4) || '17.4485'}°N, {row.longitude?.toFixed(4) || '78.3742'}°E
+                  {row.roadName || row.location || 'Corridor Camera Point'}
+                  {row.latitude && row.longitude ? ` (${row.latitude.toFixed(4)}°N, ${row.longitude.toFixed(4)}°E)` : ''}
                 </span>
-                <span style={{ color: '#475569' }}>·</span>
-                <span style={{ color: '#94a3b8' }}>{row.roadName || row.location || 'Outer Corridor Sector 1'}</span>
-              </p>
+              </span>
             </div>
           </div>
 
-          <div className="media-modal-header-actions">
+          <div className="media-natural-header-actions">
             {allRows.length > 1 && (
-              <div className="media-nav-buttons">
+              <div className="media-nav-stepper">
                 <button
-                  className="media-nav-btn"
+                  className="media-stepper-btn"
+                  disabled={currentIndex <= 0}
                   onClick={() => navigateRow(-1)}
-                  title="Previous record (Left Arrow)"
+                  title={currentIndex <= 0 ? 'First record' : 'Previous record (Left Arrow)'}
                   type="button"
                 >
                   <ChevronLeft size={16} />
                 </button>
-                <span className="media-nav-counter">
+                <span className="media-stepper-counter">
                   {currentIndex >= 0 ? currentIndex + 1 : 1} / {allRows.length}
                 </span>
                 <button
-                  className="media-nav-btn"
+                  className="media-stepper-btn"
+                  disabled={currentIndex >= allRows.length - 1}
                   onClick={() => navigateRow(1)}
-                  title="Next record (Right Arrow)"
+                  title={currentIndex >= allRows.length - 1 ? 'Last record' : 'Next record (Right Arrow)'}
                   type="button"
                 >
                   <ChevronRight size={16} />
                 </button>
               </div>
             )}
+
             <button
               className="media-modal-close-btn"
               onClick={onClose}
@@ -256,93 +305,80 @@ export default function MediaPreviewModal({
           </div>
         </div>
 
-        {/* Tactical Media Dock: 3 Sleek Surveillance Selector Cards */}
-        <div className="media-tactical-body">
-          <div className="media-evidence-dock-grid">
-            {/* Card 1: Vehicle Image */}
+        <div className="media-natural-body">
+          {/* Clean 3-Tab Media Switcher */}
+          <div className="media-natural-tabs">
             <button
-              className={`media-evidence-card ${activeMediaTab === 'vehicle' ? 'active-card' : ''}`}
+              className={`media-tab-card ${activeMediaTab === 'vehicle' ? 'is-active' : ''}`}
               onClick={() => setActiveMediaTab('vehicle')}
               type="button"
             >
-              <div className="evidence-card-icon-col">
-                <div className="evidence-card-icon-wrap icon-cyan">
-                  <ImageIcon size={18} />
-                </div>
+              <div className="tab-icon-wrap icon-cyan">
+                <ImageIcon size={18} />
               </div>
-              <div className="evidence-card-info-col">
-                <span className="evidence-card-kicker">VEHICLE DETECTION</span>
-                <strong className="evidence-card-filename" title={vehicleImagePath}>
-                  {getBasename(vehicleImagePath || 'track_1383.jpg')}
+              <div className="tab-meta-col">
+                <span className="tab-kicker">VEHICLE CAPTURE</span>
+                <strong className="tab-filename" title={vehicleImagePath}>
+                  {getBasename(vehicleImagePath || 'vehicle_snapshot.jpg')}
                 </strong>
-                <span className="evidence-card-meta">
-                  1080p Optical Snapshot
-                </span>
+                <span className="tab-status-text">Optical Inspection</span>
               </div>
-              <span className={`evidence-card-indicator ${activeMediaTab === 'vehicle' ? 'indicator-active' : ''}`} />
+              <span className="tab-active-indicator" />
             </button>
 
-            {/* Card 2: License Plate ANPR */}
             <button
-              className={`media-evidence-card ${activeMediaTab === 'plate' ? 'active-card' : ''}`}
+              className={`media-tab-card ${activeMediaTab === 'plate' ? 'is-active' : ''}`}
               onClick={() => setActiveMediaTab('plate')}
               type="button"
             >
-              <div className="evidence-card-icon-col">
-                <div className="evidence-card-icon-wrap icon-emerald">
-                  <Eye size={18} />
-                </div>
+              <div className="tab-icon-wrap icon-emerald">
+                <Eye size={18} />
               </div>
-              <div className="evidence-card-info-col">
-                <span className="evidence-card-kicker">LICENSE PLATE ANPR</span>
-                <strong className="evidence-card-filename" title={plateImagePath}>
-                  {getBasename(plateImagePath || 'plate_photos/track_1383.jpg')}
+              <div className="tab-meta-col">
+                <span className="tab-kicker">LICENSE PLATE ANPR</span>
+                <strong className="tab-filename" title={plateImagePath}>
+                  {plateSrc ? getBasename(plateImagePath) : 'ANPR Recognition'}
                 </strong>
-                <span className="evidence-card-meta">
-                  {plateConfidencePercent}% OCR Match
-                </span>
+                <span className="tab-status-text">{plateConfidencePercent}% Confidence</span>
               </div>
-              <span className={`evidence-card-indicator ${activeMediaTab === 'plate' ? 'indicator-active' : ''}`} />
+              <span className="tab-active-indicator" />
             </button>
 
-            {/* Card 3: Video Stream */}
             <button
-              className={`media-evidence-card ${activeMediaTab === 'video' ? 'active-card' : ''}`}
+              className={`media-tab-card ${activeMediaTab === 'video' ? 'is-active' : ''}`}
               onClick={() => setActiveMediaTab('video')}
               type="button"
             >
-              <div className="evidence-card-icon-col">
-                <div className="evidence-card-icon-wrap icon-blue">
-                  <FileVideo size={18} />
-                </div>
+              <div className="tab-icon-wrap icon-blue">
+                <FileVideo size={18} />
               </div>
-              <div className="evidence-card-info-col">
-                <span className="evidence-card-kicker">ANNOTATED STREAM</span>
-                <strong className="evidence-card-filename" title={videoUrl}>
-                  {getBasename(videoUrl || 'annotated.mp4')}
+              <div className="tab-meta-col">
+                <span className="tab-kicker">VIDEO RECORDING</span>
+                <strong className="tab-filename" title={hasRealVideo ? rawVideo : 'No Video'}>
+                  {hasRealVideo ? getBasename(rawVideo) : 'Snapshot Only'}
                 </strong>
-                <span className="evidence-card-meta">
-                  {activeMediaTab === 'video' ? '● STREAMING LIVE' : 'Click to Play'}
+                <span className="tab-status-text">
+                  {hasRealVideo ? 'Surveillance Stream' : 'Photo Captured'}
                 </span>
               </div>
-              <span className={`evidence-card-indicator ${activeMediaTab === 'video' ? 'indicator-active' : ''}`} />
+              <span className="tab-active-indicator" />
             </button>
           </div>
 
-          {/* Active Stream URI Pill Bar */}
-          <div className="media-tactical-uri-bar">
-            <div className="uri-label-group">
-              <span className="uri-tag">SOURCE URI</span>
-              <code className="uri-code-val" title={currentActivePath}>
+          {/* Clean Source Info Bar */}
+          <div className="media-natural-source-bar">
+            <div className="source-uri-wrap">
+              <span className="source-uri-tag">SOURCE URI</span>
+              <code className="source-uri-text" title={currentActivePath}>
                 {currentActivePath}
               </code>
             </div>
 
-            <div className="uri-actions-group">
+            <div className="source-actions-wrap">
               <button
-                className="uri-action-btn"
+                className="source-action-btn"
                 onClick={handleCopyPath}
-                title="Copy active path to clipboard"
+                title="Copy source path"
                 type="button"
               >
                 {copiedPath ? <Check color="#34d399" size={12} /> : <Copy size={12} />}
@@ -351,11 +387,11 @@ export default function MediaPreviewModal({
 
               {currentActivePath && (currentActivePath.startsWith('http') || currentActivePath.startsWith('/')) && (
                 <a
-                  className="uri-action-btn"
+                  className="source-action-btn"
                   href={currentActivePath}
                   rel="noopener noreferrer"
                   target="_blank"
-                  title="Open source file in new browser window"
+                  title="Open source file in new tab"
                 >
                   <ExternalLink size={12} />
                   <span>Open ↗</span>
@@ -364,138 +400,281 @@ export default function MediaPreviewModal({
             </div>
           </div>
 
-          {/* High-Resolution Tactical Viewport Screen */}
-          <div className="media-tactical-viewport">
-            {activeMediaTab === 'video' && videoUrl ? (
-              /* Video Player Mode */
-              <SurveillanceVideoPlayer
-                autoPlay={true}
-                row={row}
-                videoClipPath={videoUrl}
-              />
-            ) : activeMediaTab === 'video' ? (
-              <div className="media-tactical-placeholder"><FileVideo size={48} /><p>No video URL was provided in the Excel file.</p></div>
+          {/* Main Natural Viewport Area */}
+          <div className="media-natural-viewport">
+            {activeMediaTab === 'video' ? (
+              /* TAB 3: VIDEO STREAM */
+              hasRealVideo ? (
+                <SurveillanceVideoPlayer
+                  autoPlay={true}
+                  row={row}
+                  videoClipPath={videoUrl}
+                />
+              ) : (
+                <div className="media-natural-video-standby">
+                  <div className="standby-icon-circle">
+                    <FileVideo size={36} />
+                  </div>
+                  <h3>No Video Clip Recorded</h3>
+                  <p>
+                    This telemetry observation was registered as an optical photo capture.
+                    Continuous surveillance video was not attached or triggered for record #{row.id || 'N/A'}.
+                  </p>
+                  <button
+                    className="standby-action-btn"
+                    onClick={() => setActiveMediaTab('vehicle')}
+                    type="button"
+                  >
+                    <ImageIcon size={15} />
+                    <span>View Vehicle Capture Photo</span>
+                  </button>
+                </div>
+              )
             ) : activeMediaTab === 'plate' ? (
-              /* Plate Crop View */
-              <div className="media-tactical-frame">
+              /* TAB 2: ANPR PLATE INSPECTION */
+              <div className="media-natural-plate-view">
                 {plateSrc ? (
-                  <img
-                    alt={`Plate crop for ${row.vehicleNumberPlate || 'Vehicle'}`}
-                    className="media-tactical-img"
-                    onError={() => setPlateLoadError(true)}
-                    src={plateSrc}
-                  />
+                  /* If a dedicated plate image exists, show with ambient backdrop */
+                  <div className="media-natural-frame">
+                    <div
+                      className="media-ambient-glow"
+                      style={{ backgroundImage: `url(${plateSrc})` }}
+                    />
+                    <div
+                      className="media-natural-stage"
+                      style={{ transform: `scale(${zoomLevel})` }}
+                    >
+                      <img
+                        alt={`License plate crop for ${plateNumber}`}
+                        className="media-natural-plate-img"
+                        onError={() => setPlateLoadError(true)}
+                        src={plateSrc}
+                      />
+                    </div>
+                  </div>
                 ) : (
-                  <div className="media-tactical-placeholder"><ImageIcon size={48} /><p>No number plate image URL was provided in the Excel file.</p></div>
+                  /* Realistic ANPR OCR Inspection Card with Authentic Plate Rendering */
+                  <div className="anpr-natural-inspector-card">
+                    <div className="anpr-card-header">
+                      <div className="anpr-badge-row">
+                        <span className="anpr-pill anpr-pill-verified">
+                          <Check size={12} />
+                          OCR Verified
+                        </span>
+                        <span className="anpr-pill anpr-pill-conf">
+                          {plateConfidencePercent}% Recognition Confidence
+                        </span>
+                      </div>
+                      <span className="anpr-camera-tag">
+                        <Camera size={12} />
+                        {row.camera || 'CAM-01'}
+                      </span>
+                    </div>
+
+                    {/* Authentic High-Security Indian License Plate (HSRP) Rendering */}
+                    <div className="hsrp-plate-container">
+                      <div className="hsrp-plate-surface">
+                        <div className="hsrp-ind-strip">
+                          <div className="hsrp-chakra-symbol" />
+                          <span className="hsrp-ind-text">IND</span>
+                        </div>
+                        <div className="hsrp-number-text">
+                          {plateNumber}
+                        </div>
+                        <div className="hsrp-hologram-seal" />
+                      </div>
+                      <div className="hsrp-plate-caption">
+                        High-Security Registration Plate (HSRP) Standard
+                      </div>
+                    </div>
+
+                    {/* Structured Inspection Grid */}
+                    <div className="anpr-details-grid">
+                      <div className="anpr-metric-cell">
+                        <span className="cell-label">Registration Plate</span>
+                        <strong className="cell-value cell-highlight">{plateNumber}</strong>
+                      </div>
+                      <div className="anpr-metric-cell">
+                        <span className="cell-label">Vehicle Classification</span>
+                        <strong className="cell-value">{vehicleTypeLabel}</strong>
+                      </div>
+                      <div className="anpr-metric-cell">
+                        <span className="cell-label">Speed Recorded</span>
+                        <strong className={`cell-value ${isOverSpeed ? 'text-violation' : ''}`}>
+                          {row.speed || 0} km/h {isOverSpeed && '(Overspeed)'}
+                        </strong>
+                      </div>
+                      <div className="anpr-metric-cell">
+                        <span className="cell-label">Capture Timestamp</span>
+                        <strong className="cell-value">{formatTimestampIst(row)}</strong>
+                      </div>
+                      <div className="anpr-metric-cell cell-wide">
+                        <span className="cell-label">Deployment Location</span>
+                        <strong className="cell-value">{row.roadName || row.location || 'Corridor Point'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="anpr-card-footer">
+                      <button
+                        className="anpr-copy-btn"
+                        onClick={handleCopyPlate}
+                        type="button"
+                      >
+                        {copiedPlate ? <Check size={13} color="#34d399" /> : <Copy size={13} />}
+                        <span>{copiedPlate ? 'Plate Number Copied' : 'Copy Plate Number'}</span>
+                      </button>
+                      <button
+                        className="anpr-switch-btn"
+                        onClick={() => setActiveMediaTab('vehicle')}
+                        type="button"
+                      >
+                        <ImageIcon size={13} />
+                        <span>Inspect Full Photo</span>
+                      </button>
+                    </div>
+                  </div>
                 )}
-
-                {/* CCTV HUD Overlay */}
-                <div className="media-cctv-hud-top">
-                  <span className="media-hud-cam">
-                    <Camera size={12} />
-                    {row.camera || 'CAM-04-HYD'} · ANPR CROP
-                  </span>
-                  <span className="media-hud-time">{formatTimestampIst(row)}</span>
-                </div>
-
-                <div className="media-cctv-hud-bottom">
-                  <div className="media-hud-plate">
-                    <span>ANPR OCR</span>
-                    <strong>{row.vehicleNumberPlate || row.numberPlate || 'TG 08 Z 07'}</strong>
-                    <span className="media-hud-conf">({plateConfidencePercent}%)</span>
-                  </div>
-                  <div className="media-hud-speed media-hud-speed-ok">
-                    <span>IR ILLUMINATION 850nm</span>
-                  </div>
-                </div>
               </div>
             ) : (
-              /* Vehicle Image View */
-              <div className="media-tactical-frame">
-                {(vehicleSrc || syntheticVehicleSvg) ? (
-                  <img
-                    alt={`Vehicle Detection ${row.vehicleType || 'Vehicle'} - ${row.vehicleNumberPlate || 'N/A'}`}
-                    className="media-tactical-img"
-                    onError={(e) => {
-                      setImgLoadError(true)
-                      if (syntheticVehicleSvg && e.currentTarget.src !== syntheticVehicleSvg) {
-                        e.currentTarget.src = syntheticVehicleSvg
-                      }
-                    }}
-                    src={vehicleSrc || syntheticVehicleSvg}
-                  />
+              /* TAB 1: VEHICLE CAPTURE PHOTO */
+              <div className="media-natural-frame">
+                {vehicleSrc ? (
+                  <>
+                    {/* Soft ambient blurred backdrop: blends vertical/aspect photos naturally */}
+                    <div
+                      className="media-ambient-glow"
+                      style={{ backgroundImage: `url(${vehicleSrc})` }}
+                    />
+
+                    {/* Centered natural foreground photo */}
+                    <div
+                      className="media-natural-stage"
+                      style={{ transform: `scale(${zoomLevel})` }}
+                    >
+                      <img
+                        alt={`Vehicle capture #${row.id || 'obs'}`}
+                        className="media-natural-img"
+                        onError={() => setImgLoadError(true)}
+                        src={vehicleSrc}
+                      />
+                    </div>
+
+                    {/* Clean, Non-Intrusive Overlays (Toggleable) */}
+                    {showOverlays && (
+                      <div className="media-natural-overlays">
+                        {/* Top-Left: Camera info */}
+                        <div className="natural-chip chip-top-left">
+                          <Camera size={13} />
+                          <span>{row.camera || 'CAM-01'}</span>
+                          <span className="chip-bullet">·</span>
+                          <span>Optical Capture</span>
+                        </div>
+
+                        {/* Top-Right: Timestamp */}
+                        <div className="natural-chip chip-top-right">
+                          <Clock size={13} />
+                          <span>{row.timestampIst || row.timestamp || 'Recorded'} IST</span>
+                        </div>
+
+                        {/* Bottom-Left: Target Identification */}
+                        <div className="natural-chip chip-bottom-left">
+                          <span className="chip-plate-tag">{plateNumber}</span>
+                          <span className="chip-conf-tag">{plateConfidencePercent}% match</span>
+                        </div>
+
+                        {/* Bottom-Right: Speed & Limit */}
+                        <div className={`natural-chip chip-bottom-right ${isOverSpeed ? 'is-overspeed' : ''}`}>
+                          <Gauge size={13} />
+                          <span>{row.speed || 0} km/h</span>
+                          <span className="chip-bullet">/</span>
+                          <span>Limit {row.speedLimit || 60} km/h</span>
+                          {isOverSpeed && <span className="speed-alert-pill">OVERSPEED</span>}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
-                  <div className="media-tactical-placeholder">
-                    <ImageIcon size={48} />
-                    <p>Optical capture standby for target #{row.id || '1383'}</p>
+                  <div className="media-natural-placeholder">
+                    <ImageIcon size={44} />
+                    <p>No optical capture asset available for target #{row.id || 'N/A'}</p>
                   </div>
                 )}
 
-                {/* Corner reticles */}
-                <span className="tactical-crosshair top-left">+</span>
-                <span className="tactical-crosshair top-right">+</span>
-                <span className="tactical-crosshair bottom-left">+</span>
-                <span className="tactical-crosshair bottom-right">+</span>
-
-                {/* CCTV Top Overlay */}
-                <div className="media-cctv-hud-top">
-                  <div className="media-hud-rec">
-                    <span className="media-hud-rec-dot" />
-                    <span>REC</span>
-                  </div>
-                  <span className="media-hud-cam">{row.camera || 'CAM-04-HYD'} · OPTICAL</span>
-                  <span className="media-hud-time">{formatTimestampIst(row)}</span>
-                </div>
-
-                {/* CCTV Bottom Overlay */}
-                <div className="media-cctv-hud-bottom">
-                  <div className="media-hud-plate">
-                    <span>TARGET</span>
-                    <strong>{row.vehicleNumberPlate || row.numberPlate || 'TG 08 Z 07'}</strong>
-                    <span className="media-hud-conf">({plateConfidencePercent}%)</span>
-                  </div>
-
-                  <div
-                    className={`media-hud-speed ${
-                      isOverSpeed ? 'media-hud-speed-violation' : 'media-hud-speed-ok'
-                    }`}
-                  >
-                    <Gauge size={13} />
-                    <span>
-                      {row.speed || 48} km/h &nbsp;·&nbsp; LIMIT: {row.speedLimit || 60} km/h
-                    </span>
-                    {isOverSpeed && <span className="media-hud-alert-tag">OVERSPEED</span>}
-                  </div>
-                </div>
               </div>
             )}
           </div>
 
-          {/* Tactical Bottom Toolbar */}
-          <div className="media-tactical-bottom-bar">
-            <div className="tactical-bar-left">
-              <span className="tactical-status-indicator">
-                <span className="status-ping" />
-                SENSOR FEED LOCKED
+          {/* Clean Natural Bottom Toolbar */}
+          <div className="media-natural-bottom-bar">
+            <div className="natural-bar-info">
+              <span className="natural-status-badge">
+                <span className="status-dot" />
+                Verified Capture
               </span>
-              <span className="tactical-meta-sep">·</span>
-              <span className="tactical-meta-item">
-                CLASSIFICATION: <strong>{String(row.vehicleType || row.type || 'Vehicle').toUpperCase()}</strong>
+              <span className="info-sep">·</span>
+              <span className="info-item">
+                Class: <strong>{vehicleTypeLabel}</strong>
               </span>
-              <span className="tactical-meta-sep">·</span>
-              <span className="tactical-meta-item">
-                CONFIDENCE: <strong>{plateConfidencePercent}%</strong>
+              <span className="info-sep">·</span>
+              <span className="info-item">
+                Confidence: <strong>{plateConfidencePercent}%</strong>
               </span>
             </div>
 
-            <div className="tactical-bar-right">
+            <div className="natural-bar-controls">
+              {/* Toggle Overlays button */}
+              {activeMediaTab === 'vehicle' && vehicleSrc && (
+                <button
+                  className={`natural-ctrl-btn ${!showOverlays ? 'btn-active' : ''}`}
+                  onClick={() => setShowOverlays((v) => !v)}
+                  title={showOverlays ? 'Hide overlay labels for clean view' : 'Show overlay labels'}
+                  type="button"
+                >
+                  {showOverlays ? <EyeOff size={14} /> : <Eye size={14} />}
+                  <span>{showOverlays ? 'Clean View' : 'Show Labels'}</span>
+                </button>
+              )}
+
+              {/* Zoom controls */}
+              {activeMediaTab === 'vehicle' && vehicleSrc && (
+                <div className="natural-zoom-group">
+                  <button
+                    className="natural-ctrl-btn zoom-btn"
+                    disabled={zoomLevel <= 0.75}
+                    onClick={() => handleZoom(-0.25)}
+                    title="Zoom Out"
+                    type="button"
+                  >
+                    <ZoomOut size={14} />
+                  </button>
+                  <button
+                    className="natural-ctrl-btn zoom-indicator"
+                    onClick={handleResetZoom}
+                    title="Reset Zoom to 100%"
+                    type="button"
+                  >
+                    <span>{Math.round(zoomLevel * 100)}%</span>
+                  </button>
+                  <button
+                    className="natural-ctrl-btn zoom-btn"
+                    disabled={zoomLevel >= 2.5}
+                    onClick={() => handleZoom(0.25)}
+                    title="Zoom In"
+                    type="button"
+                  >
+                    <ZoomIn size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Download button */}
               <button
-                className="tactical-download-btn"
-                onClick={handleDownloadImage}
-                title="Download full-resolution evidence asset"
+                className="natural-download-btn"
+                onClick={handleDownloadAsset}
+                title="Save high-resolution photo"
                 type="button"
               >
-                <Download size={13} />
+                <Download size={14} />
                 <span>Save Asset</span>
               </button>
             </div>

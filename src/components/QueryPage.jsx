@@ -29,7 +29,8 @@ import VehicleBadge from './VehicleBadge'
 import QueryKnowledgeGraph from './query/QueryKnowledgeGraph'
 import MediaPreviewModal from './MediaPreviewModal'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
-import { checkOllamaStatus, parseNaturalLanguageQuery } from '../services/queryApi'
+import { isVehicleTypeMatch } from '../data/vehicleTypes'
+import { checkOllamaStatus, parseNaturalLanguageQuery, parseQueryClient } from '../services/queryApi'
 
 export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -65,7 +66,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
 
   // Extract unique facets from dataset for grounding AI prompts
   const facets = useMemo(() => {
-    const types = Array.from(new Set(rows.map((r) => r.type).filter(Boolean))).sort()
+    const types = Array.from(new Set(rows.map((r) => r.vehicleType || r.type).filter(Boolean))).sort()
     const locations = Array.from(new Set(rows.map((r) => r.roadName || r.location).filter(Boolean))).sort()
     const cameras = Array.from(new Set(rows.map((r) => r.camera).filter(Boolean))).sort()
     const signals = Array.from(new Set(rows.map((r) => r.signalState).filter(Boolean))).sort()
@@ -92,19 +93,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             else if (typeof aiFilters.vehicleType === 'string') rawTypes.push(aiFilters.vehicleType)
 
             if (rawTypes.length) {
-              const matchedType = rawTypes.some((typeVal) => {
-                if (!typeVal || typeof typeVal !== 'string') return false
-                const vt = typeVal.toLowerCase().trim()
-                if (vt === 'all') return true
-                const vtSingular = vt.endsWith('s') && vt.length > 3 ? vt.slice(0, -1) : vt
-                const rowSingular = rowTypeLower.endsWith('s') && rowTypeLower.length > 3 ? rowTypeLower.slice(0, -1) : rowTypeLower
-                return (
-                  rowTypeLower.includes(vt) ||
-                  vt.includes(rowTypeLower) ||
-                  rowSingular.includes(vtSingular) ||
-                  vtSingular.includes(rowSingular)
-                )
-              })
+              const matchedType = rawTypes.some((typeVal) => isVehicleTypeMatch(row.vehicleType || row.type, typeVal))
               if (!matchedType) return false
             }
           }
@@ -162,13 +151,25 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             if ((row.speed || 0) > Number(aiFilters.maxSpeed)) return false
           }
           if (aiFilters.plateSearch) {
-            const targetPlate = String(aiFilters.plateSearch).toUpperCase().trim()
-            const plate = String(row.numberPlate || row.vehicleNumberPlate || '').toUpperCase()
+            const targetPlate = String(aiFilters.plateSearch).toUpperCase().replace(/[^A-Z0-9]/g, '')
+            const plate = String(row.numberPlate || row.vehicleNumberPlate || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
             if (!plate.includes(targetPlate)) return false
           }
 
-          // Matched all AI criteria! Return true so conversational query words (e.g. "show", "all", "on") are not treated as literal row keywords
-          return true
+          // Matched all structured AI criteria if any were set
+          const hasAnyCriteria = Boolean(
+            (aiFilters.vehicleTypes && aiFilters.vehicleTypes.length) ||
+            aiFilters.vehicleType ||
+            aiFilters.location ||
+            aiFilters.camera ||
+            aiFilters.signalState ||
+            aiFilters.weather ||
+            aiFilters.overspeedOnly ||
+            (aiFilters.minSpeed !== null && aiFilters.minSpeed !== undefined) ||
+            (aiFilters.maxSpeed !== null && aiFilters.maxSpeed !== undefined) ||
+            aiFilters.plateSearch
+          )
+          if (hasAnyCriteria) return true
         }
 
         // 1. Freeform Search Query (when AI not yet invoked)
@@ -204,26 +205,26 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
           return row.overSpeed === 'Yes' || row.isOverSpeed
         }
 
-        if (query === 'cars' || query === 'car') return rowTypeLower.includes('car')
+        if (query === 'cars' || query === 'car') return isVehicleTypeMatch(row.vehicleType || row.type, 'car')
         if (query === 'bikes' || query === 'bike' || query === 'motorcycle' || query === 'bicycle' || query === 'scooter') {
-          return rowTypeLower.includes('bike') || rowTypeLower.includes('cycle') || rowTypeLower.includes('scooter')
+          return isVehicleTypeMatch(row.vehicleType || row.type, 'bike')
         }
-        if (query === 'buses' || query === 'bus') return rowTypeLower.includes('bus')
+        if (query === 'buses' || query === 'bus') return isVehicleTypeMatch(row.vehicleType || row.type, 'bus')
         if (query === 'trucks' || query === 'truck' || query === 'lorry' || query === 'trailer') {
-          return rowTypeLower.includes('truck') || rowTypeLower.includes('lorry') || rowTypeLower.includes('trailer')
+          return isVehicleTypeMatch(row.vehicleType || row.type, 'truck')
         }
         if (query === 'tractors' || query === 'tractor' || query === 'tractr') {
-          return rowTypeLower.includes('tractor') || rowTypeLower.includes('tractr')
+          return isVehicleTypeMatch(row.vehicleType || row.type, 'tractor')
         }
         if (query === 'jeeps' || query === 'jeep' || query === 'suv' || query === '4x4') {
-          return rowTypeLower.includes('jeep') || rowTypeLower.includes('suv')
+          return isVehicleTypeMatch(row.vehicleType || row.type, 'jeep')
         }
         if (query === 'autos' || query === 'auto' || query === 'rickshaw') {
-          return rowTypeLower.includes('auto') || rowTypeLower.includes('rickshaw')
+          return isVehicleTypeMatch(row.vehicleType || row.type, 'auto')
         }
-        if (query === 'vans' || query === 'van') return rowTypeLower.includes('van')
+        if (query === 'vans' || query === 'van') return isVehicleTypeMatch(row.vehicleType || row.type, 'van')
         if (query === 'trains' || query === 'train' || query === 'metro' || query === 'rail' || query === 'tram') {
-          return rowTypeLower.includes('train') || rowTypeLower.includes('metro') || rowTypeLower.includes('rail') || rowTypeLower.includes('tram')
+          return isVehicleTypeMatch(row.vehicleType || row.type, 'train')
         }
         if (
           query === 'pedestrians' ||
@@ -234,7 +235,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
           query.includes('pedestrian') ||
           query === 'walking'
         ) {
-          return rowTypeLower.includes('pedestrian') || rowTypeLower.includes('edisetrain') || (row.pedestrians || 0) > 0
+          return isVehicleTypeMatch(row.vehicleType || row.type, 'pedestrian') || (row.pedestrians || 0) > 0
         }
         if (query === 'green signal' || query === 'green') return signalLower === 'green'
         if (query === 'red signal' || query === 'red') return signalLower === 'red'
@@ -276,10 +277,37 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
           .join(' ')
           .toLowerCase()
 
+        // Check for multi-type or compound queries (e.g. "cars and bikes")
+        const multiTypes = []
+        if (/\b(?:car|cars|sedan|suv|hatchback)\b/i.test(query)) multiTypes.push('car')
+        if (/\b(?:bike|bikes|motorcycle|motorcycles|scooter|scooters|two[- ]?wheelers?|cycle)\b/i.test(query)) multiTypes.push('bike')
+        if (/\b(?:bus|buses)\b/i.test(query)) multiTypes.push('bus')
+        if (/\b(?:truck|trucks|lorry|trailer)\b/i.test(query)) multiTypes.push('truck')
+        if (/\b(?:auto|autos|rickshaw|rickshaws)\b/i.test(query)) multiTypes.push('auto')
+        if (/\b(?:tractor|tractors)\b/i.test(query)) multiTypes.push('tractor')
+        if (/\b(?:jeep|jeeps)\b/i.test(query)) multiTypes.push('jeep')
+        if (/\b(?:pedestrian|pedestrians|walking|people|edisetrain)\b/i.test(query)) multiTypes.push('pedestrian')
+        if (/\b(?:van|vans)\b/i.test(query)) multiTypes.push('van')
+        if (/\b(?:train|trains|metro)\b/i.test(query)) multiTypes.push('train')
+
+        if (multiTypes.length > 1) {
+          const typeMatch = multiTypes.some((t) => isVehicleTypeMatch(row.vehicleType || row.type, t))
+          if (!typeMatch) return false
+          const nonTypeTerms = terms.filter(
+            (term) => !multiTypes.some((t) => term.includes(t) || t.includes(term))
+          )
+          if (nonTypeTerms.length === 0) return true
+          return nonTypeTerms.every((term) => {
+            const singularTerm = term.endsWith('s') && term.length > 3 ? term.slice(0, -1) : term
+            return rowSearchString.includes(term) || rowSearchString.includes(singularTerm)
+          })
+        }
+
         return terms.every((term) => {
           const singularTerm = term.endsWith('s') && term.length > 3 ? term.slice(0, -1) : term
           return rowSearchString.includes(term) || rowSearchString.includes(singularTerm)
         })
+
       })
       .sort((a, b) => {
         if (sortBy === 'speed-desc') return (b.speed || 0) - (a.speed || 0)
@@ -526,11 +554,23 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     pushHistory()
     setSubmittedQuery(textToRun)
     setAiLoading(true)
-    setAiFilters(null) // Hide previous results while AI is fetching
-    setAiExplanation('')
     setPreviewMode(false)
     setCurrentPage(1)
     setGraphFocusId(null)
+
+    // Compute instant client-side parsed filters immediately so UI & graph update with ZERO latency!
+    const instantFilters = parseQueryClient(textToRun, {
+      types: facets.types,
+      locations: facets.locations,
+      cameras: facets.cameras,
+    })
+    setAiFilters(instantFilters)
+    setAiExplanation(instantFilters.explanation || `Telemetry segment for "${textToRun}"`)
+    setAiSource('rule-instant')
+    if (instantFilters.sortBy) {
+      setSortBy(instantFilters.sortBy)
+    }
+    setViewMode('graph')
 
     try {
       const res = await parseNaturalLanguageQuery(textToRun, {
@@ -547,27 +587,14 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         if (res.filters.sortBy) {
           setSortBy(res.filters.sortBy)
         }
-      } else {
-        const fallback = parseQueryClient(textToRun, facets)
-        if (fallback) {
-          setAiFilters(fallback)
-          setAiExplanation(`Telemetry segment for "${textToRun}"`)
-          setAiSource('rule-engine')
-        }
       }
     } catch (e) {
-      console.warn('AI query failed:', e)
-      const fallback = parseQueryClient(textToRun, facets)
-      if (fallback) {
-        setAiFilters(fallback)
-        setAiExplanation(`Telemetry segment for "${textToRun}"`)
-        setAiSource('rule-fallback')
-      }
+      console.warn('AI query backend call failed:', e)
     } finally {
-      setViewMode('graph')
       setAiLoading(false)
     }
   }
+
 
   function handleFocusInGraph(obsId) {
     setGraphFocusId(obsId)

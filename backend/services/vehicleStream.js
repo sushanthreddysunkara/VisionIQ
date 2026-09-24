@@ -148,8 +148,8 @@ async function processFile(fileName, io) {
     [sourceFile],
   )
   const existingIds = new Set(existingRows.map((row) => String(row.csv_record_id)))
-  const replayStoredRows = processedFileVersions.size === 0
-  const pendingRows = rows.filter((row) => replayStoredRows || !existingIds.has(String(row.csvRecordId)))
+  const replayStoredRows = false
+  const pendingRows = rows.filter((row) => !existingIds.has(String(row.csvRecordId)))
 
   while (pendingRows.length) {
     const batch = pendingRows.splice(0, chooseBatchSize(pendingRows.length))
@@ -171,7 +171,7 @@ async function processFile(fileName, io) {
           ],
         )
 
-        if (result.affectedRows || (replayStoredRows && existingIds.has(String(row.csvRecordId)))) {
+        if (result.affectedRows) {
           existingIds.add(String(row.csvRecordId))
           inserted.push(row)
         }
@@ -201,23 +201,30 @@ async function processFile(fileName, io) {
   }
 
   processedFileVersions.add(fileVersion)
-  console.log(`Finished ${sourceFile}`)
-  emitStreamStatus(io, { type: 'file-complete', fileName: sourceFile })
+  console.log(`[Stream] Finished reading ${sourceFile}. Stream reached last row (${rows.length} records total). Stream halted.`)
+  const completeStatus = {
+    type: 'file-complete',
+    fileName: sourceFile,
+    totalRows: rows.length,
+    isComplete: true,
+  }
+  emitStreamStatus(io, completeStatus)
+  io.emit('vehicleStreamComplete', completeStatus)
+  return true
 }
 
 async function runVehicleStream(io) {
   while (true) {
     const files = await listDataFiles()
     if (!files.length) {
-      console.log('No CSV/XLSX files available. Waiting for additional files...')
       await wait(FILE_INTERVAL)
       continue
     }
 
     for (const fileName of files) {
       await processFile(fileName, io)
-      await wait(FILE_INTERVAL)
     }
+    await wait(FILE_INTERVAL)
   }
 }
 

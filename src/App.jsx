@@ -204,20 +204,36 @@ export default function App() {
       if (!userUploadedFileRef.current) {
         setTrafficData((currentRows) => appendUniqueRows(currentRows, streamRows))
         setFileName((currentName) => currentName || 'Live vehicle database stream')
+        const firstRow = streamRows[0]
+        const label = firstRow.vehicleNumberPlate || firstRow.plateNumber || firstRow.id || 'Live vehicle'
+        const type = firstRow.vehicleType || firstRow.type || 'Detection'
+        setStreamNotifications((prev) => [
+          {
+            id: `${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+            title: `New telemetry: ${label}`,
+            message: `${type} captured at ${firstRow.location || firstRow.roadName || 'active site'}.`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          },
+          ...prev.slice(0, 11),
+        ])
+        playNotificationTone()
       }
-      const firstRow = streamRows[0]
-      const label = firstRow.vehicleNumberPlate || firstRow.plateNumber || firstRow.id || 'Live vehicle'
-      const type = firstRow.vehicleType || firstRow.type || 'Detection'
-      setStreamNotifications((prev) => [
-        {
-          id: `${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-          title: `New telemetry: ${label}`,
-          message: `${type} captured at ${firstRow.location || firstRow.roadName || 'active site'}.`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        },
-        ...prev.slice(0, 11),
-      ])
-      playNotificationTone()
+    })
+
+    socket.on('vehicleStreamComplete', (payload) => {
+      if (!userUploadedFileRef.current) {
+        setStreamNotifications((prev) => [
+          {
+            id: `${Date.now()}-complete`,
+            title: 'Telemetry Stream Completed',
+            message: payload?.fileName
+              ? `Reached the last row (${payload.totalRows || 'all'} records) in ${payload.fileName}. Stream halted.`
+              : 'Dataset processing reached the final record. Stream halted.',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          },
+          ...prev.slice(0, 11),
+        ])
+      }
     })
 
     socket.on('vehicleStreamStatus', (status) => {
