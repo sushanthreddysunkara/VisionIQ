@@ -173,16 +173,16 @@ export default function DashboardHub({
           <div className="nh44-badge-row">
             <span className="nh44-highway-tag">
               <Radio size={13} className="nh44-pulse-icon" />
-              NH-44 HYDERABAD-BENGALURU HIGHWAY RADAR
+              {fileName?.includes('NH44') ? 'NH-44 HYDERABAD-BENGALURU HIGHWAY RADAR' : `${fileName || 'HIGHWAY'} RADAR FEED`}
             </span>
             <span className="nh44-db-pill">
               <Database size={13} />
-              5,000 Records Ingested (MySQL Database)
+              {dbStats?.totalRecords ? `${Number(dbStats.totalRecords).toLocaleString()} Records Ingested (MySQL)` : 'MySQL Database Connected'}
             </span>
           </div>
           <h1>Highway Traffic Intelligence</h1>
           <p className="intro-copy">
-            Live telemetry connected to {projectName}. Processing random batches (1–20 records) from the 5,000-record database archive.
+            Live telemetry connected to {projectName}. Processing random batches (1–20 records) from {fileName || 'MySQL database archive'}.
           </p>
         </div>
         <div className="header-actions">

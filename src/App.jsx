@@ -480,13 +480,71 @@ export default function App() {
     if (!file) return
 
     try {
-      const importedRows = await parseTrafficCsv(file)
-      // Directly display user's uploaded Excel dataset with all extracted vehicle images
-      userUploadedFileRef.current = true
-      setTrafficData(importedRows)
-      setFileName(file.name)
       setImportError('')
+      // 1. Parse uploaded CSV or XLSX on client
+      const importedRows = await parseTrafficCsv(file)
+      if (!importedRows || !importedRows.length) {
+        throw new Error('No valid records found in the selected file.')
+      }
+
+      // 2. Upload and store records in the MySQL database
+      const response = await fetch(`${apiBaseUrl}/api/vehicles/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          rows: importedRows,
+        }),
+      })
+
+      const result = await response.json()
+      if (!result.success) {
+        throw new Error(result.message || 'Database upload failed.')
+      }
+
+      // 3. Immediately update dashboard state with newly uploaded dataset
+      userUploadedFileRef.current = false // Keep live stream connected so new batches stream from DB!
+      setFileName(file.name)
+
+      // Initial batch from the new uploaded dataset (1-20 records)
+      const initialBatch = result.initialBatch && result.initialBatch.length
+        ? normalizeStreamRows(result.initialBatch)
+        : importedRows.slice(0, Math.floor(Math.random() * 20) + 1)
+
+      setTrafficData(initialBatch)
+
+      setLatestBatchInfo({
+        batchCount: initialBatch.length,
+        timestamp: new Date().toLocaleTimeString(),
+        overspeedCount: initialBatch.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length,
+        delta: initialBatch.length,
+        isManual: true,
+        fileName: file.name,
+      })
+
+      // Fetch fresh database stats for the uploaded file
+      fetch(`${apiBaseUrl}/api/vehicles/stats?fileName=${encodeURIComponent(file.name)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.stats) {
+            setDbStats(data.stats)
+          }
+        })
+        .catch(() => undefined)
+
+      setStreamNotifications((prev) => [
+        {
+          id: `${Date.now()}-upload`,
+          title: `Dataset Uploaded: ${file.name}`,
+          message: `Stored ${importedRows.length} records in MySQL database. Telemetry stream is now live for ${file.name}.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+        ...prev.slice(0, 11),
+      ])
+
+      playNotificationTone()
     } catch (error) {
+      console.error('Import error:', error)
       setImportError(error.message || 'Unable to import file.')
     } finally {
       event.target.value = ''

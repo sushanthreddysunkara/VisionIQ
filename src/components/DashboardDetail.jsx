@@ -225,11 +225,11 @@ export default function DashboardDetail({
           <div className="nh44-badge-row">
             <span className="nh44-highway-tag">
               <Radio size={13} className="nh44-pulse-icon" />
-              NH-44 LIVE RADAR
+              {fileName?.includes('NH44') ? 'NH-44 LIVE RADAR' : `${fileName || 'HIGHWAY'} RADAR`}
             </span>
             <span className="nh44-db-pill">
               <Database size={13} />
-              5,000 Archive Records (MySQL)
+              {dbStats?.totalRecords ? `${Number(dbStats.totalRecords).toLocaleString()} Archive Records (MySQL)` : 'MySQL Database Connected'}
             </span>
           </div>
           <h1>{config.title}</h1>

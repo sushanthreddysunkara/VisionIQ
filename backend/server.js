@@ -18,6 +18,8 @@ const {
   isStreamPaused,
   triggerInstantBatch,
   getVehiclePoolStats,
+  storeUploadedVehicleRecords,
+  getActiveFileName,
 } = require('./services/vehicleStream')
 
 const app = express()
@@ -59,15 +61,51 @@ if (!process.env.JWT_SECRET) {
 }
 
 app.use(cors(corsOptions))
-app.use(express.json())
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ extended: true, limit: '50mb' }))
 
 app.get('/api/health', (req, res) => res.json({ success: true, message: 'VisionIQ API is running.' }))
 
-// Initial vehicles load (capped to limit, default 20 - does not load entire 5000 file at once)
+// Upload new Excel/CSV file to store in MySQL and switch active live stream
+app.post('/api/vehicles/upload', async (req, res) => {
+  try {
+    const { fileName, rows } = req.body || {}
+    if (!fileName || !Array.isArray(rows) || !rows.length) {
+      return res.status(400).json({ success: false, message: 'fileName and rows array required for upload.' })
+    }
+
+    const result = await storeUploadedVehicleRecords(fileName, rows)
+
+    // Broadcast new dataset status to all connected dashboards
+    io.emit('vehicleStreamStatus', {
+      type: 'dataset_switched',
+      fileName,
+      totalRows: result.totalStored,
+      batchCount: result.initialBatch.length,
+      timestamp: new Date().toLocaleTimeString(),
+      overspeeding: result.initialBatch.filter((r) => r.isOverSpeed).length,
+    })
+
+    // Immediately push initial batch of the newly uploaded data
+    io.emit('newVehicleBatch', result.initialBatch)
+
+    res.json({
+      success: true,
+      message: `Successfully stored ${result.totalStored} records from "${fileName}" in MySQL database.`,
+      ...result,
+    })
+  } catch (error) {
+    console.error('Error handling vehicle upload:', error.message)
+    res.status(500).json({ success: false, message: error.message || 'Error processing upload.' })
+  }
+})
+
+// Initial vehicles load (capped to limit, default 20)
 app.get('/api/vehicles', async (req, res) => {
   try {
     const limit = req.query.limit ? Number(req.query.limit) : 20
-    const vehicles = await getStoredVehicles({ limit })
+    const fileName = req.query.fileName || null
+    const vehicles = await getStoredVehicles({ limit, fileName })
     res.json({ success: true, count: vehicles.length, vehicles })
   } catch (error) {
     console.error('Unable to load vehicle events:', error.message)
@@ -79,12 +117,13 @@ app.get('/api/vehicles', async (req, res) => {
 app.get('/api/vehicles/random-batch', async (req, res) => {
   try {
     const requestedCount = req.query.count ? Number(req.query.count) : null
-    const batch = await fetchRandomVehicleBatch(requestedCount)
+    const fileName = req.query.fileName || null
+    const batch = await fetchRandomVehicleBatch(requestedCount, fileName)
     if (req.query.broadcast === 'true') {
       io.emit('newVehicleBatch', batch.records)
       io.emit('vehicleStreamStatus', {
         type: 'batch',
-        fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+        fileName: fileName || getActiveFileName(),
         batchCount: batch.count,
         totalPool: 5000,
         timestamp: new Date().toLocaleTimeString(),
@@ -118,10 +157,11 @@ app.post('/api/vehicles/stream-control', async (req, res) => {
   res.status(400).json({ success: false, message: 'Invalid stream control action. Use "pause", "resume", or "trigger".' })
 })
 
-// Pool statistics across 5,000 records in MySQL
+// Pool statistics across records in MySQL
 app.get('/api/vehicles/stats', async (req, res) => {
   try {
-    const stats = await getVehiclePoolStats()
+    const fileName = req.query.fileName || null
+    const stats = await getVehiclePoolStats(fileName)
     res.json({ success: true, stats })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })
