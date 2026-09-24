@@ -256,7 +256,10 @@ export default function DashboardDetail({
               {latestBatchInfo?.batchCount ? (
                 <span className="batch-flash-pill">
                   <Zap size={13} />
-                  +<strong>{latestBatchInfo.batchCount}</strong> records ingested at {latestBatchInfo.timestamp || 'just now'}
+                  +<strong>{latestBatchInfo.batchCount}</strong> records ingested in this batch (Random range 1–20)
+                  <span className="batch-total-growth">
+                    • Cumulative Total: <strong>{safeRows.length}</strong> records (Increasing ▲)
+                  </span>
                   {latestBatchInfo.overspeedCount > 0 && (
                     <span className="batch-overspeed-tag">
                       ({latestBatchInfo.overspeedCount} speeding alerts)
@@ -264,7 +267,7 @@ export default function DashboardDetail({
                   )}
                 </span>
               ) : (
-                <span>Receiving random batches (1–20 rows) from MySQL database...</span>
+                <span>Receiving random batches (1–20 rows) from MySQL database... Total: <strong>{safeRows.length}</strong> records</span>
               )}
             </div>
           </div>
@@ -307,15 +310,15 @@ export default function DashboardDetail({
       <div className="nh44-kpi-grid">
         <div className="nh44-kpi-card">
           <div className="kpi-icon-wrap" style={{ background: '#eff6ff', color: '#2563eb' }}>
-            <Car size={22} />
+            <TrendingUp size={22} />
           </div>
           <div className="kpi-content">
-            <span className="kpi-label">Active Buffer Volume</span>
+            <span className="kpi-label">Cumulative Ingested Data</span>
             <div className="kpi-value-row">
               <strong className="kpi-number">{safeRows.length}</strong>
-              <span className="kpi-delta-tag">/ 100 max</span>
+              <span className="kpi-delta-tag success">▲ Increasing</span>
             </div>
-            <span className="kpi-subtext">Peak performance in-memory stream</span>
+            <span className="kpi-subtext">Accumulating random batches (1–20) live</span>
           </div>
         </div>
 

@@ -17585,6 +17585,17 @@ body {
   font-weight: 600;
 }
 
+.batch-total-growth {
+  margin-left: 6px;
+  color: #a7f3d0;
+  font-weight: 500;
+}
+
+.batch-total-growth strong {
+  color: #34d399;
+  font-weight: 800;
+}
+
 @keyframes nh44-batch-glow {
   0% { background: rgba(56, 189, 248, 0.35); transform: scale(0.98); }
   100% { background: rgba(56, 189, 248, 0.12); transform: scale(1); }

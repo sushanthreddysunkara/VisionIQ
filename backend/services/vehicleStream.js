@@ -182,8 +182,10 @@ async function seedNH44DatabaseIfEmpty() {
   }
 }
 
+let streamOffset = 0
+
 /**
- * Fetch a random number of records (1 to 20) from the database
+ * Fetch a random number of records (1 to 20) from the database sequentially
  */
 async function fetchRandomVehicleBatch(forcedCount = null) {
   const count = typeof forcedCount === 'number' && forcedCount > 0
@@ -194,13 +196,26 @@ async function fetchRandomVehicleBatch(forcedCount = null) {
     return { count: 0, batchSize: count, records: [] }
   }
 
-  // Fast random selection of 'count' records from database
+  // Sequentially progress through database so each batch adds new distinct records
   const [rows] = await pool.query(
-    'SELECT * FROM vehicle_events WHERE source_file LIKE ? ORDER BY RAND() LIMIT ?',
-    ['%NH44%', count]
+    'SELECT * FROM vehicle_events WHERE source_file LIKE ? ORDER BY id ASC LIMIT ? OFFSET ?',
+    ['%NH44%', count, streamOffset]
   )
 
-  const clientRecords = rows.map(toClientRecord)
+  let combinedRows = [...rows]
+  if (combinedRows.length < count && streamOffset > 0) {
+    const wrapNeeded = count - combinedRows.length
+    streamOffset = 0
+    const [wrapRows] = await pool.query(
+      'SELECT * FROM vehicle_events WHERE source_file LIKE ? ORDER BY id ASC LIMIT ? OFFSET 0',
+      ['%NH44%', wrapNeeded]
+    )
+    combinedRows.push(...wrapRows)
+  }
+
+  streamOffset = (streamOffset + combinedRows.length) % 5000
+
+  const clientRecords = combinedRows.map(toClientRecord)
   return {
     count: clientRecords.length,
     batchSize: count,

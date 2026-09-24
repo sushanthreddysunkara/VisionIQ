@@ -42,14 +42,14 @@ function rowKey(row) {
   return `${row.sourceFile || row.fileName || 'local'}::${row.csvRecordId || row.observationId || row.id || `${row.timestamp}-${row.vehicleNumberPlate}`}`
 }
 
-function prependUniqueRows(previousRows, incomingRows, maxCapacity = 100) {
-  const existingKeys = new Set(incomingRows.map(rowKey))
-  const filteredPrevious = previousRows.filter((row) => !existingKeys.has(rowKey(row)))
-  return [...incomingRows, ...filteredPrevious].slice(0, maxCapacity)
+function prependUniqueRows(previousRows, incomingRows) {
+  const existingKeys = new Set(previousRows.map(rowKey))
+  const newRows = incomingRows.filter((row) => !existingKeys.has(rowKey(row)))
+  return newRows.length ? [...newRows, ...previousRows] : previousRows
 }
 
 function appendUniqueRows(previousRows, incomingRows) {
-  return prependUniqueRows(previousRows, incomingRows, 100)
+  return prependUniqueRows(previousRows, incomingRows)
 }
 
 function normalizeStreamRows(rows) {
@@ -209,7 +209,7 @@ export default function App() {
       const data = await response.json()
       if (data.success && Array.isArray(data.vehicles) && data.vehicles.length) {
         const streamRows = normalizeStreamRows(data.vehicles)
-        setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows, 100))
+        setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows))
         const overspeeds = streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length
         setLatestBatchInfo({
           batchCount: streamRows.length,
@@ -255,7 +255,7 @@ export default function App() {
         const data = await response.json()
         if (!isCancelled && !userUploadedFileRef.current && Array.isArray(data.vehicles) && data.vehicles.length) {
           const streamRows = normalizeStreamRows(data.vehicles)
-          setTrafficData((currentRows) => (userUploadedFileRef.current ? currentRows : prependUniqueRows(currentRows, streamRows, 100)))
+          setTrafficData((currentRows) => (userUploadedFileRef.current ? currentRows : prependUniqueRows(currentRows, streamRows)))
           setFileName((currentName) => currentName || 'NH44_vehicles_5000_merged_with_images.xlsx')
           setLatestBatchInfo({
             batchCount: streamRows.length,
@@ -282,7 +282,7 @@ export default function App() {
       if (!Array.isArray(incomingVehicles) || !incomingVehicles.length || isCancelled) return
       const streamRows = normalizeStreamRows(incomingVehicles)
       if (!userUploadedFileRef.current) {
-        setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows, 100))
+        setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows))
         setFileName((currentName) => currentName || 'NH44_vehicles_5000_merged_with_images.xlsx')
         const overspeeds = streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length
         setLatestBatchInfo({
