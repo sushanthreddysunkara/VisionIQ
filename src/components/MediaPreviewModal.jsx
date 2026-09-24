@@ -24,6 +24,8 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react'
 import SurveillanceVideoPlayer from './SurveillanceVideoPlayer'
 import { formatTimestampIst } from '../data/dashboardData'
@@ -59,6 +61,7 @@ export default function MediaPreviewModal({
   const [plateLoadError, setPlateLoadError] = useState(false)
   const [showOverlays, setShowOverlays] = useState(true)
   const [zoomLevel, setZoomLevel] = useState(1)
+  const [fitMode, setFitMode] = useState('cover')
 
   useEffect(() => {
     setActiveMediaTab(initialTab || 'vehicle')
@@ -564,6 +567,7 @@ export default function MediaPreviewModal({
                       <img
                         alt={`Vehicle capture #${row.id || 'obs'}`}
                         className="media-natural-img"
+                        style={{ objectFit: fitMode, width: '100%', height: '100%', minHeight: '480px' }}
                         onError={() => setImgLoadError(true)}
                         src={vehicleSrc}
                       />
@@ -632,6 +636,19 @@ export default function MediaPreviewModal({
             </div>
 
             <div className="natural-bar-controls">
+                            {/* Fill / Fit toggle */}
+              {activeMediaTab === 'vehicle' && vehicleSrc && (
+                <button
+                  className={`natural-ctrl-btn ${fitMode === 'cover' ? 'btn-active' : ''}`}
+                  onClick={() => setFitMode((m) => (m === 'cover' ? 'contain' : 'cover'))}
+                  title={fitMode === 'cover' ? 'Filling complete box (click for fit aspect)' : 'Fitting aspect (click to fill complete box)'}
+                  type="button"
+                >
+                  {fitMode === 'cover' ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                  <span>{fitMode === 'cover' ? 'Fill Box' : 'Fit Aspect'}</span>
+                </button>
+              )}
+
               {/* Toggle Overlays button */}
               {activeMediaTab === 'vehicle' && vehicleSrc && (
                 <button
