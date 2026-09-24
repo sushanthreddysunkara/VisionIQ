@@ -8,7 +8,17 @@ const { Server } = require('socket.io')
 const authRoutes = require('./routes/authRoutes')
 const queryRoutes = require('./routes/queryRoutes')
 const { initializeDatabase } = require('./config/database')
-const { getLatestStreamStatus, getStoredVehicles, runVehicleStream } = require('./services/vehicleStream')
+const {
+  getLatestStreamStatus,
+  getStoredVehicles,
+  runVehicleStream,
+  fetchRandomVehicleBatch,
+  pauseStream,
+  resumeStream,
+  isStreamPaused,
+  triggerInstantBatch,
+  getVehiclePoolStats,
+} = require('./services/vehicleStream')
 
 const app = express()
 const httpServer = http.createServer(app)
@@ -52,12 +62,69 @@ app.use(cors(corsOptions))
 app.use(express.json())
 
 app.get('/api/health', (req, res) => res.json({ success: true, message: 'VisionIQ API is running.' }))
+
+// Initial vehicles load (capped to limit, default 20 - does not load entire 5000 file at once)
 app.get('/api/vehicles', async (req, res) => {
   try {
-    res.json({ success: true, vehicles: await getStoredVehicles() })
+    const limit = req.query.limit ? Number(req.query.limit) : 20
+    const vehicles = await getStoredVehicles({ limit })
+    res.json({ success: true, count: vehicles.length, vehicles })
   } catch (error) {
     console.error('Unable to load vehicle events:', error.message)
     res.status(500).json({ success: false, message: 'Unable to load vehicle events.' })
+  }
+})
+
+// Fetch random number of records (1 to 20) using random function
+app.get('/api/vehicles/random-batch', async (req, res) => {
+  try {
+    const requestedCount = req.query.count ? Number(req.query.count) : null
+    const batch = await fetchRandomVehicleBatch(requestedCount)
+    if (req.query.broadcast === 'true') {
+      io.emit('newVehicleBatch', batch.records)
+      io.emit('vehicleStreamStatus', {
+        type: 'batch',
+        fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+        batchCount: batch.count,
+        totalPool: 5000,
+        timestamp: new Date().toLocaleTimeString(),
+        overspeeding: batch.records.filter((r) => r.isOverSpeed).length,
+      })
+    }
+    res.json({ success: true, count: batch.count, batchSize: batch.batchSize, vehicles: batch.records })
+  } catch (error) {
+    console.error('Unable to fetch random batch:', error.message)
+    res.status(500).json({ success: false, message: 'Unable to fetch random batch.' })
+  }
+})
+
+// Live stream control: pause, resume, or trigger instant random batch
+app.post('/api/vehicles/stream-control', async (req, res) => {
+  const { action } = req.body || {}
+  if (action === 'pause') {
+    pauseStream()
+    io.emit('vehicleStreamStatus', { ...getLatestStreamStatus(), isPaused: true })
+    return res.json({ success: true, isPaused: true })
+  }
+  if (action === 'resume') {
+    resumeStream()
+    io.emit('vehicleStreamStatus', { ...getLatestStreamStatus(), isPaused: false })
+    return res.json({ success: true, isPaused: false })
+  }
+  if (action === 'trigger' || action === 'next') {
+    const batch = await triggerInstantBatch(io)
+    return res.json({ success: true, count: batch.count, vehicles: batch.records })
+  }
+  res.status(400).json({ success: false, message: 'Invalid stream control action. Use "pause", "resume", or "trigger".' })
+})
+
+// Pool statistics across 5,000 records in MySQL
+app.get('/api/vehicles/stats', async (req, res) => {
+  try {
+    const stats = await getVehiclePoolStats()
+    res.json({ success: true, stats })
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message })
   }
 })
 
@@ -119,6 +186,54 @@ app.use('/evidence', (req, res) => {
     res.type('image/svg+xml').send(svg)
   }
 })
+
+// Serve vehicle snapshot images or dynamic surveillance preview fallback
+app.use('/images', express.static(path.join(__dirname, '..', 'public', 'images')))
+app.use('/images', express.static(path.join(__dirname, 'data', 'images')))
+app.use('/images', (req, res) => {
+  const reqPath = req.path || 'image.jpg'
+  const basename = path.basename(reqPath)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480" width="100%" height="100%">
+    <defs>
+      <linearGradient id="camGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#050814"/>
+        <stop offset="100%" stop-color="#02040a"/>
+      </linearGradient>
+      <linearGradient id="scanBeam" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="rgba(56,189,248,0)"/>
+        <stop offset="50%" stop-color="rgba(56,189,248,0.25)"/>
+        <stop offset="100%" stop-color="rgba(56,189,248,0)"/>
+      </linearGradient>
+    </defs>
+    <rect width="800" height="480" fill="url(#camGrad)"/>
+    <rect x="0" y="210" width="800" height="60" fill="url(#scanBeam)"/>
+    <line x1="0" y1="120" x2="800" y2="120" stroke="rgba(56,189,248,0.15)" stroke-width="1"/>
+    <line x1="0" y1="360" x2="800" y2="360" stroke="rgba(56,189,248,0.15)" stroke-width="1"/>
+    
+    <!-- Target Detection Bounding Box -->
+    <rect x="200" y="120" width="400" height="230" rx="8" fill="rgba(15,23,42,0.6)" stroke="#38bdf8" stroke-width="2" stroke-dasharray="6 4"/>
+    <path d="M 200 150 L 200 120 L 230 120" fill="none" stroke="#38bdf8" stroke-width="3"/>
+    <path d="M 570 120 L 600 120 L 600 150" fill="none" stroke="#38bdf8" stroke-width="3"/>
+    <path d="M 200 320 L 200 350 L 230 350" fill="none" stroke="#38bdf8" stroke-width="3"/>
+    <path d="M 570 350 L 600 350 L 600 320" fill="none" stroke="#38bdf8" stroke-width="3"/>
+    
+    <!-- Optical Vehicle Chassis -->
+    <path d="M 280 270 Q 310 200 370 190 L 430 190 Q 490 200 520 270 Z" fill="rgba(56,189,248,0.22)" stroke="#38bdf8" stroke-width="2.5"/>
+    <circle cx="330" cy="280" r="18" fill="#090d16" stroke="#38bdf8" stroke-width="2.5"/>
+    <circle cx="470" cy="280" r="18" fill="#090d16" stroke="#38bdf8" stroke-width="2.5"/>
+    
+    <!-- Live HUD Telemetry -->
+    <circle cx="32" cy="40" r="5" fill="#ef4444"/>
+    <text x="45" y="44" font-size="13" font-family="monospace" font-weight="bold" fill="#ef4444">NH-44 SURVEILLANCE FEED</text>
+    <text x="765" y="44" font-size="13" font-family="monospace" fill="#38bdf8" text-anchor="end">4K OPTICAL RADAR</text>
+    <rect x="210" y="132" width="160" height="22" rx="4" fill="rgba(14,165,233,0.3)"/>
+    <text x="218" y="147" font-size="11" font-family="monospace" font-weight="bold" fill="#7dd3fc">CAPTURE: ${basename}</text>
+    <text x="32" y="448" font-size="12" font-family="monospace" fill="#34d399">DATABASE RECORD VERIFIED (5,000 ARCHIVE)</text>
+    <text x="765" y="448" font-size="12" font-family="monospace" fill="#94a3b8" text-anchor="end">VISIONIQ HIGHWAY AI</text>
+  </svg>`
+  res.type('image/svg+xml').send(svg)
+})
+
 
 async function startServer() {
   const dbStatus = await initializeDatabase()

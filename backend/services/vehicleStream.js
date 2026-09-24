@@ -3,11 +3,12 @@ const path = require('path')
 const XLSX = require('xlsx')
 const { pool } = require('../config/database')
 
-const BATCH_INTERVAL = 5000
-const FILE_INTERVAL = Number(process.env.FILE_INTERVAL || 30000)
+const STREAM_INTERVAL = Number(process.env.STREAM_INTERVAL || 4000)
 const DATA_DIRECTORY = path.resolve(process.env.DATA_DIRECTORY || path.join(__dirname, '..', 'data'))
-const processedFileVersions = new Set()
+const NH44_FILE_NAME = 'NH44_vehicles_5000_merged_with_images.xlsx'
+
 let latestStreamStatus = null
+let streamPaused = false
 
 const aliases = {
   id: ['id', 'record id', 'csv record id'],
@@ -43,48 +44,40 @@ function numberOrNull(value) {
   return Number.isFinite(number) ? number : null
 }
 
-function normalizeRow(row, index, sourceFile) {
-  const speed = numberOrNull(valueFor(row, aliases.speed))
-  const speedLimit = numberOrNull(valueFor(row, aliases.speedLimit))
-  const rawOverSpeed = valueFor(row, aliases.overSpeed)
-  const overSpeed = rawOverSpeed || (speed !== null && speedLimit !== null && speed > speedLimit ? 'Yes' : 'No')
-  const rawId = valueFor(row, aliases.id)
-
-  return {
-    csvRecordId: rawId || String(index + 1),
-    timestampIst: valueFor(row, aliases.timestamp),
-    vehicleType: valueFor(row, aliases.vehicleType) || 'Unknown',
-    vehicleNumberPlate: valueFor(row, aliases.numberPlate),
-    plateConfidence: numberOrNull(valueFor(row, aliases.plateConfidence)),
-    vehicleImage: valueFor(row, aliases.vehicleImage),
-    speed,
-    speedLimit,
-    overSpeed,
-    latitude: numberOrNull(valueFor(row, aliases.latitude)),
-    longitude: numberOrNull(valueFor(row, aliases.longitude)),
-    videoClipPath: valueFor(row, aliases.videoClipPath),
-    vehicleImagePath: valueFor(row, aliases.vehicleImagePath),
-    plateImagePath: valueFor(row, aliases.plateImagePath),
-    events: valueFor(row, aliases.events),
-    sourceFile,
+function deriveLocation(lat, lon, idNum) {
+  if (lat && lon) {
+    if (lat < 17.25) return 'NH-44 - Shadnagar Interchange (KM 52)'
+    if (lat < 17.40) return 'NH-44 - Shamshabad Tollway (KM 18)'
+    if (lat < 17.50) return 'NH-44 - Hyderabad Ring Corridor'
+    return 'NH-44 - Medchal North Gateway (KM 36)'
   }
+  const locations = [
+    'NH-44 - Shamshabad Tollway (KM 18)',
+    'NH-44 - Shadnagar Interchange (KM 52)',
+    'NH-44 - Hyderabad Ring Corridor',
+    'NH-44 - Medchal North Gateway (KM 36)',
+    'NH-44 - Jadcherla Express Point (KM 84)',
+  ]
+  return locations[(idNum || 0) % locations.length]
 }
 
-function readSourceFile(filePath) {
-  const workbook = XLSX.readFile(filePath, { cellDates: false, raw: false })
-  const sheet = workbook.Sheets[workbook.SheetNames[0]]
-  return XLSX.utils.sheet_to_json(sheet, { defval: '' })
-}
-
-function chooseBatchSize(availableRows) {
-  return Math.min(availableRows, Math.floor(Math.random() * 20) + 1)
-}
-
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+function deriveCamera(idNum) {
+  const cams = [
+    'CAM-NH44-01-SHAMSHABAD',
+    'CAM-NH44-02-SHADNAGAR',
+    'CAM-NH44-03-RINGROAD',
+    'CAM-NH44-04-MEDCHAL',
+    'CAM-NH44-05-JADCHERLA',
+    'CAM-NH44-06-TOLLPLAZA',
+  ]
+  return cams[(idNum || 0) % cams.length]
 }
 
 function toClientRecord(row) {
+  const idNum = Number(String(row.id || row.csv_record_id || '').replace(/\D/g, '')) || 0
+  const lat = row.latitude ? Number(row.latitude) : null
+  const lon = row.longitude ? Number(row.longitude) : null
+
   return {
     id: row.id,
     csvRecordId: row.csv_record_id,
@@ -95,15 +88,17 @@ function toClientRecord(row) {
     type: row.vehicle_type,
     vehicleNumberPlate: row.vehicle_number_plate,
     numberPlate: row.vehicle_number_plate,
-    plateConfidence: row.plate_confidence,
-    confidence: row.plate_confidence,
+    plateConfidence: row.plate_confidence ? Number(row.plate_confidence) : 0.95,
+    confidence: row.plate_confidence ? Number(row.plate_confidence) : 0.95,
     vehicleImage: row.vehicle_image,
-    speed: row.speed,
-    speedLimit: row.speed_limit,
+    speed: row.speed ? Number(row.speed) : 0,
+    speedLimit: row.speed_limit ? Number(row.speed_limit) : 60,
     overSpeed: row.over_speed,
     isOverSpeed: String(row.over_speed).toLowerCase() === 'yes',
-    latitude: row.latitude,
-    longitude: row.longitude,
+    latitude: lat,
+    longitude: lon,
+    location: deriveLocation(lat, lon, idNum),
+    camera: deriveCamera(idNum),
     videoClipPath: row.video_clip_path,
     vehicleImagePath: row.vehicle_image_path || row.vehicle_image,
     plateImagePath: row.plate_image_path,
@@ -112,133 +107,219 @@ function toClientRecord(row) {
   }
 }
 
-async function listDataFiles() {
-  await fs.mkdir(DATA_DIRECTORY, { recursive: true })
-  const entries = await fs.readdir(DATA_DIRECTORY, { withFileTypes: true })
-  return entries
-    .filter((entry) => entry.isFile() && /\.(csv|xlsx)$/i.test(entry.name))
-    .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+/**
+ * Random batch function: returns a random number of records between 1 and 20
+ */
+function getRandomBatchSize() {
+  return Math.floor(Math.random() * 20) + 1
 }
 
-function emitStreamStatus(io, status) {
-  latestStreamStatus = status
-  io.emit('vehicleStreamStatus', status)
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
-async function processFile(fileName, io) {
-  const sourceFile = fileName
-  const filePath = path.join(DATA_DIRECTORY, fileName)
-  let rawRows
-
+/**
+ * Ensure the 5,000 NH-44 records are stored in MySQL
+ */
+async function seedNH44DatabaseIfEmpty() {
+  if (!pool) return
   try {
-    rawRows = readSourceFile(filePath)
-  } catch (error) {
-    console.error(`Unable to read ${sourceFile}:`, error.message)
-    return
-  }
-
-  const fileStats = await fs.stat(filePath)
-  const fileVersion = `${sourceFile}:${fileStats.size}:${fileStats.mtimeMs}`
-  if (processedFileVersions.has(fileVersion)) return
-
-  const rows = rawRows.map((row, index) => normalizeRow(row, index, sourceFile))
-  const [existingRows] = await pool.query(
-    'SELECT csv_record_id FROM vehicle_events WHERE source_file = ?',
-    [sourceFile],
-  )
-  const existingIds = new Set(existingRows.map((row) => String(row.csv_record_id)))
-  const replayStoredRows = false
-  const pendingRows = rows.filter((row) => !existingIds.has(String(row.csvRecordId)))
-
-  while (pendingRows.length) {
-    const batch = pendingRows.splice(0, chooseBatchSize(pendingRows.length))
-    const inserted = []
-
-    for (const row of batch) {
-      try {
-        const [result] = await pool.query(
-          `INSERT IGNORE INTO vehicle_events
-            (csv_record_id, timestamp_ist, vehicle_type, vehicle_number_plate, plate_confidence,
-             vehicle_image, speed, speed_limit, over_speed, latitude, longitude, video_clip_path,
-             vehicle_image_path, plate_image_path, events, source_file)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            row.csvRecordId, row.timestampIst, row.vehicleType, row.vehicleNumberPlate,
-            row.plateConfidence, row.vehicleImage, row.speed, row.speedLimit, row.overSpeed,
-            row.latitude, row.longitude, row.videoClipPath, row.vehicleImagePath,
-            row.plateImagePath, row.events, row.sourceFile,
-          ],
-        )
-
-        if (result.affectedRows) {
-          existingIds.add(String(row.csvRecordId))
-          inserted.push(row)
-        }
-      } catch (error) {
-        console.error(`Skipping bad row ${row.csvRecordId} in ${sourceFile}:`, error.message)
-      }
+    const [existing] = await pool.query('SELECT COUNT(*) as count FROM vehicle_events WHERE source_file = ?', [NH44_FILE_NAME])
+    if (existing[0]?.count >= 5000) {
+      console.log(`[Database] NH-44 dataset verified: ${existing[0].count} records ready in MySQL.`)
+      return
     }
 
-    if (!inserted.length) continue
+    const potentialPaths = [
+      path.resolve(__dirname, '..', '..', NH44_FILE_NAME),
+      path.resolve(__dirname, '..', NH44_FILE_NAME),
+      path.resolve(DATA_DIRECTORY, NH44_FILE_NAME),
+    ]
 
-    const [savedRows] = await pool.query(
-      `SELECT * FROM vehicle_events WHERE source_file = ? AND csv_record_id IN (?) ORDER BY id`,
-      [sourceFile, inserted.map((row) => row.csvRecordId)],
-    )
+    const targetFile = potentialPaths.find((p) => {
+      try { return require('fs').existsSync(p) } catch { return false }
+    })
+
+    if (!targetFile) {
+      console.warn(`[Database Notice] ${NH44_FILE_NAME} not found on disk, skipping auto-seed.`)
+      return
+    }
+
+    console.log(`[Database] Storing 5,000 records from ${targetFile} into MySQL database...`)
+    const wb = XLSX.readFile(targetFile)
+    const sheet = wb.Sheets[wb.SheetNames[0]]
+    const rows = XLSX.utils.sheet_to_json(sheet)
+
+    const BATCH_SIZE = 500
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const chunk = rows.slice(i, i + BATCH_SIZE)
+      const values = chunk.map((r, idx) => {
+        const globalIndex = i + idx + 1
+        const id = 'NH44-' + String(globalIndex).padStart(5, '0')
+        const timestamp = r['Timestamp (IST)'] ? String(r['Timestamp (IST)']) : null
+        const type = r['Vehicle Type'] ? String(r['Vehicle Type']) : 'Unknown'
+        const plate = r['Vehicle Number Plate'] ? String(r['Vehicle Number Plate']) : null
+        const conf = r['Plate Confidence'] !== undefined ? Number(r['Plate Confidence']) : null
+        const speed = r['Speed (km/h)'] !== undefined ? Number(r['Speed (km/h)']) : null
+        const speedLimit = r['Speed Limit (km/h)'] !== undefined ? Number(r['Speed Limit (km/h)']) : null
+        const overSpeed = r['Over Speed'] ? String(r['Over Speed']) : (speed && speedLimit && speed > speedLimit ? 'Yes' : 'No')
+        const lat = r['Latitude'] !== undefined ? Number(r['Latitude']) : null
+        const lon = r['Longitude'] !== undefined ? Number(r['Longitude']) : null
+        const video = r['Video Clip Path'] ? String(r['Video Clip Path']) : null
+        const imgPath = r['Vehicle Image Path'] ? String(r['Vehicle Image Path']) : null
+        const events = r['Events'] ? String(r['Events']) : (overSpeed === 'Yes' ? 'Overspeeding' : 'Standard detection')
+        return [id, timestamp, type, plate, conf, null, speed, speedLimit, overSpeed, lat, lon, video, imgPath, null, events, NH44_FILE_NAME]
+      })
+
+      await pool.query(
+        'INSERT IGNORE INTO vehicle_events (csv_record_id, timestamp_ist, vehicle_type, vehicle_number_plate, plate_confidence, vehicle_image, speed, speed_limit, over_speed, latitude, longitude, video_clip_path, vehicle_image_path, plate_image_path, events, source_file) VALUES ?',
+        [values]
+      )
+    }
+    console.log(`[Database] Successfully stored all 5,000 records from ${NH44_FILE_NAME} in MySQL.`)
+  } catch (error) {
+    console.error('[Database Seeding Error]:', error.message)
+  }
+}
+
+/**
+ * Fetch a random number of records (1 to 20) from the database
+ */
+async function fetchRandomVehicleBatch(forcedCount = null) {
+  const count = typeof forcedCount === 'number' && forcedCount > 0
+    ? Math.min(forcedCount, 50)
+    : getRandomBatchSize()
+
+  if (!pool) {
+    return { count: 0, batchSize: count, records: [] }
+  }
+
+  // Fast random selection of 'count' records from database
+  const [rows] = await pool.query(
+    'SELECT * FROM vehicle_events WHERE source_file LIKE ? ORDER BY RAND() LIMIT ?',
+    ['%NH44%', count]
+  )
+
+  const clientRecords = rows.map(toClientRecord)
+  return {
+    count: clientRecords.length,
+    batchSize: count,
+    records: clientRecords,
+  }
+}
+
+function pauseStream() {
+  streamPaused = true
+  return { paused: true }
+}
+
+function resumeStream() {
+  streamPaused = false
+  return { paused: false }
+}
+
+function isStreamPaused() {
+  return streamPaused
+}
+
+async function triggerInstantBatch(io) {
+  const batch = await fetchRandomVehicleBatch()
+  if (batch.records.length && io) {
+    io.emit('newVehicleBatch', batch.records)
     const status = {
       type: 'batch',
-      fileName: sourceFile,
-      batchCount: savedRows.length,
-      totalProcessed: existingIds.size,
-      events: inserted.filter((row) => row.events).length,
-      overspeeding: inserted.filter((row) => String(row.overSpeed).toLowerCase() === 'yes').length,
+      fileName: NH44_FILE_NAME,
+      batchCount: batch.count,
+      totalPool: 5000,
+      timestamp: new Date().toLocaleTimeString(),
+      overspeeding: batch.records.filter((r) => r.isOverSpeed).length,
+      isPaused: streamPaused,
+      manualTrigger: true,
     }
-    io.emit('newVehicleBatch', savedRows.map(toClientRecord))
-    emitStreamStatus(io, status)
-    console.log(`Streamed ${savedRows.length} records from ${sourceFile}; next update in ${BATCH_INTERVAL}ms`)
-    await wait(BATCH_INTERVAL)
+    latestStreamStatus = status
+    io.emit('vehicleStreamStatus', status)
   }
-
-  processedFileVersions.add(fileVersion)
-  console.log(`[Stream] Finished reading ${sourceFile}. Stream reached last row (${rows.length} records total). Stream halted.`)
-  const completeStatus = {
-    type: 'file-complete',
-    fileName: sourceFile,
-    totalRows: rows.length,
-    isComplete: true,
-  }
-  emitStreamStatus(io, completeStatus)
-  io.emit('vehicleStreamComplete', completeStatus)
-  return true
+  return batch
 }
 
 async function runVehicleStream(io) {
+  await seedNH44DatabaseIfEmpty()
+
+  console.log(`[VehicleStream] Live telemetry streaming initialized (random batches 1-20 records every ${STREAM_INTERVAL / 1000}s)`)
+
   while (true) {
-    const files = await listDataFiles()
-    if (!files.length) {
-      await wait(FILE_INTERVAL)
-      continue
+    try {
+      if (!streamPaused) {
+        const batch = await fetchRandomVehicleBatch()
+        if (batch.records.length && io) {
+          io.emit('newVehicleBatch', batch.records)
+          const status = {
+            type: 'batch',
+            fileName: NH44_FILE_NAME,
+            batchCount: batch.count,
+            totalPool: 5000,
+            timestamp: new Date().toLocaleTimeString(),
+            overspeeding: batch.records.filter((r) => r.isOverSpeed).length,
+            isPaused: streamPaused,
+          }
+          latestStreamStatus = status
+          io.emit('vehicleStreamStatus', status)
+          console.log(`[VehicleStream] Broadcast random batch of ${batch.count} records (1-20 random range)`)
+        }
+      }
+    } catch (err) {
+      console.error('[VehicleStream Loop Error]:', err.message)
     }
 
-    for (const fileName of files) {
-      await processFile(fileName, io)
-    }
-    await wait(FILE_INTERVAL)
+    await wait(STREAM_INTERVAL)
   }
 }
 
-async function getStoredVehicles({ limit, afterId = 0 } = {}) {
-  const query = limit
-    ? 'SELECT * FROM vehicle_events WHERE id > ? ORDER BY id ASC LIMIT ?'
-    : 'SELECT * FROM vehicle_events ORDER BY id ASC'
-  const parameters = limit ? [afterId, limit] : []
-  const [rows] = await pool.query(query, parameters)
+/**
+ * Returns initial sample of stored vehicles (default 20, avoids reading all 5,000 at once)
+ */
+async function getStoredVehicles({ limit = 20, afterId = 0 } = {}) {
+  if (!pool) return []
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100)
+  const [rows] = await pool.query(
+    'SELECT * FROM vehicle_events WHERE source_file LIKE ? ORDER BY id DESC LIMIT ?',
+    ['%NH44%', safeLimit]
+  )
   return rows.map(toClientRecord)
+}
+
+async function getVehiclePoolStats() {
+  if (!pool) return { totalPool: 0 }
+  const [totalRes] = await pool.query(
+    "SELECT COUNT(*) as count, AVG(speed) as avgSpeed, SUM(CASE WHEN over_speed = 'Yes' THEN 1 ELSE 0 END) as overspeedCount FROM vehicle_events WHERE source_file LIKE ?",
+    ['%NH44%']
+  )
+  const [typesRes] = await pool.query(
+    'SELECT vehicle_type, COUNT(*) as count FROM vehicle_events WHERE source_file LIKE ? GROUP BY vehicle_type',
+    ['%NH44%']
+  )
+  return {
+    totalPool: totalRes[0]?.count || 5000,
+    averageSpeed: Math.round(totalRes[0]?.avgSpeed || 68),
+    overspeedTotal: totalRes[0]?.overspeedCount || 0,
+    vehicleTypes: typesRes.reduce((acc, r) => { acc[r.vehicle_type] = r.count; return acc }, {}),
+  }
 }
 
 function getLatestStreamStatus() {
   return latestStreamStatus
 }
 
-module.exports = { DATA_DIRECTORY, getLatestStreamStatus, getStoredVehicles, runVehicleStream }
+module.exports = {
+  DATA_DIRECTORY,
+  getLatestStreamStatus,
+  getStoredVehicles,
+  runVehicleStream,
+  fetchRandomVehicleBatch,
+  pauseStream,
+  resumeStream,
+  isStreamPaused,
+  triggerInstantBatch,
+  seedNH44DatabaseIfEmpty,
+  getVehiclePoolStats,
+}

@@ -42,15 +42,14 @@ function rowKey(row) {
   return `${row.sourceFile || row.fileName || 'local'}::${row.csvRecordId || row.observationId || row.id || `${row.timestamp}-${row.vehicleNumberPlate}`}`
 }
 
+function prependUniqueRows(previousRows, incomingRows, maxCapacity = 100) {
+  const existingKeys = new Set(incomingRows.map(rowKey))
+  const filteredPrevious = previousRows.filter((row) => !existingKeys.has(rowKey(row)))
+  return [...incomingRows, ...filteredPrevious].slice(0, maxCapacity)
+}
+
 function appendUniqueRows(previousRows, incomingRows) {
-  const existingKeys = new Set(previousRows.map(rowKey))
-  const uniqueRows = incomingRows.filter((row) => {
-    const key = rowKey(row)
-    if (existingKeys.has(key)) return false
-    existingKeys.add(key)
-    return true
-  })
-  return uniqueRows.length ? [...previousRows, ...uniqueRows] : previousRows
+  return prependUniqueRows(previousRows, incomingRows, 100)
 }
 
 function normalizeStreamRows(rows) {
@@ -169,7 +168,80 @@ export default function App() {
     }
   }
 
+  const [streamPaused, setStreamPaused] = useState(false)
+  const [latestBatchInfo, setLatestBatchInfo] = useState({
+    batchCount: 0,
+    timestamp: null,
+    overspeedCount: 0,
+    delta: 0,
+    isManual: false,
+    fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+  })
+  const [dbStats, setDbStats] = useState({
+    totalRecords: 5000,
+    overspeedRate: '28%',
+    avgSpeed: 65,
+    cameras: 6,
+    activeCorridor: 'NH-44 Hyderabad Express Corridor',
+  })
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    fetch(`${apiBaseUrl}/api/vehicles/stats`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.stats) {
+          setDbStats(data.stats)
+        }
+      })
+      .catch(() => undefined)
+  }, [isAuthenticated])
+
   const userUploadedFileRef = useRef(false)
+
+  const handleFetchRandomBatch = async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/vehicles/stream-control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'trigger' }),
+      })
+      const data = await response.json()
+      if (data.success && Array.isArray(data.vehicles) && data.vehicles.length) {
+        const streamRows = normalizeStreamRows(data.vehicles)
+        setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows, 100))
+        const overspeeds = streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length
+        setLatestBatchInfo({
+          batchCount: streamRows.length,
+          timestamp: new Date().toLocaleTimeString(),
+          overspeedCount: overspeeds,
+          delta: streamRows.length,
+          isManual: true,
+          fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+        })
+        playNotificationTone()
+      }
+    } catch (error) {
+      console.warn('Unable to trigger random batch:', error)
+    }
+  }
+
+  const handleToggleStreamPause = async () => {
+    try {
+      const nextAction = streamPaused ? 'resume' : 'pause'
+      const response = await fetch(`${apiBaseUrl}/api/vehicles/stream-control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: nextAction }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        setStreamPaused(data.isPaused)
+      }
+    } catch (error) {
+      console.warn('Unable to toggle stream pause:', error)
+    }
+  }
 
   useEffect(() => {
     if (!isAuthenticated) return undefined
@@ -178,13 +250,21 @@ export default function App() {
 
     async function loadInitialVehicles() {
       try {
-        const response = await fetch(`${apiBaseUrl}/api/vehicles`)
+        const response = await fetch(`${apiBaseUrl}/api/vehicles?limit=20`)
         if (!response.ok) return
         const data = await response.json()
         if (!isCancelled && !userUploadedFileRef.current && Array.isArray(data.vehicles) && data.vehicles.length) {
           const streamRows = normalizeStreamRows(data.vehicles)
-          setTrafficData((currentRows) => (userUploadedFileRef.current ? currentRows : appendUniqueRows(currentRows, streamRows)))
-          setFileName((currentName) => currentName || 'Live vehicle database stream')
+          setTrafficData((currentRows) => (userUploadedFileRef.current ? currentRows : prependUniqueRows(currentRows, streamRows, 100)))
+          setFileName((currentName) => currentName || 'NH44_vehicles_5000_merged_with_images.xlsx')
+          setLatestBatchInfo({
+            batchCount: streamRows.length,
+            timestamp: new Date().toLocaleTimeString(),
+            overspeedCount: streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length,
+            delta: streamRows.length,
+            isManual: false,
+            fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+          })
         }
       } catch (error) {
         console.warn('Unable to load initial vehicles from database:', error.message)
@@ -202,16 +282,25 @@ export default function App() {
       if (!Array.isArray(incomingVehicles) || !incomingVehicles.length || isCancelled) return
       const streamRows = normalizeStreamRows(incomingVehicles)
       if (!userUploadedFileRef.current) {
-        setTrafficData((currentRows) => appendUniqueRows(currentRows, streamRows))
-        setFileName((currentName) => currentName || 'Live vehicle database stream')
+        setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows, 100))
+        setFileName((currentName) => currentName || 'NH44_vehicles_5000_merged_with_images.xlsx')
+        const overspeeds = streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length
+        setLatestBatchInfo({
+          batchCount: streamRows.length,
+          timestamp: new Date().toLocaleTimeString(),
+          overspeedCount: overspeeds,
+          delta: streamRows.length,
+          isManual: false,
+          fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+        })
         const firstRow = streamRows[0]
         const label = firstRow.vehicleNumberPlate || firstRow.plateNumber || firstRow.id || 'Live vehicle'
         const type = firstRow.vehicleType || firstRow.type || 'Detection'
         setStreamNotifications((prev) => [
           {
             id: `${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-            title: `New telemetry: ${label}`,
-            message: `${type} captured at ${firstRow.location || firstRow.roadName || 'active site'}.`,
+            title: `+${streamRows.length} NH-44 Records: ${label}`,
+            message: `${type} captured at ${firstRow.location || firstRow.roadName || 'NH-44 Corridor'}.`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           },
           ...prev.slice(0, 11),
@@ -225,10 +314,10 @@ export default function App() {
         setStreamNotifications((prev) => [
           {
             id: `${Date.now()}-complete`,
-            title: 'Telemetry Stream Completed',
+            title: 'Telemetry Stream Cycle Completed',
             message: payload?.fileName
-              ? `Reached the last row (${payload.totalRows || 'all'} records) in ${payload.fileName}. Stream halted.`
-              : 'Dataset processing reached the final record. Stream halted.',
+              ? `Completed random polling cycle across ${payload.totalRows || '5,000'} records in ${payload.fileName}.`
+              : 'Dataset processing cycle completed.',
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           },
           ...prev.slice(0, 11),
@@ -237,8 +326,22 @@ export default function App() {
     })
 
     socket.on('vehicleStreamStatus', (status) => {
-      if (!isCancelled && status?.fileName) {
-        setFileName(status.fileName)
+      if (!isCancelled) {
+        if (status?.fileName) {
+          setFileName(status.fileName)
+        }
+        if (typeof status?.isPaused === 'boolean') {
+          setStreamPaused(status.isPaused)
+        }
+        if (status?.batchCount) {
+          setLatestBatchInfo((prev) => ({
+            ...prev,
+            batchCount: status.batchCount,
+            timestamp: status.timestamp || new Date().toLocaleTimeString(),
+            overspeedCount: status.overspeed || 0,
+            delta: status.batchCount,
+          }))
+        }
       }
     })
 
@@ -525,13 +628,18 @@ export default function App() {
                       <ProjectConnectionRequired />
                     ) : (
                       <DashboardHub
+                        dbStats={dbStats}
                         fileName={fileName}
                         hasImportedFile={hasImportedFile}
                         importError={importError}
+                        latestBatchInfo={latestBatchInfo}
+                        onFetchRandomBatch={handleFetchRandomBatch}
                         onImport={handleImport}
                         onLoadSampleData={handleLoadSampleData}
+                        onToggleStreamPause={handleToggleStreamPause}
                         projectName={connectedProject.name}
                         rows={trafficData}
+                        streamPaused={streamPaused}
                       />
                     )
                   }
@@ -546,14 +654,19 @@ export default function App() {
                     ) : (
                       <DashboardDetail
                         addedCameras={addedCameras}
-                        onRemoveCamera={handleRemoveCamera}
-                        removedCameras={removedCameras}
+                        dbStats={dbStats}
                         fileName={fileName}
                         importError={importError}
-                        onImport={handleImport}
+                        latestBatchInfo={latestBatchInfo}
                         onAddCamera={handleAddCamera}
+                        onFetchRandomBatch={handleFetchRandomBatch}
+                        onImport={handleImport}
+                        onRemoveCamera={handleRemoveCamera}
+                        onToggleStreamPause={handleToggleStreamPause}
                         projectName={connectedProject.name}
+                        removedCameras={removedCameras}
                         rows={trafficData}
+                        streamPaused={streamPaused}
                       />
                     )
                   }
