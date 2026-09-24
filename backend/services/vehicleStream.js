@@ -231,7 +231,7 @@ async function fetchRandomVehicleBatch(forcedCount = null, requestedFileName = n
 /**
  * Stores an uploaded vehicle dataset into MySQL and switches active stream to it
  */
-async function storeUploadedVehicleRecords(fileName, rows) {
+async function storeUploadedVehicleRecords(fileName, rows, options = {}) {
   if (!pool) {
     throw new Error('Database connection is not available.')
   }
@@ -239,45 +239,71 @@ async function storeUploadedVehicleRecords(fileName, rows) {
     throw new Error('No records found in the uploaded file.')
   }
 
+  const { isAppend = false } = options
   currentActiveFileName = fileName
-  streamOffset = 0
+  if (!isAppend) {
+    streamOffset = 0
+  }
 
+  const safeFileName = String(fileName || 'uploaded_dataset.csv').slice(0, 255)
   const CHUNK_SIZE = 250
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
     const chunk = rows.slice(i, i + CHUNK_SIZE)
     const values = chunk.map((r, index) => {
       const globalIdx = i + index + 1
-      const id = r.csvRecordId || r.observationId || r.id || `${fileName.replace(/\.[^/.]+$/, '')}-${String(globalIdx).padStart(5, '0')}`
-      const timestamp = r.timestampIst || r.timestamp || r.time || new Date().toISOString().slice(0, 19).replace('T', ' ')
-      const type = r.vehicleType || r.type || 'car'
-      const plate = r.vehicleNumberPlate || r.numberPlate || r.plate || ''
-      const conf = r.plateConfidence || r.confidence ? Number(r.plateConfidence || r.confidence) : 0.95
-      const speed = r.speed ? Number(r.speed) : Math.floor(Math.random() * 40) + 45
-      const speedLimit = r.speedLimit ? Number(r.speedLimit) : 60
+      const id = String(r.id || r.csvRecordId || r.observationId || `${safeFileName.replace(/\.[^/.]+$/, '')}-${String(globalIdx).padStart(5, '0')}`).slice(0, 120)
+      const timestamp = String(r.timestampIst || r.timestamp || r.time || new Date().toISOString().slice(0, 19).replace('T', ' ')).slice(0, 80)
+      const type = String(r.vehicleType || r.type || 'car').slice(0, 80)
+      const plate = String(r.vehicleNumberPlate || r.numberPlate || r.plate || '').slice(0, 80)
+      const conf = r.plateConfidence || r.confidence ? Math.min(Math.max(Number(r.plateConfidence || r.confidence) || 0.95, 0), 1) : 0.95
+      const speed = Number.isFinite(Number(r.speed)) ? Number(r.speed) : Math.floor(Math.random() * 40) + 45
+      const speedLimit = Number.isFinite(Number(r.speedLimit)) ? Number(r.speedLimit) : 60
       const isOver = r.isOverSpeed || r.overSpeed === 'Yes' || speed > speedLimit
       const overSpeed = isOver ? 'Yes' : 'No'
-      const lat = r.latitude ? Number(r.latitude) : 17.385044
-      const lon = r.longitude ? Number(r.longitude) : 78.486671
-      const video = r.videoClipPath || null
-      const imgPath = r.vehicleImagePath || r.image || null
-      const events = r.events ? String(r.events) : (isOver ? 'Overspeeding' : 'Standard detection')
-      return [id, timestamp, type, plate, conf, null, speed, speedLimit, overSpeed, lat, lon, video, imgPath, null, events, fileName]
+      const lat = Number.isFinite(Number(r.latitude)) ? Number(r.latitude) : 17.385044
+      const lon = Number.isFinite(Number(r.longitude)) ? Number(r.longitude) : 78.486671
+      const video = r.videoClipPath && !r.videoClipPath.startsWith('data:') ? String(r.videoClipPath).slice(0, 1000) : null
+      const imgPath = r.vehicleImagePath && !r.vehicleImagePath.startsWith('data:') ? String(r.vehicleImagePath).slice(0, 1000) : null
+      const plateImgPath = r.plateImagePath && !r.plateImagePath.startsWith('data:') ? String(r.plateImagePath).slice(0, 1000) : null
+      const events = String(r.events || (isOver ? 'Overspeeding' : 'Standard detection')).slice(0, 255)
+      return [id, timestamp, type, plate, conf, null, speed, speedLimit, overSpeed, lat, lon, video, imgPath, plateImgPath, events, safeFileName]
     })
 
     await pool.query(
-      'INSERT IGNORE INTO vehicle_events (csv_record_id, timestamp_ist, vehicle_type, vehicle_number_plate, plate_confidence, vehicle_image, speed, speed_limit, over_speed, latitude, longitude, video_clip_path, vehicle_image_path, plate_image_path, events, source_file) VALUES ?',
+      `INSERT INTO vehicle_events 
+        (csv_record_id, timestamp_ist, vehicle_type, vehicle_number_plate, plate_confidence, vehicle_image, speed, speed_limit, over_speed, latitude, longitude, video_clip_path, vehicle_image_path, plate_image_path, events, source_file) 
+       VALUES ? 
+       ON DUPLICATE KEY UPDATE 
+        speed = VALUES(speed), 
+        speed_limit = VALUES(speed_limit), 
+        over_speed = VALUES(over_speed), 
+        timestamp_ist = VALUES(timestamp_ist), 
+        vehicle_type = VALUES(vehicle_type), 
+        vehicle_number_plate = VALUES(vehicle_number_plate),
+        plate_confidence = VALUES(plate_confidence),
+        events = VALUES(events),
+        latitude = VALUES(latitude),
+        longitude = VALUES(longitude)`,
       [values]
     )
   }
 
-  console.log(`[Database] Successfully stored ${rows.length} records for uploaded file "${fileName}" in MySQL.`)
+  console.log(`[Database] Successfully stored ${rows.length} records for uploaded file "${safeFileName}" in MySQL.`)
+
+  // Query total records count for this source file
+  const [totalRes] = await pool.query(
+    'SELECT COUNT(*) as count FROM vehicle_events WHERE source_file = ? OR source_file LIKE ?',
+    [safeFileName, `%${safeFileName}%`]
+  )
+  const totalInDb = totalRes[0]?.count || rows.length
 
   // Return initial random batch (1-20 records) from the newly stored dataset
-  const initialBatch = await fetchRandomVehicleBatch(null, fileName)
+  const initialBatch = await fetchRandomVehicleBatch(null, safeFileName)
   return {
     success: true,
-    totalStored: rows.length,
-    fileName,
+    totalStored: totalInDb,
+    chunkStored: rows.length,
+    fileName: safeFileName,
     initialBatch: initialBatch.records,
   }
 }

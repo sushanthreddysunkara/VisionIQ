@@ -34,6 +34,8 @@ export default function ProjectsPage({
   hasImportedFile,
   rows = [],
   importError,
+  setImportError,
+  dbStats,
 }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState('created')
@@ -161,8 +163,27 @@ export default function ProjectsPage({
       </div>
 
       {importError && (
-        <div className="proj-error-banner" role="alert">
-          {importError}
+        <div className="proj-error-banner" role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+          <span>{importError}</span>
+          {setImportError && (
+            <button
+              type="button"
+              onClick={() => setImportError('')}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'inherit',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                padding: '2px 8px',
+                fontSize: '14px',
+                opacity: 0.8,
+              }}
+              title="Dismiss error"
+            >
+              ✕
+            </button>
+          )}
         </div>
       )}
 
@@ -356,7 +377,9 @@ export default function ProjectsPage({
                       <div className="proj-feed-meta">
                         <strong>{fileName}</strong>
                         <span>
-                          {rows.length.toLocaleString()} vehicle detections · {uniqueCameras} cameras · {uniqueLocations} locations
+                          {dbStats && dbStats.totalPool > 0
+                            ? `${dbStats.totalPool.toLocaleString()} vehicle detections in database (${rows.length.toLocaleString()} live in session) · ${uniqueCameras} cameras · ${uniqueLocations} locations`
+                            : `${rows.length.toLocaleString()} vehicle detections · ${uniqueCameras} cameras · ${uniqueLocations} locations`}
                         </span>
                       </div>
                       <div className="proj-feed-status-pill">Active Live Feed</div>

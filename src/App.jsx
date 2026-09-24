@@ -282,25 +282,31 @@ export default function App() {
       if (!Array.isArray(incomingVehicles) || !incomingVehicles.length || isCancelled) return
       const streamRows = normalizeStreamRows(incomingVehicles)
       if (!userUploadedFileRef.current) {
+        const batchSourceFile = incomingVehicles[0]?.sourceFile || incomingVehicles[0]?.fileName
         setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows))
-        setFileName((currentName) => currentName || 'NH44_vehicles_5000_merged_with_images.xlsx')
+        if (batchSourceFile) {
+          setFileName(batchSourceFile)
+        } else {
+          setFileName((currentName) => currentName || 'NH44_vehicles_5000_merged_with_images.xlsx')
+        }
         const overspeeds = streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length
-        setLatestBatchInfo({
+        setLatestBatchInfo((prev) => ({
           batchCount: streamRows.length,
           timestamp: new Date().toLocaleTimeString(),
           overspeedCount: overspeeds,
           delta: streamRows.length,
           isManual: false,
-          fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
-        })
+          fileName: batchSourceFile || prev.fileName || 'NH44_vehicles_5000_merged_with_images.xlsx',
+        }))
         const firstRow = streamRows[0]
         const label = firstRow.vehicleNumberPlate || firstRow.plateNumber || firstRow.id || 'Live vehicle'
         const type = firstRow.vehicleType || firstRow.type || 'Detection'
+        const sourceLabel = batchSourceFile ? batchSourceFile.replace(/\.[^/.]+$/, '') : 'Surveillance'
         setStreamNotifications((prev) => [
           {
             id: `${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-            title: `+${streamRows.length} NH-44 Records: ${label}`,
-            message: `${type} captured at ${firstRow.location || firstRow.roadName || 'NH-44 Corridor'}.`,
+            title: `+${streamRows.length} ${sourceLabel} Records: ${label}`,
+            message: `${type} captured at ${firstRow.location || firstRow.roadName || 'Traffic Corridor'}.`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           },
           ...prev.slice(0, 11),
@@ -487,28 +493,102 @@ export default function App() {
         throw new Error('No valid records found in the selected file.')
       }
 
-      // 2. Upload and store records in the MySQL database
-      const response = await fetch(`${apiBaseUrl}/api/vehicles/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: file.name,
-          rows: importedRows,
-        }),
-      })
+      // 2. Extract clean telemetry metadata (strip large base64/synthetic SVGs so payload remains fast and lightweight)
+      const cleanRows = importedRows.map((r, idx) => ({
+        id: r.id || r.observationId || r.csvRecordId || `REC-${idx + 1}`,
+        timestamp: r.timestampIst || r.timestamp || r.time || '',
+        vehicleType: r.vehicleType || r.type || 'Car',
+        numberPlate: r.vehicleNumberPlate || r.numberPlate || r.plate || '',
+        plateConfidence: r.plateConfidence || r.confidence || 0.95,
+        speed: Number(r.speed) || 60,
+        speedLimit: Number(r.speedLimit) || 60,
+        overSpeed: r.overSpeed || (r.isOverSpeed ? 'Yes' : 'No'),
+        isOverSpeed: Boolean(r.isOverSpeed || r.overSpeed === 'Yes'),
+        latitude: Number(r.latitude) || 17.385044,
+        longitude: Number(r.longitude) || 78.486671,
+        videoClipPath: r.videoClipPath && !r.videoClipPath.startsWith('data:') ? r.videoClipPath : '',
+        vehicleImagePath: r.vehicleImagePath && !r.vehicleImagePath.startsWith('data:') ? r.vehicleImagePath : '',
+        plateImagePath: r.plateImagePath && !r.plateImagePath.startsWith('data:') ? r.plateImagePath : '',
+        events: r.events || (r.isOverSpeed ? 'Overspeeding' : 'Standard detection'),
+        camera: r.camera || '',
+        location: r.location || r.roadName || '',
+      }))
 
-      const result = await response.json()
-      if (!result.success) {
-        throw new Error(result.message || 'Database upload failed.')
+      // 3. Upload and store records in MySQL database
+      // Upload in chunks of 2,500 if file is large, ensuring fast and reliable transfers
+      const CHUNK_SIZE = 2500
+      let lastResult = null
+
+      if (cleanRows.length <= CHUNK_SIZE) {
+        const response = await fetch(`${apiBaseUrl}/api/vehicles/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: file.name,
+            rows: cleanRows,
+            isAppend: false,
+            isLastChunk: true,
+            totalRecords: cleanRows.length,
+          }),
+        })
+
+        const contentType = response.headers.get('content-type') || ''
+        if (contentType.includes('application/json')) {
+          lastResult = await response.json()
+        } else {
+          const text = await response.text()
+          throw new Error(
+            response.ok
+              ? 'Server returned non-JSON response.'
+              : `Upload failed (status ${response.status}): ${text.slice(0, 150)}`
+          )
+        }
+
+        if (!response.ok || !lastResult.success) {
+          throw new Error(lastResult?.message || `Database upload failed (status ${response.status}).`)
+        }
+      } else {
+        // Chunked upload for large datasets
+        for (let i = 0; i < cleanRows.length; i += CHUNK_SIZE) {
+          const chunk = cleanRows.slice(i, i + CHUNK_SIZE)
+          const isFirst = i === 0
+          const isLast = i + CHUNK_SIZE >= cleanRows.length
+
+          const response = await fetch(`${apiBaseUrl}/api/vehicles/upload`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: file.name,
+              rows: chunk,
+              isAppend: !isFirst,
+              isLastChunk: isLast,
+              totalRecords: cleanRows.length,
+            }),
+          })
+
+          const contentType = response.headers.get('content-type') || ''
+          let chunkResult
+          if (contentType.includes('application/json')) {
+            chunkResult = await response.json()
+          } else {
+            const text = await response.text()
+            throw new Error(`Upload failed (status ${response.status}): ${text.slice(0, 150)}`)
+          }
+
+          if (!response.ok || !chunkResult.success) {
+            throw new Error(chunkResult?.message || `Chunk upload failed at record ${i}.`)
+          }
+          lastResult = chunkResult
+        }
       }
 
-      // 3. Immediately update dashboard state with newly uploaded dataset
-      userUploadedFileRef.current = false // Keep live stream connected so new batches stream from DB!
+      // 4. Immediately update dashboard state with newly uploaded dataset
+      userUploadedFileRef.current = false // Live stream sequentially draws random batches from DB for this file!
       setFileName(file.name)
 
       // Initial batch from the new uploaded dataset (1-20 records)
-      const initialBatch = result.initialBatch && result.initialBatch.length
-        ? normalizeStreamRows(result.initialBatch)
+      const initialBatch = lastResult?.initialBatch && lastResult.initialBatch.length
+        ? normalizeStreamRows(lastResult.initialBatch)
         : importedRows.slice(0, Math.floor(Math.random() * 20) + 1)
 
       setTrafficData(initialBatch)
@@ -524,9 +604,14 @@ export default function App() {
 
       // Fetch fresh database stats for the uploaded file
       fetch(`${apiBaseUrl}/api/vehicles/stats?fileName=${encodeURIComponent(file.name)}`)
-        .then((res) => res.json())
+        .then((res) => {
+          if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+            return res.json()
+          }
+          return null
+        })
         .then((data) => {
-          if (data.success && data.stats) {
+          if (data && data.success && data.stats) {
             setDbStats(data.stats)
           }
         })
@@ -536,7 +621,7 @@ export default function App() {
         {
           id: `${Date.now()}-upload`,
           title: `Dataset Uploaded: ${file.name}`,
-          message: `Stored ${importedRows.length} records in MySQL database. Telemetry stream is now live for ${file.name}.`,
+          message: `Stored ${cleanRows.length.toLocaleString()} records in MySQL database. Telemetry stream is now live for ${file.name}.`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
         ...prev.slice(0, 11),
@@ -593,6 +678,7 @@ export default function App() {
                   element={
                     <ProjectsPage
                       connectedProject={connectedProject}
+                      dbStats={dbStats}
                       fileName={fileName}
                       hasImportedFile={hasImportedFile}
                       importError={importError}
@@ -606,6 +692,7 @@ export default function App() {
                       projectList={projectList}
                       rows={trafficData}
                       selectedProject={selectedProject}
+                      setImportError={setImportError}
                     />
                   }
                 />

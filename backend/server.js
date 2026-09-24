@@ -61,33 +61,37 @@ if (!process.env.JWT_SECRET) {
 }
 
 app.use(cors(corsOptions))
-app.use(express.json({ limit: '50mb' }))
-app.use(express.urlencoded({ extended: true, limit: '50mb' }))
+app.use(express.json({ limit: '100mb' }))
+app.use(express.urlencoded({ extended: true, limit: '100mb' }))
 
 app.get('/api/health', (req, res) => res.json({ success: true, message: 'VisionIQ API is running.' }))
 
 // Upload new Excel/CSV file to store in MySQL and switch active live stream
 app.post('/api/vehicles/upload', async (req, res) => {
   try {
-    const { fileName, rows } = req.body || {}
+    const { fileName, rows, isAppend = false, isLastChunk = true, totalRecords } = req.body || {}
     if (!fileName || !Array.isArray(rows) || !rows.length) {
       return res.status(400).json({ success: false, message: 'fileName and rows array required for upload.' })
     }
 
-    const result = await storeUploadedVehicleRecords(fileName, rows)
+    const result = await storeUploadedVehicleRecords(fileName, rows, { isAppend })
 
-    // Broadcast new dataset status to all connected dashboards
-    io.emit('vehicleStreamStatus', {
-      type: 'dataset_switched',
-      fileName,
-      totalRows: result.totalStored,
-      batchCount: result.initialBatch.length,
-      timestamp: new Date().toLocaleTimeString(),
-      overspeeding: result.initialBatch.filter((r) => r.isOverSpeed).length,
-    })
+    // If this is a complete upload or the final chunk, broadcast new dataset status to all connected dashboards
+    if (isLastChunk) {
+      io.emit('vehicleStreamStatus', {
+        type: 'dataset_switched',
+        fileName,
+        totalRows: totalRecords || result.totalStored,
+        batchCount: result.initialBatch ? result.initialBatch.length : 0,
+        timestamp: new Date().toLocaleTimeString(),
+        overspeeding: result.initialBatch ? result.initialBatch.filter((r) => r.isOverSpeed).length : 0,
+      })
 
-    // Immediately push initial batch of the newly uploaded data
-    io.emit('newVehicleBatch', result.initialBatch)
+      // Immediately push initial batch of the newly uploaded data
+      if (result.initialBatch && result.initialBatch.length) {
+        io.emit('newVehicleBatch', result.initialBatch)
+      }
+    }
 
     res.json({
       success: true,
@@ -274,6 +278,21 @@ app.use('/images', (req, res) => {
   res.type('image/svg+xml').send(svg)
 })
 
+
+// Express Error Handling Middleware - ALWAYS returns JSON, never HTML
+app.use((err, req, res, next) => {
+  console.error('[VisionIQ API Error]:', err.message || err)
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return res.status(413).json({
+      success: false,
+      message: 'Uploaded file payload is too large. Please upload files under 100MB.',
+    })
+  }
+  return res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'An unexpected server error occurred.',
+  })
+})
 
 async function startServer() {
   const dbStatus = await initializeDatabase()
