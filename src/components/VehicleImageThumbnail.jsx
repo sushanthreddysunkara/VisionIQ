@@ -25,12 +25,21 @@ export default function VehicleImageThumbnail({
   // Priority 1: Image directly extracted from Excel (.xlsx) archive
   // Priority 2: Direct URL or base64 image from CSV / Excel row (unless failed to load)
   // Priority 3: Generated surveillance telemetry graphic
-  const directPath =
-    (!imageLoadError && row.vehicleImagePath && (row.vehicleImagePath.startsWith('http') || row.vehicleImagePath.startsWith('data:') || row.vehicleImagePath.startsWith('/')))
-      ? row.vehicleImagePath
-      : (!imageLoadError && row.vehicleImage && (row.vehicleImage.startsWith('http') || row.vehicleImage.startsWith('data:') || row.vehicleImage.startsWith('/')))
-        ? row.vehicleImage
-        : null
+  let directPath = null
+  if (!imageLoadError) {
+    const rawPath = row.vehicleImagePath || row.vehicleImage || ''
+    if (rawPath) {
+      if (rawPath.startsWith('http') || rawPath.startsWith('data:')) {
+        directPath = rawPath
+      } else if (rawPath.startsWith('/')) {
+        directPath = rawPath
+      } else if (rawPath.startsWith('images/')) {
+        directPath = `/${rawPath}`
+      } else if (rawPath.includes('.jp') || rawPath.includes('.png')) {
+        directPath = `/images/${rawPath.replace(/^.*[\\/]/, '')}`
+      }
+    }
+  }
 
   const imgSrc =
     row.extractedImage ||

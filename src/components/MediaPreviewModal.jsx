@@ -135,13 +135,23 @@ export default function MediaPreviewModal({
 
   const videoUrl = rawVideo || 'https://www.youtube.com/watch?v=1EiC9bvVGnk'
 
-  const vehicleImagePath =
+  function normalizeMediaPath(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('data:')) return s;
+    if (s.startsWith('/')) return s;
+    if (s.startsWith('images/')) return '/' + s;
+    if (s.includes('.jp') || s.includes('.png')) return '/images/' + s.replace(/^.*[\\/]/, '');
+    return s;
+  }
+
+  const vehicleImagePath = normalizeMediaPath(
     row.vehicleImagePath ||
     row.vehicleImage ||
     row['Vehicle Image Path'] ||
     row['vehicle_photos'] ||
-    row.extractedImageName ||
-    ''
+    row.extractedImageName
+  );
 
   const plateImagePath =
     row.plateImagePath ||
