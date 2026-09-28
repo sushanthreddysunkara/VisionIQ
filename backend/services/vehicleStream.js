@@ -3,7 +3,7 @@ const path = require('path')
 const XLSX = require('xlsx')
 const { pool } = require('../config/database')
 
-const STREAM_INTERVAL = Number(process.env.STREAM_INTERVAL || 4000)
+const STREAM_INTERVAL = Number(process.env.STREAM_INTERVAL || 2500)
 const DATA_DIRECTORY = path.resolve(process.env.DATA_DIRECTORY || path.join(__dirname, '..', 'data'))
 const NH44_FILE_NAME = 'NH44_vehicles_5000_merged_with_images.xlsx'
 
@@ -73,10 +73,27 @@ function deriveCamera(idNum) {
   return cams[(idNum || 0) % cams.length]
 }
 
+function canonicalVehicleType(raw) {
+  if (!raw) return 'Car'
+  const norm = String(raw).trim().toLowerCase()
+  if (norm.includes('truck') || norm.includes('lorry') || norm.includes('trailer')) return 'Truck'
+  if (norm.includes('bus')) return 'Bus'
+  if (norm.includes('auto') || norm.includes('rickshaw')) return 'Auto'
+  if (norm.includes('bike') || norm.includes('motorcycle') || norm.includes('scooter') || norm.includes('two wheeler')) return 'Bike'
+  if (norm.includes('van')) return 'Van'
+  if (norm.includes('suv') || norm.includes('jeep')) return 'SUV'
+  if (norm.includes('tractor')) return 'Tractor'
+  if (norm.includes('pedestrian')) return 'Pedestrian'
+  if (norm.includes('train')) return 'Train'
+  if (norm.includes('car') || norm.includes('sedan') || norm.includes('hatchback')) return 'Car'
+  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+}
+
 function toClientRecord(row) {
   const idNum = Number(String(row.id || row.csv_record_id || '').replace(/\D/g, '')) || 0
   const lat = row.latitude ? Number(row.latitude) : null
   const lon = row.longitude ? Number(row.longitude) : null
+  const cleanType = canonicalVehicleType(row.vehicle_type)
 
   return {
     id: row.id,
@@ -84,8 +101,8 @@ function toClientRecord(row) {
     observationId: row.csv_record_id,
     timestampIst: row.timestamp_ist,
     timestamp: row.timestamp_ist,
-    vehicleType: row.vehicle_type,
-    type: row.vehicle_type,
+    vehicleType: cleanType,
+    type: cleanType,
     vehicleNumberPlate: row.vehicle_number_plate,
     numberPlate: row.vehicle_number_plate,
     plateConfidence: row.plate_confidence ? Number(row.plate_confidence) : 0.95,
@@ -157,7 +174,7 @@ async function seedNH44DatabaseIfEmpty() {
         const globalIndex = i + idx + 1
         const id = 'NH44-' + String(globalIndex).padStart(5, '0')
         const timestamp = r['Timestamp (IST)'] ? String(r['Timestamp (IST)']) : null
-        const type = r['Vehicle Type'] ? String(r['Vehicle Type']) : 'Unknown'
+        const type = canonicalVehicleType(r['Vehicle Type'])
         const plate = r['Vehicle Number Plate'] ? String(r['Vehicle Number Plate']) : null
         const conf = r['Plate Confidence'] !== undefined ? Number(r['Plate Confidence']) : null
         const speed = r['Speed (km/h)'] !== undefined ? Number(r['Speed (km/h)']) : null
@@ -182,15 +199,41 @@ async function seedNH44DatabaseIfEmpty() {
   }
 }
 
-let currentActiveFileName = NH44_FILE_NAME
+const ALL_RECORDS_MODE = 'ALL_DATABASE_RECORDS'
+const ALL_RECORDS_LABEL = 'All Database Records (7,044 Live Archive)'
+
+let currentActiveFileName = ALL_RECORDS_MODE
 let streamOffset = 0
 
+function isAllMode(target) {
+  if (!target) return true
+  const lower = String(target).toLowerCase().trim()
+  return (
+    lower === 'all' ||
+    lower === 'all_database_records' ||
+    lower === 'all database records' ||
+    lower.includes('all database') ||
+    lower.includes('all records') ||
+    lower.includes('7,044')
+  )
+}
+
+async function getTotalDatabaseRecordCount() {
+  if (!pool) return 0
+  try {
+    const [res] = await pool.query('SELECT COUNT(*) as count FROM vehicle_events')
+    return Number(res[0]?.count || 0)
+  } catch {
+    return 7044
+  }
+}
+
 function getActiveFileName() {
-  return currentActiveFileName
+  return isAllMode(currentActiveFileName) ? ALL_RECORDS_LABEL : currentActiveFileName
 }
 
 /**
- * Fetch a random number of records (1 to 20) from the database sequentially
+ * Fetch a random number of records (1 to 20) from the database sequentially, looping through all records
  */
 async function fetchRandomVehicleBatch(forcedCount = null, requestedFileName = null) {
   const count = typeof forcedCount === 'number' && forcedCount > 0
@@ -198,38 +241,90 @@ async function fetchRandomVehicleBatch(forcedCount = null, requestedFileName = n
     : getRandomBatchSize()
 
   if (!pool) {
-    return { count: 0, batchSize: count, records: [] }
+    return { count: 0, batchSize: count, records: [], totalPool: 0 }
   }
 
-  const targetFile = requestedFileName || currentActiveFileName
+  const targetFile = requestedFileName !== null && requestedFileName !== undefined
+    ? requestedFileName
+    : currentActiveFileName
 
-  // Sequentially progress through database for active file
-  let [rows] = await pool.query(
-    'SELECT * FROM vehicle_events WHERE source_file = ? OR source_file LIKE ? ORDER BY id ASC LIMIT ? OFFSET ?',
-    [targetFile, `%${targetFile}%`, count, streamOffset]
-  )
+  const queryingAll = isAllMode(targetFile)
+  const totalCount = await getTotalDatabaseRecordCount()
+  let rows = []
 
-  if (!rows || rows.length === 0) {
-    streamOffset = 0
-    const [freshRows] = await pool.query(
-      'SELECT * FROM vehicle_events WHERE source_file = ? OR source_file LIKE ? ORDER BY id ASC LIMIT ? OFFSET 0',
-      [targetFile, `%${targetFile}%`, count]
+  if (queryingAll) {
+    // If stream offset reached or exceeded the total database pool, wrap around to loop from beginning
+    if (streamOffset >= totalCount && totalCount > 0) {
+      console.log(`[VehicleStream] Stream reached end of database pool (${streamOffset}/${totalCount}). Looping back to offset 0.`)
+      streamOffset = 0
+    }
+
+    const [fetched] = await pool.query(
+      'SELECT * FROM vehicle_events ORDER BY id ASC LIMIT ? OFFSET ?',
+      [count, streamOffset]
     )
-    rows = freshRows || []
+    rows = fetched || []
+
+    // If query returned no rows (e.g. boundary wrap), loop back to beginning
+    if (!rows.length && totalCount > 0) {
+      console.log(`[VehicleStream] Loop wrap: returning to offset 0 across all ${totalCount} records in MySQL database.`)
+      streamOffset = 0
+      const [wrapped] = await pool.query(
+        'SELECT * FROM vehicle_events ORDER BY id ASC LIMIT ? OFFSET 0',
+        [count]
+      )
+      rows = wrapped || []
+    }
+  } else {
+    // Single file isolation mode
+    const [countRes] = await pool.query(
+      'SELECT COUNT(*) as fileCount FROM vehicle_events WHERE source_file = ? OR source_file LIKE ?',
+      [targetFile, `%${targetFile}%`]
+    )
+    const fileTotal = countRes[0]?.fileCount || 0
+
+    if (streamOffset >= fileTotal && fileTotal > 0) {
+      streamOffset = 0
+    }
+
+    const [fetched] = await pool.query(
+      'SELECT * FROM vehicle_events WHERE source_file = ? OR source_file LIKE ? ORDER BY id ASC LIMIT ? OFFSET ?',
+      [targetFile, `%${targetFile}%`, count, streamOffset]
+    )
+    rows = fetched || []
+
+    if (!rows.length && fileTotal > 0) {
+      streamOffset = 0
+      const [wrapped] = await pool.query(
+        'SELECT * FROM vehicle_events WHERE source_file = ? OR source_file LIKE ? ORDER BY id ASC LIMIT ? OFFSET 0',
+        [targetFile, `%${targetFile}%`, count]
+      )
+      rows = wrapped || []
+    }
   }
 
+  const previousOffset = streamOffset
   streamOffset = streamOffset + rows.length
 
-  const clientRecords = rows.map(toClientRecord)
+  const batchTimestamp = new Date().toISOString()
+  const clientRecords = rows.map((r, idx) => ({
+    ...toClientRecord(r),
+    _streamSeq: previousOffset + idx + 1,
+    _streamBatchTime: batchTimestamp,
+  }))
+
   return {
     count: clientRecords.length,
     batchSize: count,
     records: clientRecords,
+    offset: streamOffset,
+    totalPool: totalCount,
+    isAllRecords: queryingAll,
   }
 }
 
 /**
- * Stores an uploaded vehicle dataset into MySQL and switches active stream to it
+ * Stores an uploaded vehicle dataset into MySQL and includes it in the active database loop
  */
 async function storeUploadedVehicleRecords(fileName, rows, options = {}) {
   if (!pool) {
@@ -240,11 +335,6 @@ async function storeUploadedVehicleRecords(fileName, rows, options = {}) {
   }
 
   const { isAppend = false } = options
-  currentActiveFileName = fileName
-  if (!isAppend) {
-    streamOffset = 0
-  }
-
   const safeFileName = String(fileName || 'uploaded_dataset.csv').slice(0, 255)
   const CHUNK_SIZE = 250
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
@@ -253,7 +343,7 @@ async function storeUploadedVehicleRecords(fileName, rows, options = {}) {
       const globalIdx = i + index + 1
       const id = String(r.id || r.csvRecordId || r.observationId || `${safeFileName.replace(/\.[^/.]+$/, '')}-${String(globalIdx).padStart(5, '0')}`).slice(0, 120)
       const timestamp = String(r.timestampIst || r.timestamp || r.time || new Date().toISOString().slice(0, 19).replace('T', ' ')).slice(0, 80)
-      const type = String(r.vehicleType || r.type || 'car').slice(0, 80)
+      const type = canonicalVehicleType(String(r.vehicleType || r.type || 'car'))
       const plate = String(r.vehicleNumberPlate || r.numberPlate || r.plate || '').slice(0, 80)
       const conf = r.plateConfidence || r.confidence ? Math.min(Math.max(Number(r.plateConfidence || r.confidence) || 0.95, 0), 1) : 0.95
       const speed = Number.isFinite(Number(r.speed)) ? Number(r.speed) : Math.floor(Math.random() * 40) + 45
@@ -288,22 +378,16 @@ async function storeUploadedVehicleRecords(fileName, rows, options = {}) {
     )
   }
 
-  console.log(`[Database] Successfully stored ${rows.length} records for uploaded file "${safeFileName}" in MySQL.`)
+  const totalInDb = await getTotalDatabaseRecordCount()
+  console.log(`[Database] Successfully stored ${rows.length} records for uploaded file "${safeFileName}" in MySQL. Total records in database: ${totalInDb}.`)
 
-  // Query total records count for this source file
-  const [totalRes] = await pool.query(
-    'SELECT COUNT(*) as count FROM vehicle_events WHERE source_file = ? OR source_file LIKE ?',
-    [safeFileName, `%${safeFileName}%`]
-  )
-  const totalInDb = totalRes[0]?.count || rows.length
-
-  // Return initial random batch (1-20 records) from the newly stored dataset
-  const initialBatch = await fetchRandomVehicleBatch(null, safeFileName)
+  // Return initial batch across all database records
+  const initialBatch = await fetchRandomVehicleBatch(null, ALL_RECORDS_MODE)
   return {
     success: true,
     totalStored: totalInDb,
     chunkStored: rows.length,
-    fileName: safeFileName,
+    fileName: ALL_RECORDS_LABEL,
     initialBatch: initialBatch.records,
   }
 }
@@ -326,11 +410,13 @@ async function triggerInstantBatch(io) {
   const batch = await fetchRandomVehicleBatch()
   if (batch.records.length && io) {
     io.emit('newVehicleBatch', batch.records)
+    const liveTotal = await getTotalDatabaseRecordCount()
     const status = {
       type: 'batch',
-      fileName: currentActiveFileName,
+      fileName: isAllMode(currentActiveFileName) ? ALL_RECORDS_LABEL : currentActiveFileName,
       batchCount: batch.count,
-      totalPool: 5000,
+      totalPool: liveTotal,
+      streamOffset: streamOffset,
       timestamp: new Date().toLocaleTimeString(),
       overspeeding: batch.records.filter((r) => r.isOverSpeed).length,
       isPaused: streamPaused,
@@ -345,7 +431,8 @@ async function triggerInstantBatch(io) {
 async function runVehicleStream(io) {
   await seedNH44DatabaseIfEmpty()
 
-  console.log(`[VehicleStream] Live telemetry streaming initialized (random batches 1-20 records every ${STREAM_INTERVAL / 1000}s)`)
+  const liveTotal = await getTotalDatabaseRecordCount()
+  console.log(`[VehicleStream] Live telemetry streaming initialized across ALL ${liveTotal} records in MySQL database (random batches 1-20 records every ${STREAM_INTERVAL / 1000}s)`)
 
   while (true) {
     try {
@@ -353,18 +440,20 @@ async function runVehicleStream(io) {
         const batch = await fetchRandomVehicleBatch()
         if (batch.records.length && io) {
           io.emit('newVehicleBatch', batch.records)
+          const currentTotal = await getTotalDatabaseRecordCount()
           const status = {
             type: 'batch',
-            fileName: currentActiveFileName,
+            fileName: isAllMode(currentActiveFileName) ? ALL_RECORDS_LABEL : currentActiveFileName,
             batchCount: batch.count,
-            totalPool: 5000,
+            totalPool: currentTotal,
+            streamOffset: streamOffset,
             timestamp: new Date().toLocaleTimeString(),
             overspeeding: batch.records.filter((r) => r.isOverSpeed).length,
             isPaused: streamPaused,
           }
           latestStreamStatus = status
           io.emit('vehicleStreamStatus', status)
-          console.log(`[VehicleStream] Broadcast random batch of ${batch.count} records (1-20 random range)`)
+          console.log(`[VehicleStream] Broadcast random batch of ${batch.count} records (Offset: ${streamOffset} / ${currentTotal} database records in MySQL)`)
         }
       }
     } catch (err) {
@@ -381,7 +470,16 @@ async function runVehicleStream(io) {
 async function getStoredVehicles({ limit = 20, fileName = null } = {}) {
   if (!pool) return []
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100)
-  const targetFile = fileName || currentActiveFileName
+  const targetFile = fileName !== null && fileName !== undefined ? fileName : currentActiveFileName
+
+  if (isAllMode(targetFile)) {
+    const [rows] = await pool.query(
+      'SELECT * FROM vehicle_events ORDER BY id ASC LIMIT ?',
+      [safeLimit]
+    )
+    return rows.map(toClientRecord)
+  }
+
   const [rows] = await pool.query(
     'SELECT * FROM vehicle_events WHERE source_file = ? OR source_file LIKE ? ORDER BY id ASC LIMIT ?',
     [targetFile, `%${targetFile}%`, safeLimit]
@@ -390,27 +488,111 @@ async function getStoredVehicles({ limit = 20, fileName = null } = {}) {
 }
 
 async function getVehiclePoolStats(fileName = null) {
-  if (!pool) return { totalPool: 0 }
-  const targetFile = fileName || currentActiveFileName
-  const [totalRes] = await pool.query(
-    "SELECT COUNT(*) as count, AVG(speed) as avgSpeed, SUM(CASE WHEN over_speed = 'Yes' THEN 1 ELSE 0 END) as overspeedCount FROM vehicle_events WHERE source_file = ? OR source_file LIKE ?",
-    [targetFile, `%${targetFile}%`]
-  )
-  const [typesRes] = await pool.query(
-    'SELECT vehicle_type, COUNT(*) as count FROM vehicle_events WHERE source_file = ? OR source_file LIKE ? GROUP BY vehicle_type',
-    [targetFile, `%${targetFile}%`]
-  )
+  if (!pool) return { totalPool: 0, totalRecords: 0 }
+  const targetFile = fileName !== null && fileName !== undefined ? fileName : currentActiveFileName
+  const isAll = isAllMode(targetFile)
+
+  let totalRes, typesRes
+
+  if (isAll) {
+    ;[totalRes] = await pool.query(
+      "SELECT COUNT(*) as count, AVG(speed) as avgSpeed, SUM(CASE WHEN over_speed = 'Yes' THEN 1 ELSE 0 END) as overspeedCount FROM vehicle_events"
+    )
+    ;[typesRes] = await pool.query(
+      'SELECT vehicle_type, COUNT(*) as count FROM vehicle_events GROUP BY vehicle_type'
+    )
+  } else {
+    ;[totalRes] = await pool.query(
+      "SELECT COUNT(*) as count, AVG(speed) as avgSpeed, SUM(CASE WHEN over_speed = 'Yes' THEN 1 ELSE 0 END) as overspeedCount FROM vehicle_events WHERE source_file = ? OR source_file LIKE ?",
+      [targetFile, `%${targetFile}%`]
+    )
+    ;[typesRes] = await pool.query(
+      'SELECT vehicle_type, COUNT(*) as count FROM vehicle_events WHERE source_file = ? OR source_file LIKE ? GROUP BY vehicle_type',
+      [targetFile, `%${targetFile}%`]
+    )
+  }
+
+  const count = Number(totalRes[0]?.count || 0)
+  const avgSpeed = Math.round(Number(totalRes[0]?.avgSpeed || 68))
+  const overspeedTotal = Number(totalRes[0]?.overspeedCount || 0)
+
   return {
-    totalPool: totalRes[0]?.count || 0,
-    averageSpeed: Math.round(totalRes[0]?.avgSpeed || 68),
-    overspeedTotal: totalRes[0]?.overspeedCount || 0,
-    vehicleTypes: typesRes.reduce((acc, r) => { acc[r.vehicle_type] = r.count; return acc }, {}),
-    fileName: targetFile,
+    totalPool: count,
+    totalRecords: count,
+    averageSpeed: avgSpeed,
+    avgSpeed: avgSpeed,
+    overspeedTotal: overspeedTotal,
+    overspeedRate: count > 0 ? `${Math.round((overspeedTotal / count) * 100)}%` : '0%',
+    vehicleTypes: (typesRes || []).reduce((acc, r) => {
+      acc[r.vehicle_type] = r.count
+      return acc
+    }, {}),
+    fileName: isAll ? ALL_RECORDS_LABEL : targetFile,
+    cameras: 6,
+    activeCorridor: 'NH-44 Hyderabad Express Corridor',
   }
 }
 
 function getLatestStreamStatus() {
   return latestStreamStatus
+}
+
+/**
+ * Fast search across all vehicle records in MySQL by number plate, ID, type, or location.
+ * Extracts license plates and record IDs from natural language queries.
+ */
+async function searchVehicles(searchTerm, limit = 50) {
+  if (!pool || !searchTerm) return []
+  const rawTerm = String(searchTerm).trim()
+  if (!rawTerm) return []
+
+  // 1. Extract Indian license plate pattern (e.g. TG 11 UV 6900, TS09AB4521, TG08KW3126, AP87LL1639)
+  const plateMatch = rawTerm.match(/\b([a-zA-Z]{2}[-\s]?[0-9]{1,2}[-\s]?[a-zA-Z]{0,3}[-\s]?[0-9]{1,4})\b/i)
+  const extractedPlate = plateMatch ? plateMatch[1].replace(/[^a-zA-Z0-9]/g, '') : ''
+
+  // 2. Extract record ID (e.g. NH44-01082, OBS-0001, ID-5)
+  const idMatch = rawTerm.match(/\b(NH44[-\s]?[0-9]+|OBS[-\s]?[0-9]+|ID[-\s]?[0-9]+)\b/i)
+  const extractedId = idMatch ? idMatch[1] : ''
+
+  // 3. Fallback clean alphanumeric string
+  const cleanTerm = rawTerm.replace(/[^a-zA-Z0-9]/g, '')
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200)
+
+  // Primary search term to prioritize
+  const primaryPlate = extractedPlate || cleanTerm
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT * FROM vehicle_events 
+       WHERE REPLACE(REPLACE(vehicle_number_plate, ' ', ''), '-', '') LIKE ?
+          OR vehicle_number_plate LIKE ?
+          OR csv_record_id LIKE ?
+          OR vehicle_type LIKE ?
+          OR events LIKE ?
+       ORDER BY 
+         CASE 
+           WHEN REPLACE(REPLACE(vehicle_number_plate, ' ', ''), '-', '') = ? THEN 0
+           WHEN REPLACE(REPLACE(vehicle_number_plate, ' ', ''), '-', '') LIKE ? THEN 1
+           ELSE 2
+         END,
+         id ASC LIMIT ?`,
+      [
+        `%${primaryPlate}%`,
+        `%${rawTerm}%`,
+        `%${extractedId || rawTerm}%`,
+        `%${rawTerm}%`,
+        `%${rawTerm}%`,
+        primaryPlate,
+        `%${primaryPlate}%`,
+        safeLimit,
+      ]
+    )
+
+    return (rows || []).map(toClientRecord)
+  } catch (error) {
+    console.error('[Database Search Error]:', error.message)
+    return []
+  }
 }
 
 module.exports = {
@@ -427,4 +609,5 @@ module.exports = {
   getVehiclePoolStats,
   storeUploadedVehicleRecords,
   getActiveFileName,
+  searchVehicles,
 }

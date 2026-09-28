@@ -39,26 +39,35 @@ const storedNotificationsKey = 'vision-iq-stream-notifications'
 const apiBaseUrl = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/$/, '')
 
 function rowKey(row) {
-  return `${row.sourceFile || row.fileName || 'local'}::${row.csvRecordId || row.observationId || row.id || `${row.timestamp}-${row.vehicleNumberPlate}`}`
+  return `${row.sourceFile || row.fileName || 'db'}::${row.csvRecordId || row.observationId || row.id || `${row.timestamp}-${row.vehicleNumberPlate}`}`
+}
+
+function prependStreamRows(previousRows, incomingRows, maxCapacity = 7044) {
+  if (!incomingRows || !incomingRows.length) return previousRows
+  const incomingKeys = new Set(incomingRows.map(rowKey))
+  // Filter out any older instance of these records so looped records refresh at top of stream
+  const olderRows = previousRows.filter((row) => !incomingKeys.has(rowKey(row)))
+  const updated = [...incomingRows, ...olderRows]
+  return updated.slice(0, maxCapacity)
 }
 
 function prependUniqueRows(previousRows, incomingRows) {
-  const existingKeys = new Set(previousRows.map(rowKey))
-  const newRows = incomingRows.filter((row) => !existingKeys.has(rowKey(row)))
-  return newRows.length ? [...newRows, ...previousRows] : previousRows
+  return prependStreamRows(previousRows, incomingRows)
 }
 
 function appendUniqueRows(previousRows, incomingRows) {
-  return prependUniqueRows(previousRows, incomingRows)
+  return prependStreamRows(previousRows, incomingRows)
 }
 
 function normalizeStreamRows(rows) {
   const normalizedRows = normalizeTrafficData(rows)
+  const now = Date.now()
   return normalizedRows.map((row, index) => ({
     ...row,
     csvRecordId: rows[index]?.csvRecordId || row.csvRecordId,
     sourceFile: rows[index]?.sourceFile || row.sourceFile,
     events: rows[index]?.events || row.events || '',
+    _streamId: `${row.id || row.csvRecordId || index}-${rows[index]?._streamSeq || ''}-${now}-${Math.random().toString(36).slice(2, 6)}`,
   }))
 }
 
@@ -93,7 +102,7 @@ export default function App() {
       return []
     }
   })
-  const [fileName, setFileName] = useState('')
+  const [fileName, setFileName] = useState('All Database Records (7,044 Live Archive)')
   const [importError, setImportError] = useState('')
   const [streamNotifications, setStreamNotifications] = useState(() => {
     try {
@@ -175,10 +184,11 @@ export default function App() {
     overspeedCount: 0,
     delta: 0,
     isManual: false,
-    fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+    fileName: 'All Database Records (7,044 Live Archive)',
   })
   const [dbStats, setDbStats] = useState({
-    totalRecords: 5000,
+    totalRecords: 7044,
+    totalPool: 7044,
     overspeedRate: '28%',
     avgSpeed: 65,
     cameras: 6,
@@ -209,7 +219,7 @@ export default function App() {
       const data = await response.json()
       if (data.success && Array.isArray(data.vehicles) && data.vehicles.length) {
         const streamRows = normalizeStreamRows(data.vehicles)
-        setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows))
+        setTrafficData((currentRows) => prependStreamRows(currentRows, streamRows))
         const overspeeds = streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length
         setLatestBatchInfo({
           batchCount: streamRows.length,
@@ -217,7 +227,7 @@ export default function App() {
           overspeedCount: overspeeds,
           delta: streamRows.length,
           isManual: true,
-          fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+          fileName: 'All Database Records (7,044 Live Archive)',
         })
         playNotificationTone()
       }
@@ -250,20 +260,20 @@ export default function App() {
 
     async function loadInitialVehicles() {
       try {
-        const response = await fetch(`${apiBaseUrl}/api/vehicles?limit=20`)
+        const response = await fetch(`${apiBaseUrl}/api/vehicles?limit=100`)
         if (!response.ok) return
         const data = await response.json()
         if (!isCancelled && !userUploadedFileRef.current && Array.isArray(data.vehicles) && data.vehicles.length) {
           const streamRows = normalizeStreamRows(data.vehicles)
-          setTrafficData((currentRows) => (userUploadedFileRef.current ? currentRows : prependUniqueRows(currentRows, streamRows)))
-          setFileName((currentName) => currentName || 'NH44_vehicles_5000_merged_with_images.xlsx')
+          setTrafficData((currentRows) => (userUploadedFileRef.current ? currentRows : prependStreamRows(currentRows, streamRows)))
+          setFileName((currentName) => currentName || 'All Database Records (7,044 Live Archive)')
           setLatestBatchInfo({
             batchCount: streamRows.length,
             timestamp: new Date().toLocaleTimeString(),
             overspeedCount: streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length,
             delta: streamRows.length,
             isManual: false,
-            fileName: 'NH44_vehicles_5000_merged_with_images.xlsx',
+            fileName: 'All Database Records (7,044 Live Archive)',
           })
         }
       } catch (error) {
@@ -283,11 +293,9 @@ export default function App() {
       const streamRows = normalizeStreamRows(incomingVehicles)
       if (!userUploadedFileRef.current) {
         const batchSourceFile = incomingVehicles[0]?.sourceFile || incomingVehicles[0]?.fileName
-        setTrafficData((currentRows) => prependUniqueRows(currentRows, streamRows))
+        setTrafficData((currentRows) => prependStreamRows(currentRows, streamRows))
         if (batchSourceFile) {
-          setFileName(batchSourceFile)
-        } else {
-          setFileName((currentName) => currentName || 'NH44_vehicles_5000_merged_with_images.xlsx')
+          setFileName((currentName) => currentName && !currentName.includes('All Database') ? currentName : 'All Database Records (7,044 Live Archive)')
         }
         const overspeeds = streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length
         setLatestBatchInfo((prev) => ({
@@ -296,7 +304,7 @@ export default function App() {
           overspeedCount: overspeeds,
           delta: streamRows.length,
           isManual: false,
-          fileName: batchSourceFile || prev.fileName || 'NH44_vehicles_5000_merged_with_images.xlsx',
+          fileName: prev.fileName || 'All Database Records (7,044 Live Archive)',
         }))
         const firstRow = streamRows[0]
         const label = firstRow.vehicleNumberPlate || firstRow.plateNumber || firstRow.id || 'Live vehicle'
@@ -322,7 +330,7 @@ export default function App() {
             id: `${Date.now()}-complete`,
             title: 'Telemetry Stream Cycle Completed',
             message: payload?.fileName
-              ? `Completed random polling cycle across ${payload.totalRows || '5,000'} records in ${payload.fileName}.`
+              ? `Completed random polling cycle across ${payload.totalRows || '7,044'} records in ${payload.fileName}.`
               : 'Dataset processing cycle completed.',
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           },
@@ -339,13 +347,21 @@ export default function App() {
         if (typeof status?.isPaused === 'boolean') {
           setStreamPaused(status.isPaused)
         }
+        if (status?.totalPool) {
+          setDbStats((prev) => ({
+            ...prev,
+            totalPool: status.totalPool,
+            totalRecords: status.totalPool,
+          }))
+        }
         if (status?.batchCount) {
           setLatestBatchInfo((prev) => ({
             ...prev,
             batchCount: status.batchCount,
             timestamp: status.timestamp || new Date().toLocaleTimeString(),
-            overspeedCount: status.overspeed || 0,
+            overspeedCount: status.overspeeding || status.overspeed || 0,
             delta: status.batchCount,
+            fileName: status.fileName || prev.fileName,
           }))
         }
       }
@@ -667,7 +683,17 @@ export default function App() {
                     !connectedProject ? (
                       <ProjectConnectionRequired />
                     ) : (
-                      <PlaceholderPage cameraCount={addedCameras.length} fileName={fileName} rows={trafficData} />
+                      <PlaceholderPage
+                        cameraCount={addedCameras.length}
+                        dbStats={dbStats}
+                        fileName={fileName}
+                        latestBatchInfo={latestBatchInfo}
+                        onFetchRandomBatch={handleFetchRandomBatch}
+                        onToggleStreamPause={handleToggleStreamPause}
+                        rows={trafficData}
+                        streamNotifications={streamNotifications}
+                        streamPaused={streamPaused}
+                      />
                     )
                   }
                 />
@@ -840,7 +866,7 @@ export default function App() {
                   .filter(
                     (path) =>
                       path !== '/home' &&
-                      path !== '/dashboards' &&
+                      !path.startsWith('/dashboards') &&
                       path !== '/ontology' &&
                       path !== '/knowledge-graph' &&
                       path !== '/query' &&

@@ -239,3 +239,19 @@ export async function parseNaturalLanguageQuery(query, facets = {}) {
     }
   }
 }
+
+/**
+ * Fast search across all vehicle records in MySQL database.
+ * Returns exact matching vehicles, detection count, and vehicle dossier intelligence summary.
+ */
+export async function searchVehiclesDatabase(searchTerm, limit = 50) {
+  try {
+    const res = await fetch(`${API_URL}/api/vehicles/search?q=${encodeURIComponent(searchTerm)}&limit=${limit}`)
+    if (!res.ok) return { success: false, vehicles: [], count: 0, dossier: null }
+    return await res.json()
+  } catch (err) {
+    console.warn('[queryApi] Vehicle database search error:', err.message)
+    return { success: false, vehicles: [], count: 0, dossier: null }
+  }
+}
+

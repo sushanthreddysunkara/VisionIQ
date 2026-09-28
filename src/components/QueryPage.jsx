@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   Bot,
@@ -26,13 +27,141 @@ import {
   X,
 } from 'lucide-react'
 import VehicleBadge from './VehicleBadge'
-import QueryKnowledgeGraph from './query/QueryKnowledgeGraph'
+import KnowledgeGraphPage from './knowledgeGraph/KnowledgeGraphPage'
 import MediaPreviewModal from './MediaPreviewModal'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
 import { isVehicleTypeMatch } from '../data/vehicleTypes'
-import { checkOllamaStatus, parseNaturalLanguageQuery, parseQueryClient } from '../services/queryApi'
+import { checkOllamaStatus, parseNaturalLanguageQuery, parseQueryClient, searchVehiclesDatabase } from '../services/queryApi'
+
+/**
+ * Determine whether a query is looking for a specific individual vehicle (number plate, ID)
+ * versus a broad dynamic category (e.g. "all autos", "cars", "bikes", "overspeeding").
+ */
+export function isSpecificVehicleQuery(queryText) {
+  const q = String(queryText || '').trim().toLowerCase()
+  if (!q) return false
+
+  // Exact record ID or observation ID (e.g. NH44-01082, OBS-0001, ID-5)
+  if (/\b(?:nh44|obs|record|telemetry)[-_ ]*\d+\b/i.test(q)) {
+    return true
+  }
+
+  // Indian license plate pattern (e.g. TG 11 UV 6900, TG08KW3126, TS82SS7367)
+  const plateMatch = q.match(/\b([a-z]{2}\s*[-]?\s*[0-9]{1,2}\s*[-]?\s*[a-z]{0,3}\s*[-]?\s*[0-9]{1,4})\b/i)
+  if (plateMatch) {
+    const raw = plateMatch[1].replace(/[^a-z0-9]/gi, '')
+    // Must be at least 5 alphanumeric characters, contain digits, and not be a camera/system token
+    if (raw.length >= 5 && /[0-9]/.test(raw) && !raw.startsWith('cam')) {
+      if (!/\b(speed|limit|lane|conf|page|zoom)\b/i.test(plateMatch[1])) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * Determine whether a query is asking for ALL cameras / the surveillance camera network.
+ */
+export function isAllCamerasQuery(queryText) {
+  const q = String(queryText || '').trim().toLowerCase()
+  if (!q) return false
+  return Boolean(
+    q === 'all cameras' ||
+    q === 'cameras' ||
+    q === 'all camera' ||
+    q === 'camera' ||
+    q === 'every camera' ||
+    q === 'show all cameras' ||
+    q === 'show cameras' ||
+    q === 'list cameras' ||
+    q === 'list all cameras' ||
+    q === 'camera network' ||
+    q === 'all cams' ||
+    q === 'cams' ||
+    /\b(all|every|show|list)\s+(the\s+)?cameras?\b/i.test(q) ||
+    /^(all\s+)?cameras?(\s+network)?$/i.test(q)
+  )
+}
+
+export const DEFAULT_CORRIDOR_CAMERAS = [
+  'CAM-HYD-001-N',
+  'CAM-HYD-002-E',
+  'CAM-HYD-003-S',
+  'CAM-HYD-004-W',
+  'CAM-HYD-005-N',
+  'CAM-HYD-006-E',
+  'CAM-HYD-007-W',
+  'CAM-HYD-008-S',
+  'CAM-HYD-009-N',
+  'CAM-HYD-010-E',
+  'CAM-HYD-011-S',
+  'CAM-HYD-012-R',
+]
+
+/**
+ * Determine whether a query is targeting a specific camera unit (e.g. CAM-01, CAM-HYD-001-N, Camera 2).
+ */
+export function extractCameraId(queryText, availableCameras = []) {
+  const q = String(queryText || '').trim().toLowerCase()
+  if (!q || isAllCamerasQuery(q)) return null
+
+  const cams = (availableCameras && availableCameras.length) ? availableCameras : DEFAULT_CORRIDOR_CAMERAS
+  const qClean = q.replace(/[^a-z0-9]/g, '')
+
+  // 1. Direct exact or substring match with available cameras
+  for (const c of cams) {
+    const cLow = c.toLowerCase()
+    const cClean = cLow.replace(/[^a-z0-9]/g, '')
+    if (q === cLow || q.includes(cLow) || qClean === cClean) {
+      return c
+    }
+  }
+
+  // 2. Partial clean match (e.g. "camhyd001" or "hyd001" in "camhyd001n")
+  for (const c of cams) {
+    const cClean = c.toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (qClean.length >= 4 && (qClean.includes(cClean) || cClean.includes(qClean))) {
+      return c
+    }
+  }
+
+  // 3. Numeric camera matching (e.g. "camera 1", "cam 1", "cam-1", "cam 01", "camera 02", "cam-001")
+  const numMatch = q.match(/\bcam(?:era)?[-_\s#]*0*(\d+)\b/i) || q.match(/\bcamera\s*#?\s*0*(\d+)\b/i)
+  if (numMatch) {
+    const num = parseInt(numMatch[1], 10)
+    for (const c of cams) {
+      const matchNum = c.match(/(\d+)/)
+      if (matchNum && parseInt(matchNum[1], 10) === num) {
+        return c
+      }
+    }
+    return `CAM-HYD-${String(num).padStart(3, '0')}-N`
+  }
+
+  // 4. Any camera-like token in the query (e.g. "CAM-HYD-005-N", "CAM-05")
+  const tokenMatch = q.match(/\b(cam[-_a-z0-9]+)\b/i)
+  if (tokenMatch) {
+    const token = tokenMatch[1].toLowerCase()
+    if (token !== 'cams' && token !== 'cameras') {
+      const found = cams.find((c) => c.toLowerCase().includes(token) || token.includes(c.toLowerCase()))
+      if (found) return found
+      return tokenMatch[1].toUpperCase()
+    }
+  }
+
+  return null
+}
+
+export function isCameraQuery(queryText, availableCameras = []) {
+  const q = String(queryText || '').trim().toLowerCase()
+  if (!q || isAllCamerasQuery(q)) return false
+  return Boolean(extractCameraId(queryText, availableCameras))
+}
 
 export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
+  const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [sortBy, setSortBy] = useState('timestamp-desc')
@@ -52,6 +181,11 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
   const [aiExplanation, setAiExplanation] = useState('')
   const [aiSource, setAiSource] = useState('')
 
+  // Database Search & Vehicle Dossier State
+  const [dbVehicles, setDbVehicles] = useState([])
+  const [vehicleDossier, setVehicleDossier] = useState(null)
+  const [searchLatencyMs, setSearchLatencyMs] = useState(null)
+
   useEffect(() => {
     let active = true
     checkOllamaStatus()
@@ -64,18 +198,38 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     return () => { active = false }
   }, [])
 
+  // When a specific vehicle plate/ID was searched AND matches exist in db, lock to those records (fixed)
+  // When a category or general query is active (e.g. "all autos", "cars", "bikes"), stream dynamically from rows
+  const isSpecificSearchActive = Boolean(isSpecificVehicleQuery(submittedQuery) && dbVehicles && dbVehicles.length > 0)
+
+  const combinedRows = useMemo(() => {
+    if (isSpecificSearchActive) return dbVehicles
+    return rows
+  }, [isSpecificSearchActive, dbVehicles, rows])
+
   // Extract unique facets from dataset for grounding AI prompts
   const facets = useMemo(() => {
-    const types = Array.from(new Set(rows.map((r) => r.vehicleType || r.type).filter(Boolean))).sort()
-    const locations = Array.from(new Set(rows.map((r) => r.roadName || r.location).filter(Boolean))).sort()
-    const cameras = Array.from(new Set(rows.map((r) => r.camera).filter(Boolean))).sort()
-    const signals = Array.from(new Set(rows.map((r) => r.signalState).filter(Boolean))).sort()
-    const weathers = Array.from(new Set(rows.map((r) => r.weather).filter(Boolean))).sort()
+    const types = Array.from(new Set(combinedRows.map((r) => r.vehicleType || r.type).filter(Boolean))).sort()
+    const locations = Array.from(new Set(combinedRows.map((r) => r.roadName || r.location).filter(Boolean))).sort()
+    const cameras = Array.from(new Set(combinedRows.map((r) => r.camera).filter(Boolean))).sort()
+    const signals = Array.from(new Set(combinedRows.map((r) => r.signalState).filter(Boolean))).sort()
+    const weathers = Array.from(new Set(combinedRows.map((r) => r.weather).filter(Boolean))).sort()
     return { types, locations, cameras, signals, weathers }
-  }, [rows])
+  }, [combinedRows])
 
   // Filter and search logic with intelligent vehicle identification & telemetry fields
   const filteredRows = useMemo(() => {
+    // If a specific vehicle plate/ID was matched, lock filteredRows to that vehicle (fixed)
+    if (isSpecificSearchActive) {
+      return dbVehicles
+    }
+
+    // If query is for all cameras, return all active rows that have a camera!
+    if (isAllCamerasQuery(submittedQuery) || (aiFilters && aiFilters.allCameras)) {
+      return rows.filter((r) => Boolean(r.camera))
+    }
+
+    // For categorical or general searches (e.g. "all autos"), dynamically filter the live stream!
     const query = submittedQuery.trim().toLowerCase()
 
     return rows
@@ -158,6 +312,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
 
           // Matched all structured AI criteria if any were set
           const hasAnyCriteria = Boolean(
+            aiFilters.allCameras ||
             (aiFilters.vehicleTypes && aiFilters.vehicleTypes.length) ||
             aiFilters.vehicleType ||
             aiFilters.location ||
@@ -174,6 +329,10 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
 
         // 1. Freeform Search Query (when AI not yet invoked)
         if (!query) return true
+
+        if (isAllCamerasQuery(query)) {
+          return Boolean(row.camera)
+        }
 
         // Speed queries (e.g. speed > 60, > 70)
         if (query.includes('speed') && (query.includes('>') || query.includes('<'))) {
@@ -205,35 +364,37 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
           return row.overSpeed === 'Yes' || row.isOverSpeed
         }
 
-        if (query === 'cars' || query === 'car') return isVehicleTypeMatch(row.vehicleType || row.type, 'car')
-        if (query === 'bikes' || query === 'bike' || query === 'motorcycle' || query === 'bicycle' || query === 'scooter') {
+        // Category / Vehicle Type Direct Check (e.g. "all autos", "autos", "all trucks", "all cars", "bikes", "rickshaws")
+        const strippedCatQuery = query.replace(/\b(all|every|show|find|list|the|any|different|individual|categories|category)\b/gi, '').trim()
+        if (strippedCatQuery === 'cars' || strippedCatQuery === 'car') return isVehicleTypeMatch(row.vehicleType || row.type, 'car')
+        if (strippedCatQuery === 'bikes' || strippedCatQuery === 'bike' || strippedCatQuery === 'motorcycle' || strippedCatQuery === 'bicycle' || strippedCatQuery === 'scooter') {
           return isVehicleTypeMatch(row.vehicleType || row.type, 'bike')
         }
-        if (query === 'buses' || query === 'bus') return isVehicleTypeMatch(row.vehicleType || row.type, 'bus')
-        if (query === 'trucks' || query === 'truck' || query === 'lorry' || query === 'trailer') {
+        if (strippedCatQuery === 'buses' || strippedCatQuery === 'bus') return isVehicleTypeMatch(row.vehicleType || row.type, 'bus')
+        if (strippedCatQuery === 'trucks' || strippedCatQuery === 'truck' || strippedCatQuery === 'lorry' || strippedCatQuery === 'trailer') {
           return isVehicleTypeMatch(row.vehicleType || row.type, 'truck')
         }
-        if (query === 'tractors' || query === 'tractor' || query === 'tractr') {
+        if (strippedCatQuery === 'tractors' || strippedCatQuery === 'tractor' || strippedCatQuery === 'tractr') {
           return isVehicleTypeMatch(row.vehicleType || row.type, 'tractor')
         }
-        if (query === 'jeeps' || query === 'jeep' || query === 'suv' || query === '4x4') {
+        if (strippedCatQuery === 'jeeps' || strippedCatQuery === 'jeep' || strippedCatQuery === 'suv' || strippedCatQuery === '4x4') {
           return isVehicleTypeMatch(row.vehicleType || row.type, 'jeep')
         }
-        if (query === 'autos' || query === 'auto' || query === 'rickshaw') {
+        if (strippedCatQuery === 'autos' || strippedCatQuery === 'auto' || strippedCatQuery === 'rickshaw' || strippedCatQuery === 'rickshaws') {
           return isVehicleTypeMatch(row.vehicleType || row.type, 'auto')
         }
-        if (query === 'vans' || query === 'van') return isVehicleTypeMatch(row.vehicleType || row.type, 'van')
-        if (query === 'trains' || query === 'train' || query === 'metro' || query === 'rail' || query === 'tram') {
+        if (strippedCatQuery === 'vans' || strippedCatQuery === 'van') return isVehicleTypeMatch(row.vehicleType || row.type, 'van')
+        if (strippedCatQuery === 'trains' || strippedCatQuery === 'train' || strippedCatQuery === 'metro' || strippedCatQuery === 'rail' || strippedCatQuery === 'tram') {
           return isVehicleTypeMatch(row.vehicleType || row.type, 'train')
         }
         if (
-          query === 'pedestrians' ||
-          query === 'pedestrian' ||
-          query === 'edisetrains' ||
-          query === 'edisetrain' ||
-          query === 'pedestrain' ||
-          query.includes('pedestrian') ||
-          query === 'walking'
+          strippedCatQuery === 'pedestrians' ||
+          strippedCatQuery === 'pedestrian' ||
+          strippedCatQuery === 'edisetrains' ||
+          strippedCatQuery === 'edisetrain' ||
+          strippedCatQuery === 'pedestrain' ||
+          strippedCatQuery.includes('pedestrian') ||
+          strippedCatQuery === 'walking'
         ) {
           return isVehicleTypeMatch(row.vehicleType || row.type, 'pedestrian') || (row.pedestrians || 0) > 0
         }
@@ -242,8 +403,18 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         if (query === 'yellow signal' || query === 'yellow' || query === 'amber') return signalLower === 'yellow' || signalLower === 'amber'
         if (query.includes('weather')) return weatherLower.includes(query.replace('weather', '').trim())
 
+        // Direct Camera Query match in freeform mode
+        if (isCameraQuery(query, facets.cameras)) {
+          const targetCam = extractCameraId(query, facets.cameras)
+          if (targetCam) {
+            const cClean = targetCam.toLowerCase().replace(/[^a-z0-9]/g, '')
+            const rowCamClean = (row.camera || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+            return rowCamClean && (rowCamClean === cClean || rowCamClean.includes(cClean) || cClean.includes(rowCamClean))
+          }
+        }
+
         // Multi-attribute search across all schema fields
-        const STOP_WORDS = new Set(['show', 'all', 'me', 'find', 'get', 'list', 'the', 'in', 'on', 'at', 'with', 'and', 'or', 'for', 'of', 'to', 'from', 'any', 'where', 'please'])
+        const STOP_WORDS = new Set(['show', 'all', 'me', 'find', 'get', 'list', 'the', 'in', 'on', 'at', 'with', 'and', 'or', 'for', 'of', 'to', 'from', 'any', 'where', 'please', 'camera', 'cameras', 'cam', 'cams', 'unit', 'station'])
         const rawTerms = query.split(/\s+/).filter(Boolean)
         const meaningfulTerms = rawTerms.filter((t) => !STOP_WORDS.has(t.toLowerCase()))
         const terms = meaningfulTerms.length ? meaningfulTerms : rawTerms
@@ -319,7 +490,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         if (sortBy === 'timestamp-asc') return String(a.timestampIst || a.time || a.timestamp).localeCompare(String(b.timestampIst || b.time || b.timestamp))
         return 0
       })
-  }, [rows, submittedQuery, sortBy, aiFilters])
+  }, [combinedRows, submittedQuery, sortBy, aiFilters])
 
   // Summary statistics for the filtered result set
   const filteredStats = useMemo(() => {
@@ -397,6 +568,9 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         aiFilters,
         aiExplanation,
         aiSource,
+        dbVehicles,
+        vehicleDossier,
+        searchLatencyMs,
         viewMode,
         previewMode,
         currentPage,
@@ -413,6 +587,9 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     setAiFilters(prev.aiFilters || null)
     setAiExplanation(prev.aiExplanation || '')
     setAiSource(prev.aiSource || '')
+    setDbVehicles(prev.dbVehicles || [])
+    setVehicleDossier(prev.vehicleDossier || null)
+    setSearchLatencyMs(prev.searchLatencyMs || null)
     setViewMode(prev.viewMode || 'graph')
     setPreviewMode(prev.previewMode || false)
     setCurrentPage(prev.currentPage || 1)
@@ -426,6 +603,9 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     setAiFilters(null)
     setAiExplanation('')
     setAiSource('')
+    setDbVehicles([])
+    setVehicleDossier(null)
+    setSearchLatencyMs(null)
     setSortBy('timestamp-desc')
     setPreviewMode(false)
     setCurrentPage(1)
@@ -518,10 +698,15 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     }
 
     // Camera matching
-    const camMatch = q.match(/cam(?:era)?[-_\s]*(\d+|[a-z0-9]+)/i)
-    if (camMatch) {
-      filters.camera = `CAM-${camMatch[1].toUpperCase()}`
+    if (isAllCamerasQuery(q)) {
+      filters.allCameras = true
       matched = true
+    } else {
+      const targetCam = extractCameraId(q, facets.cameras)
+      if (targetCam) {
+        filters.camera = targetCam
+        matched = true
+      }
     }
 
     // Plate matching
@@ -543,11 +728,11 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
     return matched ? filters : null
   }
 
-  function handleExecuteSearch(queryText) {
-    handleExecuteAiQuery(queryText)
+  function handleExecuteSearch(queryText, mode = undefined) {
+    handleExecuteAiQuery(queryText, mode)
   }
 
-  async function handleExecuteAiQuery(queryText) {
+  async function handleExecuteAiQuery(queryText, preferredMode = null) {
     const textToRun = (queryText !== undefined ? queryText : searchQuery).trim()
     if (!textToRun) return
 
@@ -565,47 +750,205 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
       cameras: facets.cameras,
     })
     setAiFilters(instantFilters)
-    setAiExplanation(instantFilters.explanation || `Telemetry segment for "${textToRun}"`)
+    setAiExplanation(instantFilters?.explanation || `Telemetry segment for "${textToRun}"`)
     setAiSource('rule-instant')
-    if (instantFilters.sortBy) {
+    if (instantFilters?.sortBy) {
       setSortBy(instantFilters.sortBy)
     }
-    setViewMode('graph')
+
+    const isSpecific = isSpecificVehicleQuery(textToRun)
+    const isCamera = isCameraQuery(textToRun, facets.cameras)
+    const isAllCams = isAllCamerasQuery(textToRun)
+
+    // For Camera queries, All Cameras queries, or Vehicle queries, default to graph mode!
+    const wantsGraph = Boolean(textToRun.match(/\b(graph|network|visualize|connections|topology)\b/i)) || isCamera || isAllCams || isSpecific
+    const targetMode = preferredMode || (wantsGraph ? 'graph' : viewMode)
+    setViewMode(targetMode)
+
+    let dbSearchPromise = Promise.resolve()
+
+    if (isSpecific) {
+      // SPECIFIC VEHICLE SEARCH: Query MySQL database across all 7,044+ records for the fixed vehicle & dossier
+      const startTime = Date.now()
+      dbSearchPromise = searchVehiclesDatabase(textToRun, 50)
+        .then((res) => {
+          const latency = Date.now() - startTime
+          setSearchLatencyMs(latency)
+          if (res && res.success && res.vehicles && res.vehicles.length > 0) {
+            setDbVehicles(res.vehicles)
+            if (res.dossier) {
+              setVehicleDossier(res.dossier)
+              setAiExplanation(res.dossier.summary)
+              const topId = res.vehicles[0].id || res.vehicles[0].observationId || res.vehicles[0].vehicleNumberPlate
+              setGraphFocusId(topId)
+            }
+          } else {
+            // Fallback: search local rows for this specific vehicle!
+            const cleanQuery = textToRun.toLowerCase().replace(/[^a-z0-9]/g, '')
+            const localMatches = rows.filter((r) => {
+              const p = String(r.numberPlate || r.vehicleNumberPlate || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+              const id = String(r.id || r.observationId || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+              return (p && (p === cleanQuery || p.includes(cleanQuery))) || (id && (id === cleanQuery || id.includes(cleanQuery)))
+            })
+            if (localMatches.length > 0) {
+              setDbVehicles(localMatches)
+              const topId = localMatches[0].id || localMatches[0].observationId || localMatches[0].numberPlate
+              setGraphFocusId(topId)
+            } else {
+              setDbVehicles([])
+              setVehicleDossier(null)
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn('Vehicle database search failed:', err)
+          const cleanQuery = textToRun.toLowerCase().replace(/[^a-z0-9]/g, '')
+          const localMatches = rows.filter((r) => {
+            const p = String(r.numberPlate || r.vehicleNumberPlate || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+            const id = String(r.id || r.observationId || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+            return (p && (p === cleanQuery || p.includes(cleanQuery))) || (id && (id === cleanQuery || id.includes(cleanQuery)))
+          })
+          if (localMatches.length > 0) {
+            setDbVehicles(localMatches)
+            const topId = localMatches[0].id || localMatches[0].observationId || localMatches[0].numberPlate
+            setGraphFocusId(topId)
+          } else {
+            setDbVehicles([])
+            setVehicleDossier(null)
+          }
+        })
+    } else {
+      // CATEGORICAL / GENERAL SEARCH (e.g. "all autos", "cars", "bikes", "overspeeding"):
+      // Clear dbVehicles & dossier so combinedRows dynamically streams in real-time from live database feed!
+      setDbVehicles([])
+      setVehicleDossier(null)
+      setSearchLatencyMs(null)
+    }
 
     try {
-      const res = await parseNaturalLanguageQuery(textToRun, {
-        types: facets.types,
-        locations: facets.locations,
-        cameras: facets.cameras,
-      })
+      // Only call natural language LLM parsing if query is NOT an exact specific plate/ID search
+      if (!isSpecific) {
+        const res = await parseNaturalLanguageQuery(textToRun, {
+          types: facets.types,
+          locations: facets.locations,
+          cameras: facets.cameras,
+        })
 
-      if (res && res.filters) {
-        setAiFilters(res.filters)
-        setAiExplanation(res.explanation || `AI telemetry segment for "${textToRun}"`)
-        setAiSource(res.aiSource || 'ollama-qwen3:8b')
+        if (res && res.filters) {
+          const mergedFilters = { ...res.filters }
+          delete mergedFilters.plateSearch
+          if (mergedFilters.minSpeed > 250) {
+            mergedFilters.minSpeed = null
+          }
+          if (isCamera) {
+            const targetCam = extractCameraId(textToRun, facets.cameras)
+            if (targetCam) {
+              mergedFilters.camera = targetCam
+            }
+          }
+          setAiFilters(mergedFilters)
+          setAiSource(res.aiSource || 'ollama-qwen3:8b')
 
-        if (res.filters.sortBy) {
-          setSortBy(res.filters.sortBy)
+          if (res.filters.sortBy) {
+            setSortBy(res.filters.sortBy)
+          }
         }
       }
     } catch (e) {
       console.warn('AI query backend call failed:', e)
     } finally {
+      await dbSearchPromise
       setAiLoading(false)
     }
   }
 
 
-  function handleFocusInGraph(obsId) {
+  function handleSendToKnowledgeGraph(textToRun) {
+    const text = (textToRun !== undefined ? textToRun : searchQuery).trim()
+    pushHistory()
+    if (!text) {
+      navigate('/knowledge-graph')
+      return
+    }
+
+    const isCamera = isCameraQuery(text, facets.cameras)
+    const targetCam = isCamera ? extractCameraId(text, facets.cameras) : null
+    const isSpecific = isSpecificVehicleQuery(text)
+
+    const instantFilters = parseQueryClient(text, {
+      types: facets.types,
+      locations: facets.locations,
+      cameras: facets.cameras,
+    })
+
+    if (isCamera && targetCam) {
+      navigate('/knowledge-graph', {
+        state: {
+          camera: targetCam,
+          queryFilter: { camera: targetCam },
+          explanation: `Camera ${targetCam} live dynamic surveillance network`,
+        },
+      })
+      return
+    }
+
+    if (isSpecific) {
+      const cleanPlate = text.toUpperCase().replace(/[^A-Z0-9]/g, '')
+      const matchedRow = rows.find((r) => {
+        const p = String(r.numberPlate || r.vehicleNumberPlate || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+        return p && (p === cleanPlate || p.includes(cleanPlate))
+      })
+      navigate('/knowledge-graph', {
+        state: {
+          vehicle: matchedRow || null,
+          queryFilter: { plateSearch: text },
+          explanation: `Vehicle forensic graph for "${text}"`,
+        },
+      })
+      return
+    }
+
+    // General query:
+    navigate('/knowledge-graph', {
+      state: {
+        queryFilter: instantFilters || null,
+        explanation: instantFilters?.explanation || `Query: "${text}"`,
+      },
+    })
+  }
+
+  function handleFocusInGraph(obsId, row) {
+    if (row) {
+      navigate('/knowledge-graph', {
+        state: {
+          vehicle: row,
+          camera: row.camera,
+        },
+      })
+      return
+    }
+    const matched = rows.find((r) => r.id === obsId || r.observationId === obsId || r.numberPlate === obsId)
+    if (matched) {
+      navigate('/knowledge-graph', {
+        state: {
+          vehicle: matched,
+          camera: matched.camera,
+        },
+      })
+      return
+    }
     setGraphFocusId(obsId)
     setViewMode('graph')
   }
 
   const activeQueryLabel = useMemo(() => {
+    if (isAllCamerasQuery(submittedQuery) || Boolean(aiFilters?.allCameras)) {
+      return 'All Surveillance Cameras'
+    }
     if (aiExplanation) return aiExplanation
     if (submittedQuery) return `"${submittedQuery}"`
     return previewMode ? 'Preview Dataset' : 'All Traffic Telemetry'
-  }, [aiExplanation, submittedQuery, previewMode])
+  }, [aiExplanation, submittedQuery, previewMode, aiFilters])
 
   const hasActiveFilters = Boolean(submittedQuery || aiFilters)
   const isQueryActive = hasActiveFilters || previewMode
@@ -673,7 +1016,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  handleExecuteSearch()
+                  handleExecuteSearch(undefined)
                 }
               }}
               placeholder="Ask anything (e.g. 'Show speeding cars on Ring Road', 'Bikes running red lights')..."
@@ -689,6 +1032,9 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                   setSubmittedQuery('')
                   setAiFilters(null)
                   setAiExplanation('')
+                  setDbVehicles([])
+                  setVehicleDossier(null)
+                  setSearchLatencyMs(null)
                   setPreviewMode(false)
                   setCurrentPage(1)
                 }}
@@ -704,7 +1050,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             <button
               className="query-search-btn"
               disabled={!searchQuery.trim()}
-              onClick={() => handleExecuteSearch()}
+              onClick={() => handleExecuteSearch(undefined)}
               title="Search traffic telemetry records"
               type="button"
             >
@@ -715,8 +1061,8 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             <button
               className="query-ask-ai-btn"
               disabled={aiLoading || !searchQuery.trim()}
-              onClick={() => handleExecuteAiQuery()}
-              title="Search with AI reasoning and extract Knowledge Graph segment"
+              onClick={() => handleExecuteAiQuery(undefined)}
+              title="Search with AI reasoning and extract vehicle records"
               type="button"
             >
               {aiLoading ? (
@@ -733,19 +1079,9 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
             </button>
 
             <button
-              className={`query-execute-graph-btn ${viewMode === 'graph' ? 'active' : ''}`}
-              onClick={() => {
-                const text = searchQuery.trim()
-                pushHistory()
-                if (text) {
-                  handleExecuteSearch(text)
-                } else {
-                  setPreviewMode(true)
-                  setViewMode('graph')
-                  setCurrentPage(1)
-                }
-              }}
-              title="View Knowledge Graph"
+              className="query-execute-graph-btn"
+              onClick={() => handleSendToKnowledgeGraph(searchQuery)}
+              title="Retrieve and Open in Knowledge Graph"
               type="button"
             >
               <Network size={14} />
@@ -831,13 +1167,20 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
 
             <div className="ai-segment-actions">
               <button
-                className={`ai-segment-toggle-btn ${viewMode === 'graph' ? 'active' : ''}`}
-                onClick={() => setViewMode('graph')}
-                title="View Knowledge Graph Subgraph"
+                className="ai-segment-toggle-btn active"
+                onClick={() => {
+                  navigate('/knowledge-graph', {
+                    state: {
+                      queryFilter: aiFilters,
+                      explanation: aiExplanation || submittedQuery,
+                    },
+                  })
+                }}
+                title="Send and View in Knowledge Graph"
                 type="button"
               >
                 <Network size={14} />
-                <span>Knowledge Graph</span>
+                <span>Open in Knowledge Graph →</span>
               </button>
               <button
                 className={`ai-segment-toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
@@ -862,8 +1205,8 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         )}
       </div>
 
-      {/* 1. When AI query is loading: Show dedicated AI Loading State ONLY */}
-      {aiLoading ? (
+      {/* 1. When AI query is loading and we don't have vehicle dossier yet: Show dedicated AI Loading State */}
+      {aiLoading && !vehicleDossier ? (
         <div className="query-ai-loading-container">
           <div className="query-ai-loading-pulse">
             <Bot size={36} className="query-ai-pulse-icon" />
@@ -891,10 +1234,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
           <div className="query-quick-actions">
             <button
               className="query-quick-action-btn"
-              onClick={() => {
-                setPreviewMode(true)
-                setViewMode('graph')
-              }}
+              onClick={() => navigate('/knowledge-graph')}
               type="button"
             >
               <Network size={14} />
@@ -915,29 +1255,208 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
         </div>
       ) : (
         <>
-          {/* Query Stats Ribbon */}
-          <div className="query-stats-ribbon">
-            <div className="query-stat-item">
-              <strong>{filteredStats.totalRecords}</strong>
-              <span>Matching Detections</span>
+          {/* Vehicle Dossier Intelligence Card - Only shown in Table/Details view, NOT in Knowledge Graph view */}
+          {vehicleDossier && viewMode !== 'graph' && (
+            <div className="query-vehicle-dossier-card">
+              <div className="dossier-top-bar">
+                <div className="dossier-badge-group">
+                  <span className="dossier-tag-pill">
+                    <ShieldCheck size={13} />
+                    VEHICLE INTELLIGENCE DOSSIER
+                  </span>
+                  <span className="dossier-db-verified">
+                    ✓ MySQL Database Verified ({vehicleDossier.detectionCount || 1} records found)
+                  </span>
+                  {searchLatencyMs !== null && (
+                    <span className="dossier-latency-tag">
+                      ⚡ Response Time: {searchLatencyMs}ms
+                    </span>
+                  )}
+                </div>
+                <button
+                  className="query-clear-search-btn"
+                  onClick={() => setVehicleDossier(null)}
+                  title="Close dossier"
+                  type="button"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              <div className="dossier-body-grid">
+                {/* Media Preview Column */}
+                <div className="dossier-media-col">
+                  <div
+                    className="dossier-media-stage"
+                    onClick={() => {
+                      setInitialModalTab('vehicle')
+                      setPreviewModalRow(dbVehicles[0] || rows[0])
+                    }}
+                    title="Click to inspect optical surveillance image"
+                  >
+                    {vehicleDossier.image ? (
+                      <img
+                        alt={vehicleDossier.primaryPlate}
+                        src={vehicleDossier.image}
+                        onError={(e) => {
+                          e.target.style.display = 'none'
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          height: '100%',
+                          color: '#94a3b8',
+                        }}
+                      >
+                        <Car size={48} />
+                      </div>
+                    )}
+                  </div>
+                  <span className="dossier-media-caption">
+                    Optical ANPR Snapshot · Click to inspect
+                  </span>
+                </div>
+
+                {/* Details Column */}
+                <div className="dossier-details-col">
+                  <div className="dossier-plate-row">
+                    <div className="dossier-hsrp-plate">
+                      <div className="dossier-hsrp-ind">
+                        <span className="chakra">☸</span>
+                        <span>IND</span>
+                      </div>
+                      <span className="dossier-hsrp-num">
+                        {vehicleDossier.primaryPlate || 'TG 08 KW 3126'}
+                      </span>
+                    </div>
+                    <VehicleBadge type={vehicleDossier.vehicleType} />
+                    {vehicleDossier.isOverSpeed && (
+                      <span
+                        className="query-signal-pill"
+                        style={{
+                          background: '#fef2f2',
+                          color: '#dc2626',
+                          borderColor: '#fca5a5',
+                          fontWeight: 700,
+                          fontSize: '11px',
+                          padding: '4px 10px',
+                        }}
+                      >
+                        <AlertTriangle size={12} style={{ display: 'inline', marginRight: '4px' }} />
+                        SPEED VIOLATION
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="dossier-stats-grid">
+                    <div className="dossier-stat-item">
+                      <span className="label">Observed Speed</span>
+                      <span className={`value ${vehicleDossier.isOverSpeed ? 'alert' : 'ok'}`}>
+                        {vehicleDossier.speed} km/h (Limit: {vehicleDossier.speedLimit} km/h)
+                      </span>
+                    </div>
+                    <div className="dossier-stat-item">
+                      <span className="label">ANPR Confidence</span>
+                      <span className="value">
+                        {vehicleDossier.plateConfidence}%
+                      </span>
+                    </div>
+                    <div className="dossier-stat-item">
+                      <span className="label">Highway / Checkpoint</span>
+                      <span className="value">
+                        {vehicleDossier.lastLocation || 'NH-44 Hyderabad'}
+                      </span>
+                    </div>
+                    <div className="dossier-stat-item">
+                      <span className="label">Camera Device</span>
+                      <span className="value">
+                        {vehicleDossier.camera || 'CAM-01'}
+                      </span>
+                    </div>
+                    <div className="dossier-stat-item" style={{ gridColumn: 'span 2' }}>
+                      <span className="label">Observation Timestamp (IST)</span>
+                      <span className="value" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <Clock size={13} />
+                        {vehicleDossier.timestampIst}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="dossier-summary-box">
+                    <strong>AI Forensic Summary: </strong>
+                    {vehicleDossier.summary}
+                  </div>
+                </div>
+
+                {/* Actions Column */}
+                <div className="dossier-actions-col">
+                  <button
+                    className="dossier-action-btn primary"
+                    onClick={() => {
+                      if (dbVehicles[0]) {
+                        handleFocusInGraph(dbVehicles[0].id || dbVehicles[0].observationId || dbVehicles[0].vehicleNumberPlate)
+                      } else {
+                        setViewMode('graph')
+                      }
+                    }}
+                    type="button"
+                  >
+                    <Network size={14} />
+                    <span>Focus in Graph</span>
+                  </button>
+                  <button
+                    className="dossier-action-btn"
+                    onClick={() => {
+                      setInitialModalTab('vehicle')
+                      setPreviewModalRow(dbVehicles[0] || rows[0])
+                    }}
+                    type="button"
+                  >
+                    <Eye size={14} />
+                    <span>View Evidence</span>
+                  </button>
+                  <button
+                    className="dossier-action-btn"
+                    onClick={() => setViewMode('table')}
+                    type="button"
+                  >
+                    <Table2 size={14} />
+                    <span>Show in Table</span>
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="query-stat-item">
-              <strong>{filteredStats.uniquePlates}</strong>
-              <span>Identified Plates</span>
+          )}
+
+          {/* Query Stats Ribbon - Only shown in Table/Details view */}
+          {viewMode !== 'graph' && (
+            <div className="query-stats-ribbon">
+              <div className="query-stat-item">
+                <strong>{filteredStats.totalRecords}</strong>
+                <span>Matching Detections</span>
+              </div>
+              <div className="query-stat-item">
+                <strong>{filteredStats.uniquePlates}</strong>
+                <span>Identified Plates</span>
+              </div>
+              <div className="query-stat-item">
+                <strong>{filteredStats.avgConfidence}%</strong>
+                <span>Avg Confidence</span>
+              </div>
+              <div className="query-stat-item">
+                <strong>{filteredStats.uniqueLocations}</strong>
+                <span>Roads / Junctions</span>
+              </div>
+              <div className="query-stat-item">
+                <strong>{filteredStats.uniqueCameras}</strong>
+                <span>Active Cameras</span>
+              </div>
             </div>
-            <div className="query-stat-item">
-              <strong>{filteredStats.avgConfidence}%</strong>
-              <span>Avg Confidence</span>
-            </div>
-            <div className="query-stat-item">
-              <strong>{filteredStats.uniqueLocations}</strong>
-              <span>Roads / Junctions</span>
-            </div>
-            <div className="query-stat-item">
-              <strong>{filteredStats.uniqueCameras}</strong>
-              <span>Active Cameras</span>
-            </div>
-          </div>
+          )}
 
           {/* View Switcher, Counter & Preview Status */}
           <div className="query-view-toolbar">
@@ -989,6 +1508,14 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
 
               <div className="query-view-buttons">
                 <button
+                  className={`query-view-btn ${viewMode === 'table' ? 'active' : ''}`}
+                  onClick={() => setViewMode('table')}
+                  type="button"
+                >
+                  <Table2 size={14} />
+                  <span>Vehicle Details Table</span>
+                </button>
+                <button
                   className={`query-view-btn ${viewMode === 'graph' ? 'active' : ''}`}
                   onClick={() => setViewMode('graph')}
                   type="button"
@@ -996,19 +1523,20 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                   <Network size={14} />
                   <span>Knowledge Graph</span>
                 </button>
-                <button
-                  className={`query-view-btn ${viewMode === 'table' ? 'active' : ''}`}
-                  onClick={() => setViewMode('table')}
-                  type="button"
-                >
-                  Table View
-                </button>
               </div>
             </div>
           </div>
 
           {/* Results Rendering (Paginated or Graph) */}
-          {filteredRows.length === 0 ? (
+          {aiLoading ? (
+            <div className="query-empty-results" style={{ padding: '60px 20px' }}>
+              <Loader2 className="spinning" size={36} style={{ color: '#2563eb', marginBottom: '14px' }} />
+              <h2 style={{ fontSize: '18px', color: '#0f172a' }}>Retrieving Traffic Knowledge Graph...</h2>
+              <p style={{ color: '#64748b', fontSize: '13px' }}>
+                Querying database telemetry and computing relationships for &ldquo;{submittedQuery}&rdquo;...
+              </p>
+            </div>
+          ) : (filteredRows.length === 0 && !isCameraQuery(submittedQuery, facets.cameras) && !isAllCamerasQuery(submittedQuery)) ? (
             <div className="query-empty-results">
               <Search size={36} />
               <h2>No matching traffic telemetry found</h2>
@@ -1021,12 +1549,38 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
               </button>
             </div>
           ) : viewMode === 'graph' ? (
-            <QueryKnowledgeGraph
-              initialSelectedId={graphFocusId}
-              onClose={() => setViewMode('table')}
-              queryLabel={activeQueryLabel}
-              rows={filteredRows}
-            />
+            <div className="query-embedded-graph-container" style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
+                  Knowledge Graph · {activeQueryLabel}
+                </span>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    className="data-import-sample-btn"
+                    onClick={() => handleSendToKnowledgeGraph(submittedQuery || searchQuery)}
+                    style={{ fontSize: '12px', padding: '4px 10px', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}
+                    title="Open in full screen Knowledge Graph page"
+                    type="button"
+                  >
+                    Open Full Page Knowledge Graph ↗
+                  </button>
+                  <button
+                    className="data-import-sample-btn"
+                    onClick={() => setViewMode('table')}
+                    style={{ fontSize: '12px', padding: '4px 10px' }}
+                    type="button"
+                  >
+                    Close Graph
+                  </button>
+                </div>
+              </div>
+              <KnowledgeGraphPage
+                fileName={activeQueryLabel}
+                hideFilters={true}
+                isQueryEmbedded={true}
+                rows={filteredRows.length > 0 ? filteredRows : rows}
+              />
+            </div>
           ) : (
             <div className="query-table-wrapper">
               <table className="query-results-table">
@@ -1039,6 +1593,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                     <th>PLATE CONFIDENCE</th>
                     <th>SPEED / LIMIT</th>
                     <th>OVER SPEED</th>
+                    <th>SIGNAL STATE</th>
                     <th>COORDINATES</th>
                     <th>MEDIA EVIDENCE</th>
                     <th>GRAPH</th>
@@ -1112,6 +1667,23 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                         )}
                       </td>
                       <td>
+                        {row.signalState ? (
+                          <span
+                            className="query-signal-pill"
+                            style={{
+                              background: row.signalState === 'Red' ? '#fef2f2' : row.signalState === 'Yellow' ? '#fffbeb' : '#ecfdf5',
+                              color: row.signalState === 'Red' ? '#dc2626' : row.signalState === 'Yellow' ? '#b45309' : '#059669',
+                              borderColor: row.signalState === 'Red' ? '#fca5a5' : row.signalState === 'Yellow' ? '#fcd34d' : '#a7f3d0',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {row.signalState === 'Red' ? '🔴 Red (Stop)' : row.signalState === 'Yellow' ? '🟡 Yellow (Caution)' : '🟢 Green (Go)'}
+                          </span>
+                        ) : (
+                          <span className="query-plate-na">—</span>
+                        )}
+                      </td>
+                      <td>
                         <span className="query-heading-tag" style={{ fontSize: '11px' }}>
                           {row.latitude?.toFixed(4) || '17.4485'}°, {row.longitude?.toFixed(4) || '78.3742'}°
                         </span>
@@ -1133,7 +1705,7 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
                       <td>
                         <button
                           className="query-row-graph-btn"
-                          onClick={() => handleFocusInGraph(row.id || row.observationId || row.numberPlate)}
+                          onClick={() => handleFocusInGraph(row.id || row.observationId || row.numberPlate, row)}
                           title="Inspect in Knowledge Graph"
                           type="button"
                         >

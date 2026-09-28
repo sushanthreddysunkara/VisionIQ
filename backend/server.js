@@ -20,6 +20,7 @@ const {
   getVehiclePoolStats,
   storeUploadedVehicleRecords,
   getActiveFileName,
+  searchVehicles,
 } = require('./services/vehicleStream')
 
 const app = express()
@@ -117,6 +118,62 @@ app.get('/api/vehicles', async (req, res) => {
   }
 })
 
+function isSpecificVehicleQuery(queryText) {
+  const q = String(queryText || '').trim().toLowerCase()
+  if (!q) return false
+  const plateMatch = q.match(/\b([a-z]{2}\s*[-]?\s*[0-9]{1,2}\s*[-]?\s*[a-z]{0,3}\s*[-]?\s*[0-9]{1,4})\b/i)
+  if (plateMatch) {
+    const raw = plateMatch[1].replace(/[^a-z0-9]/gi, '')
+    if (raw.length >= 5 && !raw.startsWith('cam')) return true
+  }
+  if (q.match(/\b(?:nh44|obs|record|telemetry)[-_ ]*\d+\b/i)) return true
+  return false
+}
+
+// Fast vehicle search across all 7,044 records in MySQL database
+app.get('/api/vehicles/search', async (req, res) => {
+  try {
+    const q = req.query.q || req.query.query || req.query.plate || ''
+    const limit = req.query.limit ? Number(req.query.limit) : 50
+    if (!q || !q.trim()) {
+      return res.json({ success: true, count: 0, vehicles: [] })
+    }
+
+    const vehicles = await searchVehicles(q, limit)
+
+    let dossier = null
+    if (vehicles.length > 0 && isSpecificVehicleQuery(q)) {
+      const top = vehicles[0]
+      const isOver = top.isOverSpeed || String(top.overSpeed).toLowerCase() === 'yes'
+      dossier = {
+        primaryPlate: top.vehicleNumberPlate,
+        vehicleType: top.vehicleType,
+        detectionCount: vehicles.length,
+        lastLocation: top.location,
+        camera: top.camera,
+        speed: top.speed,
+        speedLimit: top.speedLimit,
+        isOverSpeed: isOver,
+        timestampIst: top.timestampIst,
+        plateConfidence: Math.round(Number(top.plateConfidence || 0.95) * (Number(top.plateConfidence || 0.95) <= 1 ? 100 : 1)),
+        image: top.vehicleImagePath || top.vehicleImage,
+        summary: `Vehicle ${top.vehicleNumberPlate} (${top.vehicleType}) recorded at ${top.location} by ${top.camera} at ${top.timestampIst}. Velocity: ${top.speed} km/h (Limit: ${top.speedLimit} km/h, ${isOver ? 'SPEED VIOLATION' : 'Normal Speed'}). ANPR OCR Confidence: ${Math.round(Number(top.plateConfidence || 0.95) * 100)}%.`,
+      }
+    }
+
+    res.json({
+      success: true,
+      query: q,
+      count: vehicles.length,
+      dossier,
+      vehicles,
+    })
+  } catch (error) {
+    console.error('Error in /api/vehicles/search:', error.message)
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
 // Fetch random number of records (1 to 20) using random function
 app.get('/api/vehicles/random-batch', async (req, res) => {
   try {
@@ -129,7 +186,7 @@ app.get('/api/vehicles/random-batch', async (req, res) => {
         type: 'batch',
         fileName: fileName || getActiveFileName(),
         batchCount: batch.count,
-        totalPool: 5000,
+        totalPool: batch.totalPool || 7044,
         timestamp: new Date().toLocaleTimeString(),
         overspeeding: batch.records.filter((r) => r.isOverSpeed).length,
       })

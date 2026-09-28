@@ -406,23 +406,37 @@ Return ONLY valid JSON:`
     const finalVehicleType = normalizedTypes.length === 1 ? normalizedTypes[0] : (normalizedTypes.length > 1 ? normalizedTypes : null)
     const isOverspeed = parsed.overspeedOnly === true || parsed.overspeedOnly === 'true' || parsed.overspeedOnly === 'Yes'
 
+    const fallback = fallbackRuleParser(cleanQuery, facets)
+    const effectivePlate = fallback.plateSearch || parsed.plateSearch || null
+
+    // Validate minSpeed against hallucinations (e.g. 6900 from plate number TG 11 UV 6900)
+    let safeMinSpeed = typeof parsed.minSpeed === 'number' ? parsed.minSpeed : fallback.minSpeed
+    if (safeMinSpeed && (safeMinSpeed > 200 || (effectivePlate && effectivePlate.includes(String(safeMinSpeed))))) {
+      safeMinSpeed = null
+    }
+
+    let safeMaxSpeed = typeof parsed.maxSpeed === 'number' ? parsed.maxSpeed : fallback.maxSpeed
+    if (safeMaxSpeed && safeMaxSpeed > 200) {
+      safeMaxSpeed = null
+    }
+
     return res.json({
       success: true,
       aiSource: `ollama-${activeModel}`,
       filters: {
-        vehicleType: finalVehicleType,
-        vehicleTypes: normalizedTypes,
-        minSpeed: typeof parsed.minSpeed === 'number' ? parsed.minSpeed : null,
-        maxSpeed: typeof parsed.maxSpeed === 'number' ? parsed.maxSpeed : null,
-        overspeedOnly: isOverspeed,
-        location: parsed.location || null,
-        camera: parsed.camera || null,
-        signalState: parsed.signalState || null,
-        weather: parsed.weather || null,
-        plateSearch: parsed.plateSearch || null,
-        sortBy: parsed.sortBy || 'timestamp-desc',
+        vehicleType: finalVehicleType || fallback.vehicleType,
+        vehicleTypes: normalizedTypes.length ? normalizedTypes : fallback.vehicleTypes,
+        minSpeed: safeMinSpeed,
+        maxSpeed: safeMaxSpeed,
+        overspeedOnly: isOverspeed || fallback.overspeedOnly,
+        location: parsed.location || fallback.location || null,
+        camera: parsed.camera || fallback.camera || null,
+        signalState: parsed.signalState || fallback.signalState || null,
+        weather: parsed.weather || fallback.weather || null,
+        plateSearch: effectivePlate,
+        sortBy: parsed.sortBy || fallback.sortBy || 'timestamp-desc',
       },
-      explanation: parsed.explanation || `AI retrieved traffic telemetry matching "${cleanQuery}"`,
+      explanation: parsed.explanation || fallback.explanation || `AI retrieved traffic telemetry matching "${cleanQuery}"`,
       rawQuery: cleanQuery,
     })
   } catch (err) {

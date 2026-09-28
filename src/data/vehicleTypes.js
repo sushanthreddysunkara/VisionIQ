@@ -325,7 +325,10 @@ export function getCanonicalVehicleDomain(type) {
   if (normalized.includes('tractor') || normalized.includes('tractr')) {
     return 'Tractor'
   }
-  if (normalized.includes('jeep') || normalized.includes('suv') || normalized.includes('4x4')) {
+  if (normalized.includes('suv') || normalized === 'suv') {
+    return 'SUV'
+  }
+  if (normalized.includes('jeep') || normalized.includes('4x4')) {
     return 'Jeep'
   }
   if (
@@ -354,7 +357,7 @@ export function getCanonicalVehicleDomain(type) {
   if (normalized.includes('ambulance') || normalized.includes('emergency')) {
     return 'Ambulance'
   }
-  if (normalized.includes('car') || normalized === 'sedan' || normalized === 'suv' || normalized === 'hatchback') {
+  if (normalized.includes('car') || normalized === 'sedan' || normalized === 'hatchback') {
     return 'Car'
   }
   const meta = getVehicleMeta(type)

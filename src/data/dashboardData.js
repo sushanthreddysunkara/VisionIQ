@@ -1,6 +1,7 @@
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import JSZip from 'jszip'
+import { getCanonicalVehicleDomain } from './vehicleTypes'
 
 export const sampleTrafficData = [
   {
@@ -1097,7 +1098,8 @@ export function normalizeTrafficData(rows, extractedMedia = null) {
       }
 
       // 3. Vehicle Type
-      const type = valueFor(row, aliases.vehicleType) || 'Car'
+      const rawType = valueFor(row, aliases.vehicleType) || 'Car'
+      const type = getCanonicalVehicleDomain(rawType)
       const vehicleType = type
 
       // 4. Vehicle Number Plate
@@ -1489,7 +1491,10 @@ export function groupBy(rows = [], key) {
   const safeRows = Array.isArray(rows) ? rows : []
   return Object.entries(
     safeRows.reduce((groups, row) => {
-      const value = row[key] || 'Unknown'
+      let value = row[key] || 'Unknown'
+      if (key === 'type' || key === 'vehicleType') {
+        value = getCanonicalVehicleDomain(value)
+      }
       groups[value] = (groups[value] || 0) + (key === 'location' || key === 'roadName' ? row.volume || 1 : 1)
       return groups
     }, {})

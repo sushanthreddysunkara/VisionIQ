@@ -242,7 +242,7 @@ export default function DashboardHub({
             className={`nh44-control-btn nh44-trigger-btn ${isFetchingBatch ? 'is-loading' : ''}`}
             onClick={handleManualBatchClick}
             type="button"
-            title="Pulls a random batch of 1 to 20 records from the 5,000 records in the database"
+            title="Pulls a random batch of 1 to 20 records from all records in the database"
           >
             <RefreshCw size={15} className={isFetchingBatch ? 'spin-icon' : ''} />
             <span>Fetch Random Batch (1–20)</span>
@@ -339,10 +339,10 @@ export default function DashboardHub({
           <div className="kpi-content">
             <span className="kpi-label">Database Pool</span>
             <div className="kpi-value-row">
-              <strong className="kpi-number">{dbStats?.totalRecords ? Number(dbStats.totalRecords).toLocaleString() : '5,000'}</strong>
+              <strong className="kpi-number">{dbStats?.totalRecords || dbStats?.totalPool ? Number(dbStats.totalRecords || dbStats.totalPool).toLocaleString() : '7,044'}</strong>
               <span className="kpi-unit">records</span>
             </div>
-            <span className="kpi-subtext">All 5,000 rows stored in MySQL</span>
+            <span className="kpi-subtext">All {dbStats?.totalRecords || dbStats?.totalPool ? Number(dbStats.totalRecords || dbStats.totalPool).toLocaleString() : '7,044'} rows in MySQL</span>
           </div>
         </div>
       </div>

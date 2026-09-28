@@ -229,7 +229,7 @@ export default function DashboardDetail({
             </span>
             <span className="nh44-db-pill">
               <Database size={13} />
-              {dbStats?.totalRecords ? `${Number(dbStats.totalRecords).toLocaleString()} Archive Records (MySQL)` : 'MySQL Database Connected'}
+              {dbStats?.totalRecords || dbStats?.totalPool ? `${Number(dbStats.totalRecords || dbStats.totalPool).toLocaleString()} Archive Records (MySQL)` : 'MySQL Database Connected'}
             </span>
           </div>
           <h1>{config.title}</h1>
