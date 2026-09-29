@@ -6,15 +6,16 @@ import DashboardDetail from './components/DashboardDetail'
 import DashboardHub from './components/DashboardHub'
 import OntologyPage from './components/ontology/OntologyPage'
 import KnowledgeGraphPage from './components/knowledgeGraph/KnowledgeGraphPage'
+import QueryPage from './components/QueryPage'
 import DocumentIntelligence from './components/DocumentIntelligence'
 import ProjectConnectionRequired from './components/ProjectConnectionRequired'
 import ProjectComingSoon from './components/ProjectComingSoon'
 import DataImportRequired from './components/DataImportRequired'
-import QueryPage from './components/QueryPage'
 import RulesEventsPage from './components/RulesEventsPage'
 import ProfilePage from './components/ProfilePage'
 import SettingsPage from './components/SettingsPage'
 import VehicleInformation from './components/VehicleInformation'
+import TollRevenuePage from './components/tollRevenue/TollRevenuePage'
 import PlaceholderPage from './components/PlaceholderPage'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import ProjectsPage from './components/projects/ProjectsPage'
@@ -178,6 +179,7 @@ export default function App() {
   }
 
   const [streamPaused, setStreamPaused] = useState(false)
+  const streamPausedRef = useRef(false)
   const [latestBatchInfo, setLatestBatchInfo] = useState({
     batchCount: 0,
     timestamp: null,
@@ -238,15 +240,20 @@ export default function App() {
 
   const handleToggleStreamPause = async () => {
     try {
-      const nextAction = streamPaused ? 'resume' : 'pause'
+      const nextPaused = !streamPausedRef.current
+      setStreamPaused(nextPaused)
+      streamPausedRef.current = nextPaused
+
+      const nextAction = nextPaused ? 'pause' : 'resume'
       const response = await fetch(`${apiBaseUrl}/api/vehicles/stream-control`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: nextAction }),
       })
       const data = await response.json()
-      if (data.success) {
+      if (data && typeof data.isPaused === 'boolean') {
         setStreamPaused(data.isPaused)
+        streamPausedRef.current = data.isPaused
       }
     } catch (error) {
       console.warn('Unable to toggle stream pause:', error)
@@ -257,6 +264,14 @@ export default function App() {
     if (!isAuthenticated) return undefined
 
     let isCancelled = false
+    const lastBatchTimeRef = { current: Date.now() }
+
+    // Ensure backend telemetry stream is actively running on server
+    fetch(`${apiBaseUrl}/api/vehicles/stream-control`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'resume' }),
+    }).catch(() => {})
 
     async function loadInitialVehicles() {
       try {
@@ -289,7 +304,8 @@ export default function App() {
     })
 
     socket.on('newVehicleBatch', (incomingVehicles) => {
-      if (!Array.isArray(incomingVehicles) || !incomingVehicles.length || isCancelled) return
+      if (!Array.isArray(incomingVehicles) || !incomingVehicles.length || isCancelled || streamPausedRef.current) return
+      lastBatchTimeRef.current = Date.now()
       const streamRows = normalizeStreamRows(incomingVehicles)
       if (!userUploadedFileRef.current) {
         const batchSourceFile = incomingVehicles[0]?.sourceFile || incomingVehicles[0]?.fileName
@@ -346,6 +362,7 @@ export default function App() {
         }
         if (typeof status?.isPaused === 'boolean') {
           setStreamPaused(status.isPaused)
+          streamPausedRef.current = status.isPaused
         }
         if (status?.totalPool) {
           setDbStats((prev) => ({
@@ -367,8 +384,37 @@ export default function App() {
       }
     })
 
+    // Heartbeat fallback: continuously streams telemetry batches even if WebSockets are blocked or dropped
+    const heartbeatInterval = setInterval(async () => {
+      if (isCancelled || userUploadedFileRef.current || streamPausedRef.current) return
+      const elapsed = Date.now() - lastBatchTimeRef.current
+      if (elapsed >= 3500) {
+        try {
+          const res = await fetch(`${apiBaseUrl}/api/vehicles/random-batch`)
+          if (!res.ok) return
+          const data = await res.json()
+          if (!streamPausedRef.current && data.success && Array.isArray(data.vehicles) && data.vehicles.length) {
+            lastBatchTimeRef.current = Date.now()
+            const streamRows = normalizeStreamRows(data.vehicles)
+            setTrafficData((currentRows) => prependStreamRows(currentRows, streamRows))
+            setLatestBatchInfo((prev) => ({
+              batchCount: streamRows.length,
+              timestamp: new Date().toLocaleTimeString(),
+              overspeedCount: streamRows.filter((r) => r.isOverSpeed || r.overSpeed === 'Yes').length,
+              delta: streamRows.length,
+              isManual: false,
+              fileName: prev.fileName || 'All Database Records (7,044 Live Archive)',
+            }))
+          }
+        } catch {
+          // ignore transient poll error
+        }
+      }
+    }, 3000)
+
     return () => {
       isCancelled = true
+      clearInterval(heartbeatInterval)
       socket.disconnect()
     }
   }, [isAuthenticated])
@@ -667,10 +713,12 @@ export default function App() {
           <main className="main-content">
             <Topbar
               notificationSoundEnabled={notificationSoundEnabled}
+              onToggleStreamPause={handleToggleStreamPause}
               searchOpen={searchOpen}
-              setSearchOpen={setSearchOpen}
               setNotificationSoundEnabled={setNotificationSoundEnabled}
+              setSearchOpen={setSearchOpen}
               streamNotifications={streamNotifications}
+              streamPaused={streamPaused}
             />
 
             <section className="content-wrap">
@@ -698,7 +746,7 @@ export default function App() {
                   }
                 />
 
-                {/* PROJECTS MANAGEMENT (NEO4J DESKTOP STYLE) */}
+                {/* PROJECTS MANAGEMENT */}
                 <Route
                   path="/projects"
                   element={
@@ -742,6 +790,18 @@ export default function App() {
                   }
                 />
 
+                {/* QUERY */}
+                <Route
+                  path="/query"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <QueryPage fileName={fileName} rows={trafficData} />
+                    )
+                  }
+                />
+
                 {/* KNOWLEDGE GRAPH */}
                 <Route
                   path="/knowledge-graph"
@@ -760,14 +820,18 @@ export default function App() {
                   }
                 />
 
-                {/* QUERY */}
+                {/* TOLL & REVENUE */}
                 <Route
-                  path="/query"
+                  path="/toll-revenue"
                   element={
                     !connectedProject ? (
                       <ProjectConnectionRequired />
                     ) : (
-                      <QueryPage fileName={fileName} rows={trafficData} />
+                      <TollRevenuePage
+                        rows={trafficData}
+                        streamPaused={streamPaused}
+                        onToggleStreamPause={handleToggleStreamPause}
+                      />
                     )
                   }
                 />
@@ -844,7 +908,16 @@ export default function App() {
                 />
 
                 {/* VEHICLE INFORMATION */}
-                <Route path="/vehicle-information" element={<VehicleInformation />} />
+                <Route
+                  path="/vehicle-information"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <VehicleInformation dbStats={dbStats} rows={trafficData} />
+                    )
+                  }
+                />
 
                 {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
                 <Route path="/rules-events" element={<RulesEventsPage />} />

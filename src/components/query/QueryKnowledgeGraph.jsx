@@ -27,6 +27,48 @@ import {
 import { getCanonicalVehicleDomain, getVehicleMeta } from '../../data/vehicleTypes'
 import MediaPreviewModal from '../MediaPreviewModal'
 
+export function separateOverlappingNodes(cy) {
+  if (!cy || typeof cy.nodes !== 'function') return
+  const nodes = cy.nodes().not(':parent')
+  if (!nodes || nodes.length < 2) return
+
+  for (let pass = 0; pass < 15; pass++) {
+    let moved = false
+    for (let i = 0; i < nodes.length; i++) {
+      const n1 = nodes[i]
+      const pos1 = n1.position()
+      const w1 = n1.outerWidth() || 70
+
+      for (let j = i + 1; j < nodes.length; j++) {
+        const n2 = nodes[j]
+        const pos2 = n2.position()
+        const w2 = n2.outerWidth() || 70
+
+        const minDist = (w1 + w2) / 2 + 35 // Minimum safe distance between node centers
+        let dx = pos2.x - pos1.x
+        let dy = pos2.y - pos1.y
+        let dist = Math.sqrt(dx * dx + dy * dy)
+
+        if (dist < minDist) {
+          moved = true
+          if (dist < 0.001) {
+            dx = (Math.random() - 0.5) || 1
+            dy = (Math.random() - 0.5) || 1
+            dist = Math.sqrt(dx * dx + dy * dy)
+          }
+          const overlap = minDist - dist
+          const moveX = (dx / dist) * (overlap / 2)
+          const moveY = (dy / dist) * (overlap / 2)
+
+          n1.position({ x: pos1.x - moveX, y: pos1.y - moveY })
+          n2.position({ x: pos2.x + moveX, y: pos2.y + moveY })
+        }
+      }
+    }
+    if (!moved) break
+  }
+}
+
 export function buildCameraGraphSnapshot(focusedCamera, pool) {
   if (!focusedCamera) {
     return { currentNodes: [], currentEdges: [], stats: { cameras: 0, locations: 0, types: 0, observations: 0, totalQueried: 0 } }
@@ -341,6 +383,7 @@ export default function QueryKnowledgeGraph({
   const [previewModalRow, setPreviewModalRow] = useState(null)
   const containerRef = useRef(null)
   const cyRef = useRef(null)
+  const pinnedNodeRef = useRef(null)
 
   // Track rendered node IDs in dynamic camera mode
   const renderedObsIdsRef = useRef(new Set())
@@ -927,8 +970,8 @@ export default function QueryKnowledgeGraph({
         name: 'concentric',
         concentric: (node) => (node.data('isCenter') ? 2 : 1),
         levelWidth: () => 1,
-        minNodeSpacing: 80,
-        padding: 65,
+        minNodeSpacing: 140,
+        padding: 85,
         animate: true,
         animationDuration: 300,
       }
@@ -945,8 +988,8 @@ export default function QueryKnowledgeGraph({
           return 1
         },
         levelWidth: () => 1,
-        minNodeSpacing: 60,
-        padding: 55,
+        minNodeSpacing: 110,
+        padding: 75,
         animate: true,
         animationDuration: 350,
       }
@@ -955,34 +998,39 @@ export default function QueryKnowledgeGraph({
     // Force COSE layout for ALL queried segment
     return {
       name: 'cose',
-      animate: false,
-      padding: 60,
-      componentSpacing: 180,
+      animate: true,
+      animationDuration: 1000,
+      animationEasing: 'ease-out',
+      padding: 95,
+      componentSpacing: 340,
       nodeDimensionsIncludeLabels: true,
-      nodeOverlap: 25,
-      nestingFactor: 1.25,
+      nodeOverlap: 0,
+      avoidOverlap: true,
+      nestingFactor: 1.8,
       gravityCompound: 1.0,
       gravityRangeCompound: 1.5,
       nodeRepulsion: (node) => {
-        if (node.isParent?.() || node.data('category') === 'Group') return 650000
+        if (node.isParent?.() || node.data('category') === 'Group') return 3500000
         const cat = node.data('category')
-        if (cat === 'Location') return 240000
-        if (cat === 'Camera' || cat === 'VehicleType') return 160000
-        return 75000
+        if (cat === 'Location') return 1600000
+        if (cat === 'Camera' || cat === 'VehicleType') return 1100000
+        return 800000
       },
       idealEdgeLength: (edge) => {
         const lbl = edge.data('label')
-        if (lbl === 'OF_TYPE') return 75
-        if (lbl === 'MONITORS') return 240
-        return 280
+        if (lbl === 'OF_TYPE') return 220
+        if (lbl === 'MONITORS') return 340
+        return 360
       },
-      edgeElasticity: 25,
-      gravity: 0.012,
+      edgeElasticity: 20,
+      gravity: 0.002,
       numIter: 1000,
       stop: () => {
+        if (cyRef.current) separateOverlappingNodes(cyRef.current)
         cyRef.current?.animate({
-          fit: { eles: cyRef.current.elements(), padding: 50 },
-          duration: 250,
+          fit: { eles: cyRef.current.elements(), padding: 85 },
+          duration: 350,
+          easing: 'ease-out',
         })
       },
     }
@@ -1032,124 +1080,226 @@ export default function QueryKnowledgeGraph({
       wheelSensitivity: 0.15,
       layout: layoutConfig,
       style: [
+        // ─── Base Graph Nodes (Floating 3D Orbs with Centered Labels) ───
         {
           selector: 'node',
           style: {
+            shape: 'ellipse',
             width: (node) => {
-              if (node.data('isCenter')) return 72
+              if (node.data('isCenter')) return 105
               const cat = node.data('category')
-              if (cat === 'Location') return 58
-              if (cat === 'Camera') return 48
-              if (cat === 'Network') return 54
-              if (cat === 'Signal') return 50
-              if (cat === 'Violation') return 52
-              if (cat === 'VehicleType') return 52
-              return 38
+              if (cat === 'Location') return 90
+              if (cat === 'Camera' || cat === 'VehicleType') return 80
+              if (cat === 'Violation') return 74
+              if (cat === 'Signal') return 70
+              return 62
             },
             height: (node) => {
-              if (node.data('isCenter')) return 72
+              if (node.data('isCenter')) return 105
               const cat = node.data('category')
-              if (cat === 'Location') return 58
-              if (cat === 'Camera') return 48
-              if (cat === 'Network') return 54
-              if (cat === 'Signal') return 50
-              if (cat === 'Violation') return 52
-              if (cat === 'VehicleType') return 52
-              return 38
+              if (cat === 'Location') return 90
+              if (cat === 'Camera' || cat === 'VehicleType') return 80
+              if (cat === 'Violation') return 74
+              if (cat === 'Signal') return 70
+              return 62
             },
-            label: 'data(label)',
-            'background-color': 'data(color)',
-            color: '#0f172a',
-            'font-size': (node) => (node.data('isCenter') ? 13 : (node.data('category') === 'Observation' ? 9.5 : 11.5)),
-            'font-weight': (node) => (node.data('isCenter') ? 800 : (node.data('category') === 'Observation' ? 600 : 700)),
-            'text-valign': 'bottom',
-            'text-margin-y': 7,
-            'text-wrap': 'wrap',
-            'text-max-width': (node) => (node.data('isCenter') ? 140 : (node.data('category') === 'Observation' ? 85 : 110)),
-            'border-width': (node) => (node.data('isCenter') ? 4 : (node.data('category') === 'VehicleType' ? 3.5 : 2.5)),
+            'background-color': (node) => {
+              const customColor = node.data('color')
+              if (customColor && customColor !== '#475569' && customColor !== '#0f172a' && customColor !== '#64748b') {
+                return customColor
+              }
+              const cat = node.data('category')
+              if (cat === 'Observation') return '#F79767' // Coral / Rust
+              if (cat === 'Location') return '#4C8DAE'    // Deep Teal
+              if (cat === 'Camera') return '#8D6CAB'      // Violet
+              if (cat === 'VehicleType') return '#FFC454'  // Warm Gold
+              if (cat === 'Violation') return '#DE5747'    // Crimson
+              if (cat === 'Signal') return '#8DCC95'       // Mint
+              return customColor || '#F79767'
+            },
+            'background-opacity': 1,
+            'border-width': (node) => (node.data('isCenter') ? 4.5 : 3.0),
             'border-color': 'data(borderColor)',
-            'border-opacity': 1,
-            'text-background-color': '#ffffff',
-            'text-background-opacity': 0.94,
-            'text-background-padding': 3,
-            'text-background-shape': 'roundrectangle',
+            'border-opacity': 0.95,
+            'underlay-color': (node) => {
+              const customColor = node.data('color')
+              if (customColor && customColor !== '#475569' && customColor !== '#0f172a' && customColor !== '#64748b') {
+                return customColor
+              }
+              const cat = node.data('category')
+              if (cat === 'Observation') return '#F79767'
+              if (cat === 'Location') return '#4C8DAE'
+              if (cat === 'Camera') return '#8D6CAB'
+              if (cat === 'VehicleType') return '#FFC454'
+              if (cat === 'Violation') return '#DE5747'
+              if (cat === 'Signal') return '#8DCC95'
+              return customColor || '#F79767'
+            },
+            'underlay-padding': 9,
+            'underlay-opacity': 0.35, // Floating glowing aura
+            label: 'data(label)',
+            color: '#ffffff',
+            'font-size': (node) => (node.data('isCenter') ? 13.5 : (node.data('category') === 'Observation' ? 10.5 : 11.5)),
+            'font-weight': 700,
+            'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+            'text-valign': 'center',
+            'text-halign': 'center',
+            'text-margin-y': 0,
+            'text-wrap': 'wrap',
+            'text-max-width': (node) => {
+              if (node.data('isCenter')) return 90
+              const cat = node.data('category')
+              if (cat === 'Location') return 74
+              if (cat === 'Camera' || cat === 'VehicleType') return 66
+              return 54
+            },
+            'text-background-opacity': 0,
+            'min-zoomed-font-size': 8.5,
           },
         },
         // Center Anchor Highlight
         {
           selector: 'node[?isCenter]',
           style: {
-            'underlay-color': 'data(color)',
-            'underlay-padding': 10,
-            'underlay-opacity': 0.28,
-            'border-width': 4,
-            'border-color': '#0284c7',
+            'border-width': 4.5,
+            'border-color': '#ffffff',
+            'underlay-color': '#F79767',
+            'underlay-padding': 14,
+            'underlay-opacity': 0.5,
           },
         },
         // Dynamic Live Pulse for newly ingested stream nodes
         {
           selector: 'node.live-pulse',
           style: {
+            'border-width': 4,
+            'border-color': '#ffffff',
             'underlay-color': '#10b981',
             'underlay-padding': 14,
-            'underlay-opacity': 0.65,
-            'border-width': 4,
-            'border-color': '#10b981',
+            'underlay-opacity': 0.6,
           },
         },
         {
           selector: ':parent',
           style: {
-            'background-color': 'data(color)',
-            'background-opacity': 0.16,
+            'background-color': '#D9C8AE',
+            'background-opacity': 0.08,
             'border-width': 2,
             'border-style': 'dashed',
-            'border-color': 'data(borderColor)',
-            'border-opacity': 0.8,
-            'corner-radius': 16,
+            'border-color': '#D9C8AE',
+            'border-opacity': 0.45,
+            'corner-radius': 20,
             label: 'data(label)',
             'text-valign': 'top',
             'text-halign': 'center',
-            'text-margin-y': -8,
-            'font-size': 11,
+            'text-margin-y': -12,
+            'font-size': 10.5,
             'font-weight': 800,
-            color: '#1e293b',
-            'text-background-color': '#ffffff',
-            'text-background-opacity': 0.94,
-            'text-background-padding': 3,
+            color: '#94a3b8',
+            'text-background-color': '#0d1117',
+            'text-background-opacity': 0.8,
+            'text-background-padding': '4px',
             'text-background-shape': 'roundrectangle',
-            padding: 24,
+            padding: 32,
+          },
+        },
+        // ─── Active Node (Keeps OWN category color + white ring + colored aura) ───
+        {
+          selector: 'node.node-active',
+          style: {
+            opacity: 1,
+            'border-width': 4.5,
+            'border-color': '#ffffff',
+            'underlay-color': (node) => {
+              const customColor = node.data('color')
+              if (customColor && customColor !== '#475569' && customColor !== '#0f172a' && customColor !== '#64748b') {
+                return customColor
+              }
+              const cat = node.data('category')
+              if (cat === 'Observation') return '#F79767'
+              if (cat === 'Location') return '#4C8DAE'
+              if (cat === 'Camera') return '#8D6CAB'
+              if (cat === 'VehicleType') return '#FFC454'
+              if (cat === 'Violation') return '#DE5747'
+              if (cat === 'Signal') return '#8DCC95'
+              return customColor || '#F79767'
+            },
+            'underlay-padding': 14,
+            'underlay-opacity': 0.55,
+          },
+        },
+        // --- Dimmed non-neighbor nodes ---
+        {
+          selector: 'node.dimmed',
+          style: { opacity: 0.18 },
+        },
+        // --- Neighbor nodes: KEEP OWN respective category color + sharp white ring + colored halo ---
+        {
+          selector: 'node.neighbor-highlight',
+          style: {
+            opacity: 1,
+            'border-width': 3.5,
+            'border-color': '#ffffff',
+            'underlay-color': (node) => {
+              const customColor = node.data('color')
+              if (customColor && customColor !== '#475569' && customColor !== '#0f172a' && customColor !== '#64748b') {
+                return customColor
+              }
+              const cat = node.data('category')
+              if (cat === 'Observation') return '#F79767'
+              if (cat === 'Location') return '#4C8DAE'
+              if (cat === 'Camera') return '#8D6CAB'
+              if (cat === 'VehicleType') return '#FFC454'
+              if (cat === 'Violation') return '#DE5747'
+              if (cat === 'Signal') return '#8DCC95'
+              return customColor || '#F79767'
+            },
+            'underlay-padding': 10,
+            'underlay-opacity': 0.4,
           },
         },
         {
           selector: 'node:selected',
           style: {
-            'border-width': 3.5,
-            'border-color': '#0f172a',
-            'underlay-color': 'data(color)',
-            'underlay-padding': 8,
+            'border-width': 4,
+            'border-color': '#ffffff',
+            'underlay-color': '#3b82f6',
+            'underlay-padding': 12,
             'underlay-opacity': 0.45,
           },
         },
+        // ─── Subordinate Directional Edges (Light Muted Slate Line + Arrow) ───
         {
           selector: 'edge',
           style: {
-            width: 1.5,
-            'line-color': 'data(color)',
-            opacity: 0.65,
+            width: 1.8,
+            'line-color': '#64748b',
+            opacity: 0.55,
             'curve-style': 'bezier',
-            'control-point-step-size': 35,
+            'control-point-step-size': 45,
+            'control-point-distance-step': 35,
             'target-arrow-shape': 'triangle',
-            'target-arrow-color': 'data(color)',
-            'arrow-scale': 0.75,
+            'target-arrow-color': '#64748b',
+            'arrow-scale': 0.85,
+            label: '',
+          },
+        },
+        // ─── Highlighted Edges: 4 TIMES THICKNESS (4 * 1.8 = 7.2px) ───
+        {
+          selector: 'edge.neighbor-highlight',
+          style: {
+            opacity: 1,
+            width: 7.2, // EXACTLY 4 TIMES ORIGINAL THICKNESS (4 * 1.8 = 7.2px)
+            'line-color': '#38bdf8',
+            'target-arrow-color': '#38bdf8',
+            'arrow-scale': 1.15,
             label: 'data(label)',
-            'font-size': 7.5,
-            color: '#64748b',
-            'text-rotation': 'autorotate',
-            'text-margin-y': -6,
-            'text-background-color': '#ffffff',
-            'text-background-opacity': 0.85,
-            'text-background-padding': 2,
+            color: '#ffffff',
+            'font-size': 9.5,
+            'font-weight': 700,
+            'text-background-color': '#0f172a',
+            'text-background-opacity': 0.95,
+            'text-background-padding': '3px',
             'text-background-shape': 'roundrectangle',
           },
         },
@@ -1191,6 +1341,7 @@ export default function QueryKnowledgeGraph({
         targetNode = cy.getElementById(`cam-${focusedCamera}`)
       }
 
+      separateOverlappingNodes(cy)
       if (targetNode && targetNode.length) {
         targetNode.select()
         const nodeObj = currentNodes.find((n) => n.id === targetNode.id())
@@ -1202,15 +1353,98 @@ export default function QueryKnowledgeGraph({
         })
       } else {
         cy.animate({
-          fit: { eles: cy.elements(), padding: 60 },
+          fit: { eles: cy.elements(), padding: 85 },
           duration: 300,
         })
       }
     })
 
+    // ─── Dragging: Move attached neighbor nodes together ──────────
+    let dragStartPos = null
+    let draggedNode = null
+    let connectedNeighbors = null
+
+    cy.on('grab', 'node', (evt) => {
+      draggedNode = evt.target
+      if (draggedNode.isParent()) return
+      dragStartPos = { ...draggedNode.position() }
+      connectedNeighbors = draggedNode.connectedEdges().connectedNodes().difference(draggedNode)
+    })
+
+    cy.on('drag', 'node', (evt) => {
+      if (!draggedNode || !dragStartPos || !connectedNeighbors || !connectedNeighbors.length) return
+      const currPos = draggedNode.position()
+      const dx = currPos.x - dragStartPos.x
+      const dy = currPos.y - dragStartPos.y
+      dragStartPos = { ...currPos }
+
+      cy.batch(() => {
+        connectedNeighbors.forEach((neighbor) => {
+          if (!neighbor.isParent()) {
+            const p = neighbor.position()
+            neighbor.position({ x: p.x + dx, y: p.y + dy })
+          }
+        })
+      })
+    })
+
+    cy.on('free', 'node', () => {
+      draggedNode = null
+      dragStartPos = null
+      connectedNeighbors = null
+    })
+
+    // ─── Hover: temporarily highlight connected nodes in their respective colors ───
+    cy.on('mouseover', 'node', (evt) => {
+      const node = evt.target
+      if (node.isParent()) return
+      if (pinnedNodeRef.current) return
+      const connectedEdges = node.connectedEdges()
+      const neighborNodes = connectedEdges.connectedNodes().difference(node)
+
+      cy.elements().addClass('dimmed')
+      node.removeClass('dimmed').addClass('node-active')
+      connectedEdges.removeClass('dimmed').addClass('neighbor-highlight')
+      neighborNodes.removeClass('dimmed').addClass('neighbor-highlight')
+    })
+
+    cy.on('mouseout', 'node', () => {
+      if (pinnedNodeRef.current) return
+      cy.elements().removeClass('dimmed').removeClass('neighbor-highlight').removeClass('node-active')
+    })
+
+    // ─── Click / Tap: pin node + gather connected relationships with category colors ───
     cy.on('tap', 'node', (evt) => {
-      const nodeId = evt.target.id()
-      const nodeData = evt.target.data()
+      const cyNode = evt.target
+      const nodeId = cyNode.id()
+      const nodeData = cyNode.data()
+
+      const connectedEdges = cyNode.connectedEdges()
+      const connectedLinks = []
+      connectedEdges.forEach((edge) => {
+        const src = edge.source()
+        const tgt = edge.target()
+        const neighborNode = src.id() === nodeId ? tgt : src
+        const cat = neighborNode.data('category')
+        let catColor = neighborNode.data('color')
+        if (!catColor || catColor === '#475569' || catColor === '#0f172a' || catColor === '#64748b') {
+          if (cat === 'Observation') catColor = '#F79767'
+          else if (cat === 'Location') catColor = '#4C8DAE'
+          else if (cat === 'Camera') catColor = '#8D6CAB'
+          else if (cat === 'VehicleType') catColor = '#FFC454'
+          else if (cat === 'Violation') catColor = '#DE5747'
+          else if (cat === 'Signal') catColor = '#8DCC95'
+        }
+        connectedLinks.push({
+          edgeLabel: edge.data('label') || '',
+          direction: src.id() === nodeId ? 'outgoing' : 'incoming',
+          neighborId: neighborNode.id(),
+          neighborLabel: neighborNode.data('label') || neighborNode.id(),
+          neighborCategory: cat || 'Entity',
+          neighborColor: catColor || '#F79767',
+        })
+      })
+
       const nodeObj = currentNodes.find((n) => n.id === nodeId) || (nodeData ? {
         id: nodeData.id,
         label: nodeData.label,
@@ -1223,11 +1457,24 @@ export default function QueryKnowledgeGraph({
         rawRow: nodeData.rawRow,
         properties: nodeData.properties || {},
       } : null)
-      setSelectedNode(nodeObj || null)
+
+      if (nodeObj) {
+        setSelectedNode({ ...nodeObj, connectedLinks })
+      }
+
+      pinnedNodeRef.current = nodeId
+      cy.elements().removeClass('dimmed').removeClass('neighbor-highlight').removeClass('node-active')
+      cyNode.addClass('node-active')
+      connectedEdges.addClass('neighbor-highlight')
+      connectedEdges.connectedNodes().difference(cyNode).addClass('neighbor-highlight')
+      cy.elements().not(connectedEdges).not(connectedEdges.connectedNodes()).addClass('dimmed')
+      cyNode.removeClass('dimmed')
     })
 
     cy.on('tap', (evt) => {
       if (evt.target === cy) {
+        pinnedNodeRef.current = null
+        cy.elements().removeClass('dimmed').removeClass('neighbor-highlight').removeClass('node-active')
         setSelectedNode(null)
       }
     })

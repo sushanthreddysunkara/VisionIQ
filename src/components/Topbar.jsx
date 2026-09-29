@@ -4,8 +4,10 @@ import {
   CloudSun,
   LogOut,
   MapPin,
+  Play,
   Search,
   Settings2,
+  Square,
   UserCircle,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -19,6 +21,8 @@ export default function Topbar({
   streamNotifications = [],
   notificationSoundEnabled,
   setNotificationSoundEnabled,
+  streamPaused = false,
+  onToggleStreamPause = null,
 }) {
   const { user, logout } = useAuth()
   const { pathname } = useLocation()
@@ -113,8 +117,35 @@ export default function Topbar({
         <span className="topbar-search-shortcut" title="Press / to search">/</span>
       </form>
 
-      {/* 2. Right Actions: Notification, User Profile, Weather Widget */}
+      {/* 2. Right Actions: Stop Live Feed, Notification, User Profile, Weather Widget */}
       <div className="topbar-right-actions">
+        {/* Global Stop Live Feed / Resume DB Fetching Button */}
+        {onToggleStreamPause && (
+          <button
+            className={`topbar-stream-stop-btn ${streamPaused ? 'is-stopped' : 'is-active'}`}
+            onClick={onToggleStreamPause}
+            type="button"
+            title={
+              streamPaused
+                ? 'Click to start live feed and resume database fetching'
+                : 'Click to stop live feed and pause database fetching'
+            }
+          >
+            <span className={`stream-dot-pulse ${streamPaused ? 'stopped' : 'live'}`} />
+            {streamPaused ? (
+              <>
+                <Play size={13} fill="currentColor" />
+                <span>Start Live Feed</span>
+              </>
+            ) : (
+              <>
+                <Square size={12} fill="currentColor" />
+                <span>Stop Live Feed</span>
+              </>
+            )}
+          </button>
+        )}
+
         {/* Notification Bell with Badge */}
         <div className="notification-wrap" ref={notificationWrapRef}>
           <button

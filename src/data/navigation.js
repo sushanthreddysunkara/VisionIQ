@@ -1,11 +1,12 @@
 import {
   Activity,
-  BarChart3,
+  AlertTriangle,
   Camera,
-  CarFront,
+  CircleDollarSign,
   Database,
   FileText,
   Home,
+  LineChart,
   Network,
   Search,
   ShieldCheck,
@@ -14,13 +15,13 @@ import {
 
 export const navigation = [
   { label: 'Dashboard', path: '/home', icon: Home, exact: true },
+  { label: 'Toll & Revenue', path: '/toll-revenue', icon: CircleDollarSign },
   { label: 'Query', path: '/query', icon: Search },
   { label: 'Knowledge Graph', path: '/knowledge-graph', icon: Network },
   { label: 'Ontology', path: '/ontology', icon: Database },
-  { label: 'Analytics', path: '/dashboards/vehicles', icon: BarChart3 },
   { label: 'Traffic Flow', path: '/dashboards/traffic', icon: Activity },
   { label: 'Camera Network', path: '/dashboards/cameras', icon: Camera },
-  { label: 'Vehicle Info', path: '/vehicle-information', icon: CarFront },
+  { label: 'Incidents', path: '/vehicle-information', icon: AlertTriangle },
   { label: 'Reports', path: '/document-intelligence', icon: FileText },
   { label: 'Rules & Events', path: '/rules-events', icon: ShieldCheck },
 ]

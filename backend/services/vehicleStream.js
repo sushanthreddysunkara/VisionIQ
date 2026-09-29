@@ -610,4 +610,5 @@ module.exports = {
   storeUploadedVehicleRecords,
   getActiveFileName,
   searchVehicles,
+  toClientRecord,
 }

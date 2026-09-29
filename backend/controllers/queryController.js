@@ -453,7 +453,239 @@ Return ONLY valid JSON:`
   }
 }
 
+function isNaturalLanguageQuery(text) {
+  if (!text || !text.trim()) return false
+  const t = text.trim()
+  if (/^(MATCH|CREATE|MERGE|RETURN|CALL|SHOW|EXPLAIN|PROFILE|OPTIONAL\s+MATCH)\b/i.test(t)) {
+    return false
+  }
+  return true
+}
+
+// Rule-based deterministic English-to-Cypher translator
+function ruleBasedNaturalToCypher(naturalText) {
+  const q = String(naturalText || '').trim()
+  const lower = q.toLowerCase()
+
+  // 1. Wildcard / all
+  if (lower === 'all' || lower === 'all records' || lower === 'everything' || lower === 'all nodes') {
+    return {
+      cypher: 'MATCH (n)\nOPTIONAL MATCH (n)-[r]->(m)\nRETURN *',
+      explanation: 'Matches all graph nodes and transit relationships.',
+    }
+  }
+
+  // 2. Extract vehicle type
+  const matchedTypes = []
+  if (lower.includes('bike') || lower.includes('motorcycle') || lower.includes('scooter') || lower.includes('two wheeler')) matchedTypes.push('Bike')
+  if (lower.includes('car') || lower.includes('sedan') || lower.includes('hatchback')) matchedTypes.push('Car')
+  if (lower.includes('truck') || lower.includes('lorry')) matchedTypes.push('Truck')
+  if (lower.includes('bus')) matchedTypes.push('Bus')
+  if (lower.includes('auto') || lower.includes('rickshaw')) matchedTypes.push('Auto')
+  if (lower.includes('van')) matchedTypes.push('Van')
+  if (lower.includes('tractor')) matchedTypes.push('Tractor')
+
+  // 3. Extract speed
+  const speedMatch = lower.match(/(?:speed\s*(?:>|>=|above|over|exceeding|faster than)?\s*|>|>=|above|over)\s*(\d+)/i)
+  const minSpeed = speedMatch ? parseInt(speedMatch[1], 10) : null
+
+  // 4. Extract overspeed / violation
+  const isOverspeed = lower.includes('overspeed') || lower.includes('speeding') || lower.includes('violation') || lower.includes('violator') || lower.includes('rash')
+
+  // 5. Extract camera or location
+  const isCamera = lower.includes('camera') || lower.includes('cam')
+  const isLocation = lower.includes('location') || lower.includes('corridor') || lower.includes('road')
+
+  // Build Cypher query
+  if (isCamera && isLocation) {
+    return {
+      cypher: 'MATCH (c:Camera)-[r:MONITORS]->(l:Location)\nRETURN *',
+      explanation: 'Cameras monitoring highway corridors.',
+    }
+  }
+
+  if (isCamera && !matchedTypes.length && !minSpeed && !isOverspeed) {
+    const camIdMatch = q.match(/(CAM-[a-zA-Z0-9_-]+)/i)
+    if (camIdMatch) {
+      return {
+        cypher: `MATCH (c:Camera {id: '${camIdMatch[1].toUpperCase()}'})\nRETURN c`,
+        explanation: `Camera hub ${camIdMatch[1].toUpperCase()}.`,
+      }
+    }
+    return {
+      cypher: 'MATCH (n:Camera)\nRETURN n',
+      explanation: 'All highway monitoring cameras.',
+    }
+  }
+
+  if (isLocation && !matchedTypes.length && !minSpeed && !isOverspeed) {
+    return {
+      cypher: 'MATCH (n:Location)\nRETURN n',
+      explanation: 'All highway corridor locations.',
+    }
+  }
+
+  if (isOverspeed && !matchedTypes.length && !minSpeed) {
+    return {
+      cypher: "MATCH (n:Observation)\nWHERE n.overSpeed = 'Yes'\nRETURN n",
+      explanation: 'All overspeed violations and offending vehicles.',
+    }
+  }
+
+  const whereConditions = []
+  if (matchedTypes.length === 1) {
+    whereConditions.push(`n.vehicleType = '${matchedTypes[0]}'`)
+  } else if (matchedTypes.length > 1) {
+    whereConditions.push(`n.vehicleType IN [${matchedTypes.map((t) => `'${t}'`).join(', ')}]`)
+  }
+
+  if (minSpeed) {
+    whereConditions.push(`n.speed > ${minSpeed}`)
+  }
+
+  if (isOverspeed && !minSpeed) {
+    whereConditions.push("n.overSpeed = 'Yes'")
+  }
+
+  const whereClause = whereConditions.length ? `\nWHERE ${whereConditions.join(' AND ')}` : ''
+  const cypher = `MATCH (n:Observation)${whereClause}\nRETURN n`
+  return {
+    cypher,
+    explanation: `Telemetry observations filtered by: ${whereConditions.join(', ') || 'all'}`,
+  }
+}
+
+async function naturalToCypher(req, res) {
+  const { query } = req.body || {}
+  if (!query || typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({ success: false, message: 'Query string is required.' })
+  }
+
+  const cleanQuery = query.trim()
+
+  // If already Cypher, return as-is
+  if (!isNaturalLanguageQuery(cleanQuery)) {
+    return res.json({
+      success: true,
+      cypher: cleanQuery,
+      source: 'direct-cypher',
+      explanation: 'Direct Cypher query statement.',
+    })
+  }
+
+  const isOnline = await isOllamaOnline()
+  if (!isOnline) {
+    const fallback = ruleBasedNaturalToCypher(cleanQuery)
+    return res.json({
+      success: true,
+      cypher: fallback.cypher,
+      source: 'rule-engine',
+      explanation: fallback.explanation,
+      rawQuery: cleanQuery,
+    })
+  }
+
+  try {
+    const activeModel = selectBestModel(ollamaCache.models)
+    const prompt = `You are a Cypher query generator for a traffic intelligence knowledge graph.
+Knowledge Graph Schema:
+- Node Labels:
+  - Observation: single vehicle detection record with properties: speed, speedLimit, overSpeed, vehicleType, camera, location, plate
+  - Camera: traffic surveillance camera (e.g. CAM-001)
+  - Location: corridor/roadway location
+  - VehicleType: Car, Bike, Truck, Bus, Auto, Van
+  - Violation: overspeeding violations
+- Edge Types:
+  - (:Observation)-[:CAPTURED_BY]->(:Camera)
+  - (:Camera)-[:MONITORS]->(:Location)
+  - (:Observation)-[:OF_TYPE]->(:VehicleType)
+  - (:Observation)-[:TRIGGERED]->(:Violation)
+
+Instructions:
+Convert the user's natural language request into a single, clean Cypher query.
+Return ONLY the raw Cypher query. Do NOT include markdown code blocks, backticks, or explanations.
+
+Example 1:
+Input: all bikes only
+Output: MATCH (n:Observation) WHERE n.vehicleType = 'Bike' RETURN n
+
+Example 2:
+Input: cars faster than 70 km/h
+Output: MATCH (n:Observation) WHERE n.vehicleType = 'Car' AND n.speed > 70 RETURN n
+
+Example 3:
+Input: cameras monitoring locations
+Output: MATCH (c:Camera)-[r:MONITORS]->(l:Location) RETURN *
+
+Example 4:
+Input: all violators
+Output: MATCH (n:Observation) WHERE n.overSpeed = 'Yes' RETURN n
+
+Input: ${cleanQuery}
+Output:`
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 6000)
+
+    const response = await fetch(`${OLLAMA_HOST}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: activeModel,
+        prompt: prompt,
+        stream: false,
+        keep_alive: '2h',
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+
+    if (!response.ok) {
+      throw new Error(`Ollama returned status ${response.status}`)
+    }
+
+    const data = await response.json()
+    let rawOutput = String(data.response || '').trim()
+
+    // Clean backticks or markdown fences
+    rawOutput = rawOutput.replace(/```(?:cypher)?/gi, '').replace(/```/g, '').trim()
+
+    // If output is valid Cypher (starts with MATCH, OPTIONAL, RETURN, etc.)
+    if (/^(MATCH|OPTIONAL|RETURN|WITH)\b/i.test(rawOutput)) {
+      return res.json({
+        success: true,
+        cypher: rawOutput,
+        source: `ollama-${activeModel}`,
+        explanation: `AI-converted from "${cleanQuery}" via Ollama (${activeModel})`,
+        rawQuery: cleanQuery,
+      })
+    }
+
+    const fallback = ruleBasedNaturalToCypher(cleanQuery)
+    return res.json({
+      success: true,
+      cypher: fallback.cypher,
+      source: 'rule-fallback',
+      explanation: fallback.explanation,
+      rawQuery: cleanQuery,
+    })
+  } catch (err) {
+    const fallback = ruleBasedNaturalToCypher(cleanQuery)
+    return res.json({
+      success: true,
+      cypher: fallback.cypher,
+      source: 'rule-fallback',
+      explanation: fallback.explanation,
+      fallbackReason: err.message,
+      rawQuery: cleanQuery,
+    })
+  }
+}
+
 module.exports = {
   checkOllamaStatus,
   parseNaturalLanguageQuery,
+  naturalToCypher,
+  ruleBasedNaturalToCypher,
+  isNaturalLanguageQuery,
 }

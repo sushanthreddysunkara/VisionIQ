@@ -3,9 +3,9 @@ import { cameras, vehicleIncidents, NH44_HIGHWAY_WAYPOINTS } from '../data/vehic
 const apiBaseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
 async function getJson(path, fallback) {
-  if (!apiBaseUrl) return fallback
   try {
-    const response = await fetch(`${apiBaseUrl}${path}`)
+    const url = apiBaseUrl ? `${apiBaseUrl}${path}` : path
+    const response = await fetch(url)
     if (!response.ok) return fallback
     return await response.json()
   } catch {
@@ -72,6 +72,34 @@ function buildTrackedVehicleFromRecords(vehicleNumber, records = []) {
 }
 
 export async function getVehicleTracking(vehicleNumber) {
+  const encodedNumber = encodeURIComponent(vehicleNumber)
+  const result = await getJson(`/api/vehicles/search?q=${encodedNumber}`, null)
+  if (result?.vehicles && result.vehicles.length > 0) {
+    const top = result.vehicles[0]
+    return {
+      vehicleNumber: top.vehicleNumberPlate,
+      vehicleType: top.vehicleType,
+      incidentType: top.isOverSpeed ? 'Speed Violation' : (top.events || 'Detection Alert'),
+      incidentTime: top.timestampIst,
+      collisionCamera: top.camera,
+      status: top.isOverSpeed ? 'Tracking' : 'Detected',
+      speed: top.speed,
+      speedLimit: top.speedLimit,
+      observations: result.vehicles.map((v) => ({
+        cameraId: v.camera,
+        timestamp: v.timestampIst,
+        latitude: Number(v.latitude) || 17.385044,
+        longitude: Number(v.longitude) || 78.486671,
+        location: v.location,
+        detectionType: v.isOverSpeed ? 'Speed Violation' : 'Corridor Observation',
+        confidence: Number(v.plateConfidence || 0.95),
+        imageUrl: v.vehicleImagePath,
+        speed: v.speed,
+        speedLimit: v.speedLimit,
+      })),
+    }
+  }
+  return vehicleIncidents.find((vehicle) => vehicle.vehicleNumber.toLowerCase() === vehicleNumber.toLowerCase()) || null
   if (!vehicleNumber) return null
   const normTarget = cleanPlate(vehicleNumber)
 

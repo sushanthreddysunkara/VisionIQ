@@ -115,6 +115,7 @@ export default function DashboardDetail({
   const [inlineCameraFeed, setInlineCameraFeed] = useState(null)
   const [isFetchingBatch, setIsFetchingBatch] = useState(false)
   const [cameraForm, setCameraForm] = useState({ name: '', location: '', streamUrl: '' })
+  const [trafficTab, setTrafficTab] = useState('overview')
 
   const { kind } = useParams()
   const config = configs[kind] || configs.vehicles
@@ -266,6 +267,28 @@ export default function DashboardDetail({
         </div>
       </div>
 
+      {/* ── 2 SUB-PAGES HORIZONTAL TAB BAR FOR TRAFFIC FLOW ── */}
+      {kind === 'traffic' && (
+        <div className="tr-tab-row" style={{ marginTop: '16px', marginBottom: '24px' }}>
+          <button
+            type="button"
+            className={`tr-tab-btn ${trafficTab === 'overview' ? 'active' : ''}`}
+            onClick={() => setTrafficTab('overview')}
+          >
+            Traffic Flow Overview
+          </button>
+          <button
+            type="button"
+            className={`tr-tab-btn ${trafficTab === 'analytics' ? 'active' : ''}`}
+            onClick={() => setTrafficTab('analytics')}
+          >
+            Vehicle Analytics
+          </button>
+        </div>
+      )}
+
+      {(kind !== 'traffic' || trafficTab === 'overview') && (
+        <>
       {/* LIVE HIGHWAY TELEMETRY CONTROL BAR */}
       <div className="nh44-stream-console">
         <div className="stream-console-status">
@@ -833,6 +856,222 @@ export default function DashboardDetail({
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+        </>
+      )}
+
+      {/* SUB-PAGE 2: VEHICLE ANALYTICS */}
+      {kind === 'traffic' && trafficTab === 'analytics' && (
+        <div className="vehicle-analytics-subpage" style={{ display: 'grid', gap: '20px' }}>
+          <div className="page-intro" style={{ marginBottom: '10px' }}>
+            <div>
+              <p className="section-kicker">VEHICLE INTELLIGENCE &amp; CLASSIFICATION</p>
+              <h1 style={{ fontSize: '22px', fontWeight: '800', margin: '2px 0 4px 0', color: '#0f172a' }}>
+                Vehicle Analytics &amp; HSRP Classification Mix
+              </h1>
+              <p className="intro-copy" style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
+                Analyze vehicle type distributions, HSRP optical license plate recognition confidence, velocity profiles, and category ratios across the monitored corridor.
+              </p>
+            </div>
+          </div>
+
+          <div className="detail-chart-grid">
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">CLASSIFICATION DISTRIBUTION</p>
+                  <h2>Vehicles by Classification</h2>
+                </div>
+                <span className="nh44-live-pill">Live Stream</span>
+              </div>
+              <div className="chart-frame" style={{ height: '260px' }}>
+                <ResponsiveContainer height="100%" width="100%">
+                  <BarChart data={pieData} margin={{ top: 8, right: 8, left: -20, bottom: 4 }}>
+                    <CartesianGrid stroke="#f1f5f9" vertical={false} />
+                    <XAxis
+                      axisLine={false}
+                      dataKey="name"
+                      tick={{ fill: '#64748b', fontSize: 10 }}
+                      tickLine={false}
+                    />
+                    <YAxis axisLine={false} tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} />
+                    <Tooltip cursor={{ fill: '#f8fafc' }} />
+                    <Bar dataKey="value" radius={[5, 5, 0, 0]}>
+                      {pieData.map((entry) => (
+                        <Cell fill={getVehicleMeta(entry.name).color} key={entry.name} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">CATEGORY BREAKDOWN</p>
+                  <h2>Vehicle Type Mix Ratio</h2>
+                </div>
+                <span className="nh44-live-pill">Distribution</span>
+              </div>
+              <div className="chart-frame pie-chart-frame" style={{ height: '200px', display: 'flex', alignItems: 'center' }}>
+                <ResponsiveContainer height="100%" width="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      dataKey="value"
+                      innerRadius={55}
+                      nameKey="name"
+                      outerRadius={85}
+                      paddingAngle={3}
+                    >
+                      {pieData.map((entry) => (
+                        <Cell fill={getVehicleMeta(entry.name).color} key={entry.name} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="chart-legend" style={{ marginTop: '12px' }}>
+                {pieData.map((entry) => {
+                  const meta = getVehicleMeta(entry.name)
+                  return (
+                    <span key={entry.name}>
+                      <i style={{ background: meta.color }} />
+                      {entry.name} <strong>{entry.value}</strong>
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* SOURCE RECORDS TABLE FOR VEHICLE ANALYTICS */}
+          {safeRows.length > 0 && (
+            <div className="dashboard-panel traffic-table-panel nh44-table-panel" style={{ marginTop: '24px' }}>
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">SOURCE RECORDS</p>
+                  <h2>Latest Detections (Vehicle Analytics)</h2>
+                </div>
+                <div className="table-heading-right">
+                  <span className="nh44-live-indicator">
+                    <span className="pulse-dot" />
+                    Live Feed
+                  </span>
+                  <span className="record-count">
+                    Displaying latest {latestTenRows.length} of {safeRows.length} records
+                  </span>
+                </div>
+              </div>
+              <div className="traffic-table-wrapper">
+                <table className="traffic-table nh44-table">
+                  <thead>
+                    <tr>
+                      <th>SURVEILLANCE SNAPSHOT</th>
+                      <th>TIMESTAMP (IST)</th>
+                      <th>VEHICLE TYPE</th>
+                      <th>NUMBER PLATE (HSRP)</th>
+                      <th>SPEED / LIMIT</th>
+                      <th>RADAR STATUS</th>
+                      <th>ANPR OCR</th>
+                      <th>HIGHWAY CHECKPOINT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {latestTenRows.map((row, index) => {
+                      const isOver = row.overSpeed === 'Yes' || row.isOverSpeed
+                      const speedNum = Number(row.speed || 0)
+                      const speedLimit = Number(row.speedLimit || 60)
+                      const plateText = row.vehicleNumberPlate || row.numberPlate
+                      const confidenceVal = Math.round(
+                        (row.plateConfidence || row.confidence) > 1
+                          ? (row.plateConfidence || row.confidence)
+                          : ((row.plateConfidence || row.confidence || 0.94) * 100),
+                      )
+
+                      return (
+                        <tr key={`${row.id || row.csvRecordId || row.observationId}-${index}`}>
+                          <td style={{ minWidth: '130px' }}>
+                            <VehicleImageThumbnail
+                              onClick={() => {
+                                setInitialModalTab('vehicle')
+                                setPreviewModalRow(row)
+                              }}
+                              onPlayVideo={() => {
+                                setInitialModalTab('video')
+                                setPreviewModalRow(row)
+                              }}
+                              row={row}
+                              size="table"
+                            />
+                          </td>
+                          <td>
+                            <div className="timestamp-cell">
+                              <strong>{row.timestampIst || row.timestamp || 'Live'}</strong>
+                            </div>
+                          </td>
+                          <td>
+                            <VehicleBadge type={row.vehicleType || row.type} />
+                          </td>
+                          <td>
+                            {plateText ? (
+                              <div className="hsrp-plate-badge" title="High Security Registration Plate">
+                                <span className="hsrp-country">
+                                  <span className="chakra-dot">☸</span>
+                                  IND
+                                </span>
+                                <span className="hsrp-code">{plateText}</span>
+                              </div>
+                            ) : (
+                              <span className="query-plate-na">—</span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="speed-metric-cell">
+                              <strong className={isOver ? 'speed-val alert' : 'speed-val'}>
+                                {speedNum}
+                              </strong>
+                              <span className="speed-denom">/ {speedLimit} km/h</span>
+                            </div>
+                          </td>
+                          <td>
+                            {isOver ? (
+                              <span className="nh44-status-pill danger">
+                                <AlertTriangle size={12} />
+                                +{speedNum - speedLimit} km/h Over
+                              </span>
+                            ) : (
+                              <span className="nh44-status-pill normal">
+                                <CheckCircle2 size={12} />
+                                Normal
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <span
+                              className="nh44-confidence-badge"
+                              style={{ color: confidenceVal >= 90 ? '#059669' : '#d97706' }}
+                            >
+                              {confidenceVal}%
+                            </span>
+                          </td>
+                          <td>
+                            <span className="nh44-location-cell">
+                              <MapPin size={13} />
+                              {row.location || row.camera || 'NH-44 Corridor'}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
