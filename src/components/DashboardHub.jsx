@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -6,10 +6,8 @@ import {
   BarChart3,
   Camera,
   Car,
-  CheckCircle2,
   Database,
   Gauge,
-  MapPin,
   Pause,
   Play,
   Radio,
@@ -21,34 +19,16 @@ import {
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
   Cell,
   Pie,
   PieChart,
   ResponsiveContainer,
   Tooltip,
-  XAxis,
-  YAxis,
 } from 'recharts'
 import { groupBy, summarizeData } from '../data/dashboardData'
-import { getVehicleMeta } from '../data/vehicleTypes'
-import VehicleBadge from './VehicleBadge'
-import VehicleImageThumbnail from './VehicleImageThumbnail'
-import MediaPreviewModal from './MediaPreviewModal'
+import VehicleMap from './vehicle/VehicleMap'
 
-function getRecordTimestampScore(row) {
-  const raw = String(row.timestampIst || row.timestamp || row.time || row.date || '')
-  const parsed = Date.parse(raw)
-  if (!isNaN(parsed)) return parsed
-  const timeMatch = raw.match(/(\d{1,2}):(\d{2}):(\d{2})/)
-  if (timeMatch) {
-    return Number(timeMatch[1]) * 3600 + Number(timeMatch[2]) * 60 + Number(timeMatch[3])
-  }
-  const idNum = Number(String(row.id || row.csvRecordId || '').replace(/\D/g, ''))
-  return idNum || 0
-}
+
 
 export default function DashboardHub({
   rows = [],
@@ -62,8 +42,6 @@ export default function DashboardHub({
   onToggleStreamPause,
   dbStats,
 }) {
-  const [previewModalRow, setPreviewModalRow] = useState(null)
-  const [initialModalTab, setInitialModalTab] = useState('vehicle')
   const [isFetchingBatch, setIsFetchingBatch] = useState(false)
 
   const safeRows = Array.isArray(rows) ? rows : []
@@ -103,24 +81,7 @@ export default function DashboardHub({
     .sort((a, b) => b.value - a.value)
     .slice(0, 4)
 
-  // Strictly select the latest 12 records for display at the bottom
-  const latestDetections = useMemo(() => {
-    if (!safeRows.length) return []
-    const scored = safeRows.map((row, idx) => ({
-      row,
-      originalIdx: idx,
-      score: getRecordTimestampScore(row),
-    }))
-    const hasScores = scored.some((s) => s.score > 0)
-    if (hasScores) {
-      scored.sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score
-        return b.originalIdx - a.originalIdx
-      })
-      return scored.slice(0, 12).map((s) => s.row)
-    }
-    return safeRows.slice(0, 12)
-  }, [safeRows])
+
 
   const handleManualBatchClick = async () => {
     if (!onFetchRandomBatch || isFetchingBatch) return
@@ -376,57 +337,25 @@ export default function DashboardHub({
         ))}
       </div>
 
-      {/* DYNAMIC VISUAL ANALYTICS SECTION */}
-      <div className="nh44-analytics-section">
-        {/* VEHICLE CLASSIFICATION CHART */}
-        <div className="dashboard-panel nh44-chart-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">REAL-TIME CLASSIFICATION</p>
-              <h2>Vehicle Type Distribution</h2>
-            </div>
-            <span className="nh44-live-pill">
-              <Activity size={13} />
-              Updated with live batch
-            </span>
+      {/* NH-44 HIGHWAY MAP — full width in place of bar chart */}
+      <div className="nh44-highway-map-section" style={{ marginTop: '28px' }}>
+        <div className="panel-heading" style={{ padding: '0 0 14px' }}>
+          <div>
+            <p className="section-kicker">NH-44 LIVE CORRIDOR</p>
+            <h2>Highway Surveillance Map</h2>
           </div>
-          <div className="chart-frame" style={{ height: '240px', marginTop: '12px' }}>
-            <ResponsiveContainer height="100%" width="100%">
-              <BarChart data={vehicleTypeData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid stroke="#f1f5f9" vertical={false} />
-                <XAxis
-                  axisLine={false}
-                  dataKey="name"
-                  tick={{ fill: '#64748b', fontSize: 11, fontWeight: 500 }}
-                  tickLine={false}
-                />
-                <YAxis axisLine={false} tick={{ fill: '#64748b', fontSize: 11 }} tickLine={false} />
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload
-                      const meta = getVehicleMeta(data.name)
-                      return (
-                        <div className="chart-tooltip-box">
-                          <strong style={{ color: meta.color }}>{data.name}</strong>
-                          <p>{data.value} detections</p>
-                          <small>{Math.round((data.value / (safeRows.length || 1)) * 100)}% of active stream</small>
-                        </div>
-                      )
-                    }
-                    return null
-                  }}
-                />
-                <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                  {vehicleTypeData.map((entry) => {
-                    const meta = getVehicleMeta(entry.name)
-                    return <Cell fill={meta.color} key={entry.name} />
-                  })}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <span className="nh44-live-pill">
+            <Activity size={13} />
+            6 Cameras Active
+          </span>
         </div>
+        {/* Render the NH-44 map with no vehicle selected (overview mode) */}
+        <VehicleMap vehicle={null} cameras={[]} />
+      </div>
+
+      {/* COMPACT SPEED ANALYTICS BELOW THE MAP */}
+      <div className="nh44-analytics-section" style={{ marginTop: '20px' }}>
+        {/* SPEED COMPLIANCE DONUT */}
 
         {/* SPEED COMPLIANCE & CORRIDOR PRESSURE */}
         <div className="dashboard-panel nh44-chart-panel">
@@ -507,145 +436,6 @@ export default function DashboardHub({
           </div>
         </div>
       </div>
-
-      {/* REAL-TIME LATEST DETECTIONS TABLE */}
-      {safeRows.length > 0 && (
-        <div className="dashboard-panel traffic-table-panel nh44-table-panel" style={{ marginTop: '24px' }}>
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">LIVE OPTICAL DETECTIONS</p>
-              <h2>Latest Detections Feed (NH-44 Corridor)</h2>
-            </div>
-            <div className="table-heading-right">
-              <span className="nh44-live-indicator">
-                <span className="pulse-dot" />
-                Live Feed
-              </span>
-              <span className="record-count">
-                Displaying latest {latestDetections.length} of {safeRows.length} active records
-              </span>
-            </div>
-          </div>
-
-          <div className="traffic-table-wrapper">
-            <table className="traffic-table nh44-table">
-              <thead>
-                <tr>
-                  <th>SURVEILLANCE SNAPSHOT</th>
-                  <th>TIMESTAMP (IST)</th>
-                  <th>VEHICLE TYPE</th>
-                  <th>NUMBER PLATE (HSRP)</th>
-                  <th>SPEED / LIMIT</th>
-                  <th>RADAR STATUS</th>
-                  <th>ANPR OCR</th>
-                  <th>HIGHWAY CHECKPOINT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {latestDetections.map((row, index) => {
-                  const isOver = row.overSpeed === 'Yes' || row.isOverSpeed
-                  const speedNum = Number(row.speed || 0)
-                  const speedLimit = Number(row.speedLimit || 60)
-                  const plateText = row.vehicleNumberPlate || row.numberPlate
-                  const confidenceVal = Math.round(
-                    (row.plateConfidence || row.confidence) > 1
-                      ? (row.plateConfidence || row.confidence)
-                      : ((row.plateConfidence || row.confidence || 0.94) * 100),
-                  )
-
-                  return (
-                    <tr
-                      key={`${row.id || row.csvRecordId || row.observationId}-${index}`}
-                      className={index === 0 && latestBatchInfo?.batchCount ? 'row-new-arrival' : ''}
-                    >
-                      <td style={{ minWidth: '130px' }}>
-                        <VehicleImageThumbnail
-                          onClick={() => {
-                            setInitialModalTab('vehicle')
-                            setPreviewModalRow(row)
-                          }}
-                          onPlayVideo={() => {
-                            setInitialModalTab('video')
-                            setPreviewModalRow(row)
-                          }}
-                          row={row}
-                          size="table"
-                        />
-                      </td>
-                      <td>
-                        <div className="timestamp-cell">
-                          <strong>{row.timestampIst || row.timestamp || 'Live'}</strong>
-                          {index === 0 && <span className="new-tag">NEW</span>}
-                        </div>
-                      </td>
-                      <td>
-                        <VehicleBadge type={row.vehicleType || row.type} />
-                      </td>
-                      <td>
-                        {plateText ? (
-                          <div className="hsrp-plate-badge" title="High Security Registration Plate">
-                            <span className="hsrp-country">
-                              <span className="chakra-dot">☸</span>
-                              IND
-                            </span>
-                            <span className="hsrp-code">{plateText}</span>
-                          </div>
-                        ) : (
-                          <span className="query-plate-na">—</span>
-                        )}
-                      </td>
-                      <td>
-                        <div className="speed-metric-cell">
-                          <strong className={isOver ? 'speed-val alert' : 'speed-val'}>
-                            {speedNum}
-                          </strong>
-                          <span className="speed-denom">/ {speedLimit} km/h</span>
-                        </div>
-                      </td>
-                      <td>
-                        {isOver ? (
-                          <span className="nh44-status-pill danger">
-                            <AlertTriangle size={12} />
-                            +{speedNum - speedLimit} km/h Over
-                          </span>
-                        ) : (
-                          <span className="nh44-status-pill normal">
-                            <CheckCircle2 size={12} />
-                            Normal
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <span className="nh44-confidence-badge" style={{ color: confidenceVal >= 90 ? '#059669' : '#d97706' }}>
-                          {confidenceVal}%
-                        </span>
-                      </td>
-                      <td>
-                        <span className="nh44-location-cell">
-                          <MapPin size={13} />
-                          {row.location || row.camera || 'NH-44 Corridor Gateway'}
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* MEDIA PREVIEW MODAL */}
-      {previewModalRow && (
-        <MediaPreviewModal
-          allRows={latestDetections}
-          initialTab={initialModalTab}
-          isOpen={Boolean(previewModalRow)}
-          onClose={() => setPreviewModalRow(null)}
-          onSelectRow={setPreviewModalRow}
-          row={previewModalRow}
-        />
-      )}
     </div>
   )
-}
+}
