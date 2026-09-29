@@ -15,6 +15,7 @@ import {
   Radio,
   RefreshCw,
   ShieldCheck,
+  Square,
   TrendingUp,
   Upload,
   Zap,
@@ -213,11 +214,15 @@ export default function DashboardHub({
           </div>
           <div className="stream-status-text">
             <div className="stream-status-title">
-              <strong>{streamPaused ? 'Stream Paused' : 'Live Highway Feed Active'}</strong>
-              <span className="stream-source-tag">Source: {fileName || 'NH44_vehicles_5000_merged_with_images.xlsx'}</span>
+              <strong>{streamPaused ? '🔴 Live Feed & Database Fetching Stopped' : '🟢 Live Highway Feed & DB Fetch Active'}</strong>
+              <span className="stream-source-tag">Source: {fileName || 'All Database Records (7,044 Live Archive)'}</span>
             </div>
             <div className="stream-status-meta">
-              {latestBatchInfo?.batchCount ? (
+              {streamPaused ? (
+                <span className="stream-stopped-hint">
+                  Live data feeding and background MySQL queries are paused. Click <strong>Start Live Feed</strong> to resume.
+                </span>
+              ) : latestBatchInfo?.batchCount ? (
                 <span className="batch-flash-pill">
                   <Zap size={13} />
                   +<strong>{latestBatchInfo.batchCount}</strong> records arrived in this batch (Random range 1–20)
@@ -250,19 +255,20 @@ export default function DashboardHub({
 
           {onToggleStreamPause && (
             <button
-              className={`nh44-control-btn nh44-pause-btn ${streamPaused ? 'resume' : ''}`}
+              className={`nh44-control-btn nh44-pause-btn ${streamPaused ? 'resume' : 'stop'}`}
               onClick={onToggleStreamPause}
               type="button"
+              title={streamPaused ? 'Start live feed and resume database fetching' : 'Stop live feed and halt database fetching'}
             >
               {streamPaused ? (
                 <>
-                  <Play size={15} />
-                  <span>Resume Stream</span>
+                  <Play size={15} fill="currentColor" />
+                  <span>🟢 Start Live Feed</span>
                 </>
               ) : (
                 <>
-                  <Pause size={15} />
-                  <span>Pause Stream</span>
+                  <Square size={14} fill="currentColor" />
+                  <span>🔴 Stop Live Feed</span>
                 </>
               )}
             </button>

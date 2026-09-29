@@ -16,17 +16,21 @@ import {
   LayoutGrid,
   MapPin,
   PieChart as PieIcon,
+  Play,
   RefreshCw,
   Sparkles,
+  Square,
   Timer,
   TrendingUp,
   Truck,
   User,
+  Zap,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { navigation } from '../data/navigation'
+import { isVehicleTypeMatch } from '../data/vehicleTypes'
 import MediaPreviewModal from './MediaPreviewModal'
 
 export default function PlaceholderPage({
@@ -39,6 +43,7 @@ export default function PlaceholderPage({
   onToggleStreamPause = null,
   streamPaused = false,
   streamNotifications = [],
+  isOverviewTab = false,
 }) {
   const { pathname } = useLocation()
   const navigate = useNavigate()
@@ -54,11 +59,51 @@ export default function PlaceholderPage({
   }, [])
 
   const safeRows = Array.isArray(rows) ? rows : []
-  const isHomePage = pathname === '/home' || pathname === '/'
+  const isHomePage = pathname === '/home' || pathname === '/' || isOverviewTab
 
-  // Dynamic or authentic screenshot values
-  const totalCount = dbStats?.totalEvents || (safeRows.length ? safeRows.length : 12482)
+  // Dynamic live vehicle statistics
+  const totalCount = safeRows.length || dbStats?.totalRecords || dbStats?.totalPool || 7044
   const formattedTotal = Number(totalCount).toLocaleString()
+
+  const vehicleStats = useMemo(() => {
+    const counts = { Car: 0, Bike: 0, Truck: 0, Bus: 0, Auto: 0, Other: 0 }
+    let overspeeds = 0
+
+    if (safeRows.length > 0) {
+      safeRows.forEach((r) => {
+        const rawType = r.type || r.vehicleType
+        if (isVehicleTypeMatch(rawType, 'Car') || isVehicleTypeMatch(rawType, 'SUV')) counts.Car += 1
+        else if (isVehicleTypeMatch(rawType, 'Bike')) counts.Bike += 1
+        else if (isVehicleTypeMatch(rawType, 'Truck')) counts.Truck += 1
+        else if (isVehicleTypeMatch(rawType, 'Bus')) counts.Bus += 1
+        else if (isVehicleTypeMatch(rawType, 'Auto')) counts.Auto += 1
+        else counts.Other += 1
+
+        if (r.isOverSpeed || r.overSpeed === 'Yes') overspeeds += 1
+      })
+    } else if (dbStats?.vehicleTypes) {
+      counts.Car = (dbStats.vehicleTypes.Car || 0) + (dbStats.vehicleTypes.SUV || 0)
+      counts.Bike = dbStats.vehicleTypes.Bike || 0
+      counts.Truck = dbStats.vehicleTypes.Truck || 0
+      counts.Bus = dbStats.vehicleTypes.Bus || 0
+      counts.Auto = dbStats.vehicleTypes.Auto || 0
+      counts.Other = dbStats.vehicleTypes.Van || 0
+      overspeeds = dbStats.overspeedTotal || 0
+    }
+
+    const total = counts.Car + counts.Bike + counts.Truck + counts.Bus + counts.Auto + counts.Other || 1
+    const maxBar = Math.max(counts.Car, counts.Bike, counts.Truck, counts.Bus, counts.Auto, counts.Other, 1)
+    return {
+      counts,
+      total,
+      maxBar,
+      overspeeds,
+      twoWheelers: counts.Bike,
+      heavyVehicles: counts.Truck + counts.Bus,
+      cars: counts.Car,
+      autos: counts.Auto,
+    }
+  }, [safeRows, dbStats])
 
   // Format live clock e.g. "10:24:18 AM"
   const formattedClock = currentTime.toLocaleTimeString('en-US', {
@@ -70,20 +115,20 @@ export default function PlaceholderPage({
 
   // Dynamic detection feed items or realistic corridor detections
   const displayDetections = useMemo(() => {
-    if (safeRows.length >= 4) {
+    if (safeRows.length >= 1) {
       return safeRows.slice(0, 4).map((r, i) => ({
-        plate: r.vehicleNumberPlate || r.numberPlate || 'TS09AB1234',
+        plate: r.vehicleNumberPlate || r.numberPlate || `TG-0${i + 1}-LIVE`,
         type: r.type || r.vehicleType || 'Car',
-        camera: r.camera || `HYD-00${i + 1}`,
-        time: r.timestampIst ? r.timestampIst.slice(11, 16) : '10:24 AM',
-        thumb: r.vehicle_image_url || r.image_url || `/images/image${(i * 12) + 1}.jpeg`,
+        camera: r.camera || `CAM-NH44-0${(i % 6) + 1}`,
+        time: r.timestampIst ? r.timestampIst.slice(11, 19) : (r.timestamp || 'Live'),
+        thumb: r.vehicleImagePath || r.vehicle_image_url || r.image_url || `/images/image${(i * 12) + 1}.jpeg`,
       }))
     }
     return [
-      { plate: 'TS09AB1234', type: 'Car', camera: 'HYD-001', time: '10:24 AM', thumb: '/images/image1.jpeg' },
-      { plate: 'TS07XY5678', type: 'Truck', camera: 'HYD-003', time: '10:23 AM', thumb: '/images/image113.jpeg' },
-      { plate: 'TS11CD4321', type: 'Bike', camera: 'HYD-002', time: '10:23 AM', thumb: '/images/image25.jpeg' },
-      { plate: 'TS10EF9876', type: 'Bus', camera: 'HYD-001', time: '10:22 AM', thumb: '/images/image45.jpeg' },
+      { plate: 'TG 08 KW 3126', type: 'Car', camera: 'CAM-NH44-01-SHAMSHABAD', time: '10:24:12', thumb: '/images/image1.jpeg' },
+      { plate: 'TS 07 XY 5678', type: 'Truck', camera: 'CAM-NH44-02-SHADNAGAR', time: '10:23:45', thumb: '/images/image113.jpeg' },
+      { plate: 'AP 28 CD 7890', type: 'Bike', camera: 'CAM-NH44-03-RINGROAD', time: '10:23:18', thumb: '/images/image25.jpeg' },
+      { plate: 'TG 25 LY 5856', type: 'Bus', camera: 'CAM-NH44-04-MEDCHAL', time: '10:22:50', thumb: '/images/image45.jpeg' },
     ]
   }, [safeRows])
 
@@ -202,6 +247,74 @@ export default function PlaceholderPage({
         </div>
       </div>
 
+      {/* LIVE TELEMETRY & STREAM CONTROL CONSOLE */}
+      <div className="nh44-stream-console">
+        <div className="stream-console-status">
+          <div className={`radar-indicator ${streamPaused ? 'paused' : 'active'}`}>
+            <span className="radar-ring" />
+            <span className="radar-dot" />
+          </div>
+          <div className="stream-status-text">
+            <div className="stream-status-title">
+              <strong>{streamPaused ? '🔴 Live Feed & Database Fetching Stopped' : '🟢 Live Highway Telemetry & DB Fetching Active'}</strong>
+              <span className="stream-source-tag">Source: {fileName || 'All Database Records (7,044 Live Archive)'}</span>
+            </div>
+            <div className="stream-status-meta">
+              {streamPaused ? (
+                <span className="stream-stopped-hint">
+                  Live data feeding and background MySQL queries are paused. Click <strong>Start Live Feed</strong> to resume.
+                </span>
+              ) : latestBatchInfo?.batchCount ? (
+                <span className="batch-flash-pill">
+                  <Zap size={13} />
+                  +<strong>{latestBatchInfo.batchCount}</strong> records ingested in this batch (Random range 1–20)
+                  <span className="batch-total-growth">
+                    • Cumulative Total: <strong>{safeRows.length}</strong> records (Increasing ▲)
+                  </span>
+                </span>
+              ) : (
+                <span>Streaming live telemetry from MySQL database... Total: <strong>{safeRows.length}</strong> records</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="stream-console-actions">
+          {onFetchRandomBatch && (
+            <button
+              className="nh44-control-btn nh44-trigger-btn"
+              onClick={onFetchRandomBatch}
+              type="button"
+              title="Fetch a random batch of 1 to 20 records instantly"
+            >
+              <RefreshCw size={15} />
+              <span>Fetch Random Batch (1–20)</span>
+            </button>
+          )}
+
+          {onToggleStreamPause && (
+            <button
+              className={`nh44-control-btn nh44-pause-btn ${streamPaused ? 'resume' : 'stop'}`}
+              onClick={onToggleStreamPause}
+              type="button"
+              title={streamPaused ? 'Start live feed and resume database fetching' : 'Stop live feed and halt database fetching'}
+            >
+              {streamPaused ? (
+                <>
+                  <Play size={15} fill="currentColor" />
+                  <span>🟢 Start Live Feed</span>
+                </>
+              ) : (
+                <>
+                  <Square size={14} fill="currentColor" />
+                  <span>🔴 Stop Live Feed</span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* 2. Top 4 Stat KPI Cards */}
       <div className="viq-stat-cards-grid">
         {/* Total Vehicles */}
@@ -230,9 +343,9 @@ export default function PlaceholderPage({
           </div>
           <div className="viq-stat-info">
             <span className="viq-stat-label">Two Wheelers</span>
-            <strong className="viq-stat-value">6,230</strong>
+            <strong className="viq-stat-value">{vehicleStats.twoWheelers.toLocaleString()}</strong>
             <span className="viq-stat-trend">
-              <ArrowUp size={13} strokeWidth={2.5} /> 8%
+              <ArrowUp size={13} strokeWidth={2.5} /> Live
             </span>
           </div>
           <div className="viq-stat-sparkline" aria-hidden="true">
@@ -249,9 +362,9 @@ export default function PlaceholderPage({
           </div>
           <div className="viq-stat-info">
             <span className="viq-stat-label">Heavy Vehicles</span>
-            <strong className="viq-stat-value">1,842</strong>
+            <strong className="viq-stat-value">{vehicleStats.heavyVehicles.toLocaleString()}</strong>
             <span className="viq-stat-trend">
-              <ArrowUp size={13} strokeWidth={2.5} /> 5%
+              <ArrowUp size={13} strokeWidth={2.5} /> Live
             </span>
           </div>
           <div className="viq-stat-sparkline" aria-hidden="true">
@@ -261,21 +374,21 @@ export default function PlaceholderPage({
           </div>
         </div>
 
-        {/* Pedestrians */}
+        {/* Speed Violations */}
         <div className="viq-stat-card">
-          <div className="viq-stat-icon-wrap sky">
-            <User size={22} strokeWidth={2} />
+          <div className="viq-stat-icon-wrap sky" style={{ background: '#fef2f2' }}>
+            <Flame size={22} strokeWidth={2} style={{ color: '#dc2626' }} />
           </div>
           <div className="viq-stat-info">
-            <span className="viq-stat-label">Pedestrians</span>
-            <strong className="viq-stat-value">2,910</strong>
-            <span className="viq-stat-trend">
-              <ArrowUp size={13} strokeWidth={2.5} /> 14%
+            <span className="viq-stat-label">Speed Violations</span>
+            <strong className="viq-stat-value" style={{ color: '#dc2626' }}>{vehicleStats.overspeeds.toLocaleString()}</strong>
+            <span className="viq-stat-trend" style={{ color: '#dc2626' }}>
+              <ArrowUp size={13} strokeWidth={2.5} /> Radar
             </span>
           </div>
           <div className="viq-stat-sparkline" aria-hidden="true">
             <svg viewBox="0 0 90 40" fill="none" className="sparkline-svg">
-              <path d="M2 30 C 18 32, 28 20, 44 26 C 58 32, 70 12, 88 10" stroke="#4f82c4" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M2 30 C 18 32, 28 20, 44 26 C 58 32, 70 12, 88 10" stroke="#dc2626" strokeWidth="2.5" strokeLinecap="round" />
             </svg>
           </div>
         </div>
@@ -318,8 +431,8 @@ export default function PlaceholderPage({
               <div className="viq-chart-bars">
                 {/* Cars */}
                 <div className="viq-bar-col">
-                  <span className="viq-bar-value">3,420</span>
-                  <div className="viq-bar-fill green" style={{ height: '85.5%' }} />
+                  <span className="viq-bar-value">{vehicleStats.counts.Car.toLocaleString()}</span>
+                  <div className="viq-bar-fill green" style={{ height: `${Math.max(12, Math.round((vehicleStats.counts.Car / vehicleStats.maxBar) * 88))}%` }} />
                   <div className="viq-bar-label">
                     <Car size={15} />
                     <span>Cars</span>
@@ -328,8 +441,8 @@ export default function PlaceholderPage({
 
                 {/* Bikes */}
                 <div className="viq-bar-col">
-                  <span className="viq-bar-value">2,890</span>
-                  <div className="viq-bar-fill amber" style={{ height: '72.2%' }} />
+                  <span className="viq-bar-value">{vehicleStats.counts.Bike.toLocaleString()}</span>
+                  <div className="viq-bar-fill amber" style={{ height: `${Math.max(12, Math.round((vehicleStats.counts.Bike / vehicleStats.maxBar) * 88))}%` }} />
                   <div className="viq-bar-label">
                     <Bike size={15} />
                     <span>Bikes</span>
@@ -338,8 +451,8 @@ export default function PlaceholderPage({
 
                 {/* Trucks */}
                 <div className="viq-bar-col">
-                  <span className="viq-bar-value">1,240</span>
-                  <div className="viq-bar-fill terracotta" style={{ height: '31%' }} />
+                  <span className="viq-bar-value">{vehicleStats.counts.Truck.toLocaleString()}</span>
+                  <div className="viq-bar-fill terracotta" style={{ height: `${Math.max(12, Math.round((vehicleStats.counts.Truck / vehicleStats.maxBar) * 88))}%` }} />
                   <div className="viq-bar-label">
                     <Truck size={15} />
                     <span>Trucks</span>
@@ -348,8 +461,8 @@ export default function PlaceholderPage({
 
                 {/* Buses */}
                 <div className="viq-bar-col">
-                  <span className="viq-bar-value">620</span>
-                  <div className="viq-bar-fill blue" style={{ height: '15.5%' }} />
+                  <span className="viq-bar-value">{vehicleStats.counts.Bus.toLocaleString()}</span>
+                  <div className="viq-bar-fill blue" style={{ height: `${Math.max(12, Math.round((vehicleStats.counts.Bus / vehicleStats.maxBar) * 88))}%` }} />
                   <div className="viq-bar-label">
                     <Bus size={15} />
                     <span>Buses</span>
@@ -358,8 +471,8 @@ export default function PlaceholderPage({
 
                 {/* Auto */}
                 <div className="viq-bar-col">
-                  <span className="viq-bar-value">950</span>
-                  <div className="viq-bar-fill purple" style={{ height: '23.8%' }} />
+                  <span className="viq-bar-value">{vehicleStats.counts.Auto.toLocaleString()}</span>
+                  <div className="viq-bar-fill purple" style={{ height: `${Math.max(12, Math.round((vehicleStats.counts.Auto / vehicleStats.maxBar) * 88))}%` }} />
                   <div className="viq-bar-label">
                     <Car size={15} />
                     <span>Auto</span>
@@ -368,8 +481,8 @@ export default function PlaceholderPage({
 
                 {/* Other */}
                 <div className="viq-bar-col">
-                  <span className="viq-bar-value">310</span>
-                  <div className="viq-bar-fill slate" style={{ height: '7.8%' }} />
+                  <span className="viq-bar-value">{vehicleStats.counts.Other.toLocaleString()}</span>
+                  <div className="viq-bar-fill slate" style={{ height: `${Math.max(12, Math.round((vehicleStats.counts.Other / vehicleStats.maxBar) * 88))}%` }} />
                   <div className="viq-bar-label">
                     <LayoutGrid size={15} />
                     <span>Other</span>

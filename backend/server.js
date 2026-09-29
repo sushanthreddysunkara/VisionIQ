@@ -21,7 +21,9 @@ const {
   storeUploadedVehicleRecords,
   getActiveFileName,
   searchVehicles,
+  toClientRecord,
 } = require('./services/vehicleStream')
+const { pool } = require('./config/database')
 
 const app = express()
 const httpServer = http.createServer(app)
@@ -177,6 +179,9 @@ app.get('/api/vehicles/search', async (req, res) => {
 // Fetch random number of records (1 to 20) using random function
 app.get('/api/vehicles/random-batch', async (req, res) => {
   try {
+    if (isStreamPaused() && req.query.force !== 'true') {
+      return res.json({ success: true, count: 0, batchSize: 0, vehicles: [], isPaused: true })
+    }
     const requestedCount = req.query.count ? Number(req.query.count) : null
     const fileName = req.query.fileName || null
     const batch = await fetchRandomVehicleBatch(requestedCount, fileName)
@@ -198,24 +203,28 @@ app.get('/api/vehicles/random-batch', async (req, res) => {
   }
 })
 
-// Live stream control: pause, resume, or trigger instant random batch
+// Live stream control: get status, pause, resume, stop, or trigger instant random batch
+app.get('/api/vehicles/stream-control', (req, res) => {
+  res.json({ success: true, isPaused: isStreamPaused() })
+})
+
 app.post('/api/vehicles/stream-control', async (req, res) => {
   const { action } = req.body || {}
-  if (action === 'pause') {
+  if (action === 'pause' || action === 'stop') {
     pauseStream()
     io.emit('vehicleStreamStatus', { ...getLatestStreamStatus(), isPaused: true })
-    return res.json({ success: true, isPaused: true })
+    return res.json({ success: true, isPaused: true, message: 'Live feed and database fetching stopped.' })
   }
-  if (action === 'resume') {
+  if (action === 'resume' || action === 'start') {
     resumeStream()
     io.emit('vehicleStreamStatus', { ...getLatestStreamStatus(), isPaused: false })
-    return res.json({ success: true, isPaused: false })
+    return res.json({ success: true, isPaused: false, message: 'Live feed and database fetching resumed.' })
   }
   if (action === 'trigger' || action === 'next') {
     const batch = await triggerInstantBatch(io)
     return res.json({ success: true, count: batch.count, vehicles: batch.records })
   }
-  res.status(400).json({ success: false, message: 'Invalid stream control action. Use "pause", "resume", or "trigger".' })
+  res.status(400).json({ success: false, message: 'Invalid stream control action. Use "stop", "start", "pause", "resume", or "trigger".' })
 })
 
 // Pool statistics across records in MySQL
@@ -224,6 +233,65 @@ app.get('/api/vehicles/stats', async (req, res) => {
     const fileName = req.query.fileName || null
     const stats = await getVehiclePoolStats(fileName)
     res.json({ success: true, stats })
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// Incidents & Violations endpoint
+app.get('/api/vehicles/incidents', async (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 50
+    if (!pool) return res.json({ success: true, count: 0, incidents: [] })
+    const [rows] = await pool.query(
+      `SELECT * FROM vehicle_events 
+       WHERE over_speed = 'Yes' OR events LIKE '%violation%' OR events LIKE '%speed%' OR events LIKE '%collision%'
+       ORDER BY id DESC LIMIT ?`,
+      [limit]
+    )
+    const incidents = rows.map((r) => {
+      const client = toClientRecord(r)
+      return {
+        vehicleNumber: client.vehicleNumberPlate,
+        vehicleType: client.vehicleType,
+        incidentType: client.isOverSpeed ? 'Collision' : (client.events || 'Accident'),
+        incidentTime: client.timestampIst,
+        collisionCamera: client.camera,
+        status: client.isOverSpeed ? 'Tracking' : 'Detected',
+        observations: [
+          {
+            cameraId: client.camera,
+            timestamp: client.timestampIst,
+            latitude: client.latitude,
+            longitude: client.longitude,
+            location: client.location,
+            detectionType: client.isOverSpeed ? 'Collision' : 'Incident',
+            confidence: client.plateConfidence,
+            imageUrl: client.vehicleImagePath,
+            speed: client.speed,
+            speedLimit: client.speedLimit,
+          }
+        ]
+      }
+    })
+    res.json({ success: true, count: incidents.length, incidents })
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// Camera Network endpoint
+app.get('/api/cameras', async (req, res) => {
+  try {
+    const cams = [
+      { id: 'CAM-NH44-01-SHAMSHABAD', name: 'Shamshabad Tollway (KM 18)', latitude: 17.385044, longitude: 78.486671, status: 'Active' },
+      { id: 'CAM-NH44-02-SHADNAGAR', name: 'Shadnagar Interchange (KM 52)', latitude: 17.215, longitude: 78.204, status: 'Active' },
+      { id: 'CAM-NH44-03-RINGROAD', name: 'Hyderabad Ring Corridor', latitude: 17.4431, longitude: 78.3812, status: 'Active' },
+      { id: 'CAM-NH44-04-MEDCHAL', name: 'Medchal North Gateway (KM 36)', latitude: 17.629, longitude: 78.481, status: 'Active' },
+      { id: 'CAM-NH44-05-JADCHERLA', name: 'Jadcherla Express Point (KM 84)', latitude: 16.764, longitude: 78.136, status: 'Active' },
+      { id: 'CAM-NH44-06-TOLLPLAZA', name: 'Raikal Toll Plaza', latitude: 17.062, longitude: 78.243, status: 'Active' },
+    ]
+    res.json({ success: true, count: cams.length, cameras: cams })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })
   }
