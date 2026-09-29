@@ -22561,9 +22561,10 @@ input[type="text"]:focus, input[type="search"]:focus, select:focus {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   NEO4J STUDIO QUERY & CONSTELLATION GRAPH UI
+   INTELLIGENT QUERY STUDIO & CONSTELLATION GRAPH UI
    ═══════════════════════════════════════════════════════════════════ */
-.kg-neo4j-console {
+.kg-neo4j-console,
+.kg-query-console {
   display: flex;
   flex-direction: column;
   background: #ffffff;
@@ -22572,44 +22573,6 @@ input[type="text"]:focus, input[type="search"]:focus, select:focus {
   border-radius: 8px 8px 0 0;
   margin-bottom: 0;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-}
-
-.kg-neo4j-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 14px;
-  background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 11px;
-  color: #64748b;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.kg-neo4j-topbar-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.kg-neo4j-url {
-  color: #64748b;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.kg-neo4j-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: #ffffff;
-  border: 1px solid #cbd5e1;
-  padding: 3px 10px;
-  border-radius: 4px;
-  color: #0f172a;
-  font-weight: 600;
-  font-size: 11px;
 }
 
 .kg-neo4j-editor-wrapper {
@@ -22713,6 +22676,39 @@ input[type="text"]:focus, input[type="search"]:focus, select:focus {
   color: #ffffff;
   border-color: #0284c7;
   font-weight: 600;
+}
+
+.kg-ai-model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.kg-ai-model-pill.active {
+  background: #ecfdf5;
+  color: #059669;
+  border-color: #a7f3d0;
+}
+
+.kg-ai-model-pill.offline {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #e2e8f0;
+}
+
+.spin-animate {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .kg-neo4j-subnav {
@@ -22845,6 +22841,80 @@ input[type="text"]:focus, input[type="search"]:focus, select:focus {
 .kg-floating-btn:hover {
   background: #f1f5f9;
   color: #0f172a;
+}
+
+/* KNOWLEDGE GRAPH CLEAN TOP TOOLBAR (NO CYPHER CONSOLE) */
+.kg-graph-top-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-bottom: 2px solid #cbd5e1;
+  border-radius: 8px 8px 0 0;
+  gap: 12px;
+}
+
+.kg-graph-top-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  flex: 1;
+}
+
+.kg-graph-top-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kg-active-focus-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  font-size: 11px;
+}
+
+.kg-active-focus-pill button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: #2563eb;
+  display: flex;
+  align-items: center;
+}
+
+.kg-query-studio-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+}
+
+.kg-query-results-area {
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  min-height: 550px;
+}
+
+.kg-query-canvas-wrapper {
+  position: relative;
+  width: 100%;
+  height: 600px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-top: none;
 }
 
 

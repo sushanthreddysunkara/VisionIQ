@@ -8,7 +8,6 @@ import {
   Car,
   Check,
   ChevronDown,
-  Code2,
   Compass,
   Eye,
   EyeOff,
@@ -16,20 +15,16 @@ import {
   Info,
   Layers,
   Loader2,
-  Lock,
   MapPin,
   Maximize,
   Minus,
   Network,
-  Play,
   Plus,
   Radio,
   RefreshCw,
   Search,
   ShieldAlert,
   Sliders,
-  Sparkles,
-  Table as TableIcon,
   Zap,
   X,
 } from 'lucide-react'
@@ -111,203 +106,6 @@ export function separateOverlappingNodes(cy) {
     if (!moved) break
   }
 }
-
-// ─── CYPHER QUERY EVALUATION ENGINE ────────────────────────────────
-function isNodeMatchingLabel(node, targetLabel) {
-  if (!targetLabel) return true
-  const l = targetLabel.toLowerCase()
-  if (node.category && node.category.toLowerCase() === l) return true
-  if (node.vehicleType && node.vehicleType.toLowerCase() === l) return true
-  if (l === 'observation' && node.category === 'Observation') return true
-  if (l === 'camera' && node.category === 'Camera') return true
-  if (l === 'location' && node.category === 'Location') return true
-  if (l === 'violation' && node.category === 'Violation') return true
-  if (l === 'vehicletype' && node.category === 'VehicleType') return true
-  if (node.label && node.label.toLowerCase() === l) return true
-  return false
-}
-
-function getNodeFieldValue(node, fieldName) {
-  if (!fieldName) return ''
-  const normField = fieldName.toLowerCase().replace(/[^a-z0-9]/g, '')
-  if (normField === 'speed') {
-    const raw = node.properties?.['Speed'] || node.rawRow?.speed
-    return Number(String(raw || 0).replace(/[^0-9.]/g, '')) || 0
-  }
-  if (normField === 'speedlimit') {
-    const raw = node.properties?.['Speed Limit'] || node.rawRow?.speedLimit
-    return Number(String(raw || 60).replace(/[^0-9.]/g, '')) || 60
-  }
-  if (normField === 'overspeed' || normField === 'isoverspeed') {
-    return Boolean(
-      node.properties?.['Violation Status']?.includes('Overspeed') ||
-      node.rawRow?.isOverSpeed ||
-      node.rawRow?.overSpeed === 'Yes' ||
-      node.category === 'Violation'
-    )
-  }
-  if (normField === 'category') return (node.category || '').toLowerCase()
-  if (normField === 'vehicletype' || normField === 'type') return (node.vehicleType || node.label || '').toLowerCase()
-  if (normField === 'camera' || normField === 'cameraid') {
-    return (node.properties?.['Captured By'] || node.properties?.['Camera ID'] || node.rawRow?.camera || '').toLowerCase()
-  }
-  if (normField === 'location' || normField === 'roadname') {
-    return (node.properties?.['Location'] || node.properties?.['Monitored Corridor'] || node.rawRow?.location || node.rawRow?.roadName || '').toLowerCase()
-  }
-  if (normField === 'plate' || normField === 'numberplate' || normField === 'vehiclenumberplate') {
-    return (node.properties?.['Number Plate'] || node.rawRow?.numberPlate || node.rawRow?.vehicleNumberPlate || node.label || '').toLowerCase()
-  }
-  if (normField === 'id') return String(node.id || '').toLowerCase()
-  if (normField === 'label') return String(node.label || '').toLowerCase()
-
-  for (const [k, v] of Object.entries(node.properties || {})) {
-    if (k.toLowerCase().replace(/[^a-z0-9]/g, '') === normField) {
-      return String(v).toLowerCase()
-    }
-  }
-  return ''
-}
-
-function evaluateCondition(node, conditionStr) {
-  const cond = conditionStr.trim()
-  if (!cond) return true
-
-  const compMatch = cond.match(/(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)\s*(>=|<=|>|<|=|!=|CONTAINS|STARTS WITH|ENDS WITH)\s*(['"]?)(.*?)\3$/i)
-  if (compMatch) {
-    const [, field, op, , rawTarget] = compMatch
-    const actualVal = getNodeFieldValue(node, field)
-    const upperOp = op.toUpperCase()
-
-    if (['>', '<', '>=', '<='].includes(upperOp)) {
-      const numActual = Number(actualVal) || 0
-      const numTarget = Number(rawTarget) || 0
-      if (upperOp === '>') return numActual > numTarget
-      if (upperOp === '<') return numActual < numTarget
-      if (upperOp === '>=') return numActual >= numTarget
-      if (upperOp === '<=') return numActual <= numTarget
-    }
-
-    const strActual = String(actualVal).toLowerCase()
-    const strTarget = String(rawTarget).trim().toLowerCase()
-
-    if (upperOp === '=') {
-      if (strTarget === 'true') return Boolean(actualVal) === true
-      if (strTarget === 'false') return Boolean(actualVal) === false
-      return strActual === strTarget
-    }
-    if (upperOp === '!=') return strActual !== strTarget
-    if (upperOp === 'CONTAINS') return strActual.includes(strTarget)
-    if (upperOp === 'STARTS WITH') return strActual.startsWith(strTarget)
-    if (upperOp === 'ENDS WITH') return strActual.endsWith(strTarget)
-  }
-
-  const boolMatch = cond.match(/(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)$/)
-  if (boolMatch) {
-    return Boolean(getNodeFieldValue(node, boolMatch[1]))
-  }
-
-  return true
-}
-
-function evaluateWhereClause(node, whereStr) {
-  if (!whereStr) return true
-  const andClauses = whereStr.split(/\s+AND\s+/i)
-  return andClauses.every((c) => {
-    const orClauses = c.split(/\s+OR\s+/i)
-    return orClauses.some((orC) => evaluateCondition(node, orC))
-  })
-}
-
-function evaluateCypherQuery(queryStr, allNodes, allEdges) {
-  if (!queryStr || !queryStr.trim()) {
-    return { nodes: allNodes, edges: allEdges, error: null }
-  }
-
-  const cleanQuery = queryStr.trim().replace(/\r\n/g, '\n')
-
-  const isWildcard = /MATCH\s*\(\s*n\s*\)(\s*OPTIONAL\s*MATCH\s*\([^)]*\))?\s*RETURN\s*\*/i.test(cleanQuery.replace(/\s+/g, ' '))
-  if (isWildcard) {
-    return { nodes: allNodes, edges: allEdges, error: null }
-  }
-
-  try {
-    const limitMatch = cleanQuery.match(/LIMIT\s+(\d+)/i)
-    const queryLimit = limitMatch ? parseInt(limitMatch[1], 10) : null
-
-    const relPattern = /MATCH\s*\(([a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+))?\s*(?:\{([^}]*)\})?\)\s*-\s*\[([a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+))?\s*\]->\s*\(([a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+))?\s*(?:\{([^}]*)\})?\)/i
-    const undirectedRelPattern = /MATCH\s*\(([a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+))?\s*(?:\{([^}]*)\})?\)\s*-\s*\[([a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+))?\s*\]-\s*\(([a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+))?\s*(?:\{([^}]*)\})?\)/i
-    const singleNodePattern = /MATCH\s*\(([a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+))?\s*(?:\{([^}]*)\})?\)/i
-
-    const whereMatch = cleanQuery.match(/WHERE\s+([\s\S]*?)(?:RETURN|LIMIT|$)/i)
-    const whereClause = whereMatch ? whereMatch[1].trim() : ''
-
-    let matchedNodes = []
-    let matchedEdges = []
-
-    const relMatch = cleanQuery.match(relPattern) || cleanQuery.match(undirectedRelPattern)
-    if (relMatch) {
-      const srcLabel = relMatch[2] ? relMatch[2].toLowerCase() : null
-      const edgeLabel = relMatch[5] ? relMatch[5].toLowerCase() : null
-      const tgtLabel = relMatch[7] ? relMatch[7].toLowerCase() : null
-
-      matchedEdges = allEdges.filter((e) => {
-        if (edgeLabel && e.label.toLowerCase() !== edgeLabel) return false
-        const srcNode = allNodes.find((n) => n.id === e.source)
-        const tgtNode = allNodes.find((n) => n.id === e.target)
-        if (!srcNode || !tgtNode) return false
-
-        const dirMatch = (!srcLabel || isNodeMatchingLabel(srcNode, srcLabel)) && (!tgtLabel || isNodeMatchingLabel(tgtNode, tgtLabel))
-        const revMatch = (!srcLabel || isNodeMatchingLabel(tgtNode, srcLabel)) && (!tgtLabel || isNodeMatchingLabel(srcNode, tgtLabel))
-        return dirMatch || revMatch
-      })
-
-      const nodeIds = new Set()
-      matchedEdges.forEach((e) => {
-        nodeIds.add(e.source)
-        nodeIds.add(e.target)
-      })
-      matchedNodes = allNodes.filter((n) => nodeIds.has(n.id))
-    } else {
-      const nodeMatch = cleanQuery.match(singleNodePattern)
-      const targetLabel = nodeMatch && nodeMatch[2] ? nodeMatch[2].toLowerCase() : null
-
-      matchedNodes = allNodes.filter((node) => {
-        if (targetLabel && !isNodeMatchingLabel(node, targetLabel)) {
-          return false
-        }
-        return true
-      })
-
-      const matchedNodeIdSet = new Set(matchedNodes.map((n) => n.id))
-      matchedEdges = allEdges.filter((e) => matchedNodeIdSet.has(e.source) && matchedNodeIdSet.has(e.target))
-    }
-
-    if (whereClause) {
-      matchedNodes = matchedNodes.filter((node) => evaluateWhereClause(node, whereClause))
-      const validIds = new Set(matchedNodes.map((n) => n.id))
-      matchedEdges = matchedEdges.filter((e) => validIds.has(e.source) && validIds.has(e.target))
-    }
-
-    if (queryLimit && queryLimit > 0) {
-      matchedNodes = matchedNodes.slice(0, queryLimit)
-      const limitIds = new Set(matchedNodes.map((n) => n.id))
-      matchedEdges = matchedEdges.filter((e) => limitIds.has(e.source) && limitIds.has(e.target))
-    }
-
-    return { nodes: matchedNodes, edges: matchedEdges, error: null }
-  } catch (err) {
-    return { nodes: allNodes, edges: allEdges, error: `Invalid Cypher: ${err.message}` }
-  }
-}
-
-const CYPHER_PRESETS = [
-  { label: 'All (Default)', query: 'MATCH (n)\nOPTIONAL MATCH (n)-[r]->(m)\nRETURN *' },
-  { label: 'Cameras', query: 'MATCH (n:Camera)\nRETURN n' },
-  { label: 'Locations', query: 'MATCH (n:Location)\nRETURN n' },
-  { label: 'Speed > 80 km/h', query: 'MATCH (n:Observation)\nWHERE n.speed > 80\nRETURN n' },
-  { label: 'Violations', query: 'MATCH (n)\nWHERE n.overSpeed = \'Yes\'\nRETURN n' },
-  { label: 'Cameras ➔ Locations', query: 'MATCH (c:Camera)-[r:MONITORS]->(l:Location)\nRETURN *' },
-]
 
 export default function KnowledgeGraphPage({
   rows = [],
@@ -434,18 +232,6 @@ export default function KnowledgeGraphPage({
     renderedObsIdsRef.current = new Set()
   }, [focusedCamera])
 
-  // Neo4j Studio & Constellation State
-  const [cypherQuery, setCypherQuery] = useState(
-    'MATCH (n)\nOPTIONAL MATCH (n)-[r]->(m)\nRETURN *'
-  )
-  const [executedCypher, setExecutedCypher] = useState(
-    'MATCH (n)\nOPTIONAL MATCH (n)-[r]->(m)\nRETURN *'
-  )
-  const [cypherStats, setCypherStats] = useState({
-    executionTimeMs: 14,
-    error: null,
-  })
-  const [studioViewMode, setStudioViewMode] = useState('graph') // 'graph' | 'table' | 'raw'
   const [isLayersOpen, setIsLayersOpen] = useState(false)
   const [recordLimit, setRecordLimit] = useState(350)
 
@@ -871,14 +657,10 @@ export default function KnowledgeGraphPage({
     return { currentNodes: nodes, currentEdges: edges }
   }, [activeRows, focusMode, frozenVehicle, focusedCamera, recordLimit])
 
-  const cypherEvaluatedData = useMemo(() => {
-    return evaluateCypherQuery(executedCypher, currentNodes, currentEdges)
-  }, [executedCypher, currentNodes, currentEdges])
-
   const visibleNodes = useMemo(() => {
     if (focusMode === 'VEHICLE') return currentNodes
 
-    const baseNodes = cypherEvaluatedData.nodes || currentNodes
+    const baseNodes = currentNodes
 
     return baseNodes.filter((node) => {
       const matchCat = activeCategory === 'ALL' || node.category === activeCategory
@@ -890,13 +672,12 @@ export default function KnowledgeGraphPage({
 
       return matchCat && matchSearch
     })
-  }, [currentNodes, cypherEvaluatedData, focusMode, activeCategory, searchTerm])
+  }, [currentNodes, focusMode, activeCategory, searchTerm])
 
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes])
   const visibleEdges = useMemo(() => {
-    const baseEdges = cypherEvaluatedData.edges || currentEdges
-    return baseEdges.filter((e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target))
-  }, [cypherEvaluatedData, visibleNodeIds])
+    return currentEdges.filter((e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target))
+  }, [currentEdges, visibleNodeIds])
 
   // Compute node degrees for dynamic size hierarchy
   const nodeDegreeMap = useMemo(() => {
@@ -943,7 +724,7 @@ export default function KnowledgeGraphPage({
       return { name: 'grid', padding: 90, animate: true, animationDuration: 600 }
     }
 
-    // Default: Force-Directed COSE with tight celestial clusters and bridge links (matching Neo4j Bloom)
+    // Default: Force-Directed COSE with tight celestial clusters and bridge links
     return {
       name: 'cose',
       animate: true,
@@ -1010,7 +791,7 @@ export default function KnowledgeGraphPage({
       wheelSensitivity: 0.15,
       layout: layoutConfig,
       style: [
-        // ─── PURE SOLID CIRCULAR BEADS (EXACT MATCH TO REFERENCE NEO4J PHOTO) ──
+        // ─── PURE SOLID CIRCULAR BEADS ─────────────────────────────────
         {
           selector: 'node',
           style: {
@@ -1483,21 +1264,6 @@ export default function KnowledgeGraphPage({
     }).run()
   }
 
-  function handleExecuteCypher(queryToRun) {
-    const q = typeof queryToRun === 'string' ? queryToRun : cypherQuery
-    setExecutedCypher(q)
-    const t0 = performance.now()
-    const res = evaluateCypherQuery(q, currentNodes, currentEdges)
-    const elapsed = Math.round(performance.now() - t0) || 12
-    setCypherStats({
-      executionTimeMs: elapsed,
-      error: res.error,
-    })
-    setTimeout(() => {
-      handleRelayout()
-    }, 40)
-  }
-
   function handleInspectNeighbor(neighborId) {
     if (!cyRef.current) return
     const cyNode = cyRef.current.getElementById(neighborId)
@@ -1540,182 +1306,94 @@ export default function KnowledgeGraphPage({
         className={`kg-explorer-container ${isFullscreen ? 'fullscreen' : ''}`}
         style={{ display: activeTab === 'graph' ? 'flex' : 'none' }}
       >
-        {/* TOP NEO4J STUDIO QUERY CONSOLE (EXACT MATCH TO PHOTO) */}
-        <div className="kg-neo4j-console">
-          {/* Top URL & Status Strip */}
-          <div className="kg-neo4j-topbar">
-            <div className="kg-neo4j-topbar-left">
-              <span className="kg-neo4j-url">
-                <Sparkles size={12} style={{ color: '#0284c7' }} />
-                console.neo4j.io/projects/81042039-b023-469d-b8ab-fab195b48c2f/studio/query
-              </span>
-              <div className="kg-neo4j-tab">
-                <span className="kg-status-dot green" />
-                <span>Stream</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const defaultQ = 'MATCH (n)\nOPTIONAL MATCH (n)-[r]->(m)\nRETURN *'
-                    setCypherQuery(defaultQ)
-                    handleExecuteCypher(defaultQ)
-                  }}
-                  title="Reset to default query"
-                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 4, color: '#94a3b8' }}
-                >
+        {/* TOP KNOWLEDGE GRAPH CLEAN TOOLBAR */}
+        <div className="kg-graph-top-toolbar">
+          <div className="kg-graph-top-left">
+            <div className="kg-search-wrapper" style={{ maxWidth: 280, height: 32 }}>
+              <Search size={13} className="kg-search-icon" />
+              <input
+                type="text"
+                placeholder="Find plate / camera / node..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value)
+                  setShowSuggestions(true)
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 250)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearchSubmit(e)}
+                style={{ fontSize: 12, paddingLeft: 28 }}
+              />
+              {searchTerm && (
+                <button className="kg-search-clear" onClick={() => setSearchTerm('')} type="button">
                   <X size={11} />
                 </button>
+              )}
+            </div>
+
+            {/* Auto-suggestions dropdown */}
+            {showSuggestions && (searchSuggestions.cameras.length > 0 || searchSuggestions.vehicles.length > 0) && (
+              <div className="kg-suggestions-dropdown">
+                {searchSuggestions.cameras.map((cam) => (
+                  <div
+                    key={cam}
+                    className="kg-suggestion-item"
+                    onMouseDown={() => handleSelectCamera(cam)}
+                  >
+                    <Camera size={13} style={{ color: '#059669' }} />
+                    <span>Camera: <strong>{cam}</strong></span>
+                  </div>
+                ))}
+                {searchSuggestions.vehicles.map((v) => {
+                  const plate = v.numberPlate || v.vehicleNumberPlate || v.observationId || v.id
+                  return (
+                    <div
+                      key={plate}
+                      className="kg-suggestion-item"
+                      onMouseDown={() => handleSelectVehicle(v)}
+                    >
+                      <Car size={13} style={{ color: '#0284c7' }} />
+                      <span>Vehicle: <strong>{plate}</strong></span>
+                    </div>
+                  )
+                })}
               </div>
-            </div>
+            )}
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ color: '#64748b', fontSize: 11 }}>Limit:</span>
-              <select
-                value={recordLimit}
-                onChange={(e) => {
-                  const val = e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
-                  setRecordLimit(val)
-                }}
-                style={{
-                  fontSize: 11,
-                  padding: '2px 8px',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: 4,
-                  background: '#ffffff',
-                  color: '#334155',
-                  cursor: 'pointer',
-                  outline: 'none',
-                }}
-              >
-                <option value={100}>100 records</option>
-                <option value={200}>200 records</option>
-                <option value={350}>350 records (Standard Constellation)</option>
-                <option value={500}>500 records</option>
-                <option value="ALL">All telemetry</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Cypher Query Editor Box */}
-          <div className="kg-neo4j-editor-wrapper">
-            <div className="kg-neo4j-editor-inner">
-              <textarea
-                className="kg-neo4j-textarea"
-                value={cypherQuery}
-                onChange={(e) => setCypherQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                    handleExecuteCypher(cypherQuery)
-                  }
-                }}
-                placeholder="MATCH (n)&#10;OPTIONAL MATCH (n)-[r]->(m)&#10;RETURN *"
-                rows={2}
-              />
-            </div>
-            <div className="kg-neo4j-actions">
-              <button
-                type="button"
-                className="kg-neo4j-run-btn"
-                onClick={() => handleExecuteCypher(cypherQuery)}
-                title="Execute Cypher Query (Ctrl + Enter)"
-              >
-                <Play size={13} style={{ fill: '#ffffff' }} />
-                <span>Run</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Quick Cypher Query Preset Chips */}
-          <div className="kg-neo4j-chips">
-            <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>Presets:</span>
-            {CYPHER_PRESETS.map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                className={`kg-neo4j-chip ${executedCypher === preset.query ? 'active' : ''}`}
-                onClick={() => {
-                  setCypherQuery(preset.query)
-                  handleExecuteCypher(preset.query)
-                }}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Optional Error Alert if Syntax Error */}
-          {cypherStats.error && (
-            <div style={{ background: '#fef2f2', color: '#b91c1c', padding: '6px 14px', fontSize: '11px', borderTop: '1px solid #fecaca', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span>⚠️</span>
-              <span>{cypherStats.error}</span>
-            </div>
-          )}
-
-          {/* Sub-bar with View switchers (Graph | Table | Raw) & Metrics */}
-          <div className="kg-neo4j-subnav">
-            <div className="kg-neo4j-view-tabs">
-              <button
-                type="button"
-                className={`kg-neo4j-view-btn ${studioViewMode === 'graph' ? 'active' : ''}`}
-                onClick={() => setStudioViewMode('graph')}
-              >
-                <Network size={14} />
-                <span>Graph</span>
-              </button>
-              <button
-                type="button"
-                className={`kg-neo4j-view-btn ${studioViewMode === 'table' ? 'active' : ''}`}
-                onClick={() => setStudioViewMode('table')}
-              >
-                <TableIcon size={14} />
-                <span>Table</span>
-              </button>
-              <button
-                type="button"
-                className={`kg-neo4j-view-btn ${studioViewMode === 'raw' ? 'active' : ''}`}
-                onClick={() => setStudioViewMode('raw')}
-              >
-                <Code2 size={14} />
-                <span>Raw</span>
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div className="kg-search-wrapper" style={{ maxWidth: 220, height: 28 }}>
-                <Search size={12} className="kg-search-icon" />
-                <input
-                  type="text"
-                  placeholder="Find plate / camera..."
-                  value={searchTerm}
-                  onChange={(e) => {
-                    setSearchTerm(e.target.value)
-                    setShowSuggestions(true)
-                  }}
-                  onFocus={() => setShowSuggestions(true)}
-                  onBlur={() => setTimeout(() => setShowSuggestions(false), 250)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearchSubmit(e)}
-                  style={{ fontSize: 11, paddingLeft: 26 }}
-                />
-                {searchTerm && (
-                  <button className="kg-search-clear" onClick={() => setSearchTerm('')} type="button">
-                    <X size={10} />
-                  </button>
-                )}
+            {focusMode !== 'ALL' && (
+              <div className="kg-active-focus-pill">
+                <span>Focus: <strong>{focusedCamera || frozenVehicle?.numberPlate || 'Selected Node'}</strong></span>
+                <button type="button" onClick={handleExitFocusMode} title="Reset focus to all entities">
+                  <X size={12} />
+                </button>
               </div>
+            )}
+          </div>
 
-              <span className="kg-neo4j-meta-pill" title={`Executed in ${cypherStats.executionTimeMs}ms`}>
-                ⚡ {cypherStats.executionTimeMs}ms · {visibleNodes.length} nodes, {visibleEdges.length} rels
-              </span>
+          <div className="kg-graph-top-right">
+            <span className="kg-neo4j-meta-pill">
+              ⚡ {visibleNodes.length} nodes · {visibleEdges.length} rels
+            </span>
 
-              <button
-                type="button"
-                className={`kg-status-btn ${isLayersOpen ? 'active' : ''}`}
-                onClick={() => setIsLayersOpen(!isLayersOpen)}
-                title="Toggle Layers Panel"
-              >
-                <Layers size={12} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />
-                Layers
-              </button>
-            </div>
+            <button
+              type="button"
+              className={`kg-status-btn ${isLayersOpen ? 'active' : ''}`}
+              onClick={() => setIsLayersOpen(!isLayersOpen)}
+              title="Toggle Layers Panel"
+            >
+              <Layers size={13} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />
+              Layers
+            </button>
+
+            <button
+              type="button"
+              className="kg-status-btn"
+              onClick={handleRelayout}
+              title="Reset layout physics"
+            >
+              <RefreshCw size={13} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />
+              Re-layout
+            </button>
           </div>
         </div>
 
@@ -1806,117 +1484,35 @@ export default function KnowledgeGraphPage({
             </div>
           </div>
 
-          {/* VIEW MODE 1: CENTRAL CONSTELLATION GRAPH CANVAS */}
-          {studioViewMode === 'graph' && (
-            <div className="kg-explorer-canvas-area">
-              <div ref={containerRef} className="kg-cytoscape-container" />
+          {/* CENTRAL CONSTELLATION GRAPH CANVAS */}
+          <div className="kg-explorer-canvas-area">
+            <div ref={containerRef} className="kg-cytoscape-container" />
 
-              {/* Floating Canvas Controls (matching Neo4j Bloom top right controls) */}
-              <div className="kg-floating-controls">
-                <button className="kg-floating-btn" onClick={handleZoomIn} title="Zoom In (+)" type="button">
-                  <Plus size={14} />
-                </button>
-                <button className="kg-floating-btn" onClick={handleZoomOut} title="Zoom Out (-)" type="button">
-                  <Minus size={14} />
-                </button>
-                <button className="kg-floating-btn" onClick={handleFit} title="Fit Entire Constellation" type="button">
-                  <Maximize size={13} />
-                </button>
-                <button className="kg-floating-btn" onClick={handleRelayout} title="Re-run Force Simulation" type="button">
-                  <RefreshCw size={13} />
-                </button>
-                <button className={`kg-floating-btn ${isFullscreen ? 'active' : ''}`} onClick={() => setIsFullscreen(!isFullscreen)} title="Toggle Fullscreen" type="button">
-                  <Layers size={13} />
-                </button>
-              </div>
-
-              {/* Canvas Mode Indicator Badge */}
-              <div className="kg-canvas-mode-badge">
-                <span className="kg-status-dot green" />
-                <span>{layoutMode === 'cose' ? 'Constellation Physics Active' : `${layoutMode.toUpperCase()} Layout`}</span>
-              </div>
+            {/* Floating Canvas Controls */}
+            <div className="kg-floating-controls">
+              <button className="kg-floating-btn" onClick={handleZoomIn} title="Zoom In (+)" type="button">
+                <Plus size={14} />
+              </button>
+              <button className="kg-floating-btn" onClick={handleZoomOut} title="Zoom Out (-)" type="button">
+                <Minus size={14} />
+              </button>
+              <button className="kg-floating-btn" onClick={handleFit} title="Fit Entire Constellation" type="button">
+                <Maximize size={13} />
+              </button>
+              <button className="kg-floating-btn" onClick={handleRelayout} title="Re-run Force Simulation" type="button">
+                <RefreshCw size={13} />
+              </button>
+              <button className={`kg-floating-btn ${isFullscreen ? 'active' : ''}`} onClick={() => setIsFullscreen(!isFullscreen)} title="Toggle Fullscreen" type="button">
+                <Layers size={13} />
+              </button>
             </div>
-          )}
 
-          {/* VIEW MODE 2: TABULAR VIEW */}
-          {studioViewMode === 'table' && (
-            <div className="kg-neo4j-table-container">
-              <table className="kg-data-table">
-                <thead>
-                  <tr>
-                    <th>Entity ID</th>
-                    <th>Category</th>
-                    <th>Identifier / Label</th>
-                    <th>Corridor / Location</th>
-                    <th>Telemetry Attributes</th>
-                    <th>Degrees</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleNodes.map((n) => {
-                    const deg = nodeDegreeMap.get(n.id) || 0
-                    return (
-                      <tr
-                        key={n.id}
-                        onClick={() => {
-                          setSelectedNode(n)
-                          setStudioViewMode('graph')
-                        }}
-                        style={{ cursor: 'pointer' }}
-                        title="Click to view in graph"
-                      >
-                        <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{n.id}</td>
-                        <td>
-                          <span className="kg-category-dot" style={{ backgroundColor: n.color, marginRight: 6, display: 'inline-block' }} />
-                          {n.vehicleType ? `${n.vehicleType} (${n.category})` : n.category}
-                        </td>
-                        <td style={{ fontWeight: 600 }}>{n.label}</td>
-                        <td>{n.properties?.['Location'] || n.properties?.['Monitored Corridor'] || n.properties?.['Corridor Zone'] || 'Highway Corridor'}</td>
-                        <td>
-                          {n.properties?.Speed ? `Speed: ${n.properties.Speed} · ` : ''}
-                          {n.properties?.['Violation Status'] || 'Compliant'}
-                        </td>
-                        <td>{deg} edges</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+            {/* Canvas Mode Indicator Badge */}
+            <div className="kg-canvas-mode-badge">
+              <span className="kg-status-dot green" />
+              <span>{layoutMode === 'cose' ? 'Constellation Physics Active' : `${layoutMode.toUpperCase()} Layout`}</span>
             </div>
-          )}
-
-          {/* VIEW MODE 3: RAW CYPHER JSON VIEW */}
-          {studioViewMode === 'raw' && (
-            <div className="kg-neo4j-raw-container">
-              <pre style={{ margin: 0 }}>
-                {JSON.stringify(
-                  {
-                    results: [
-                      {
-                        columns: ['n', 'r', 'm'],
-                        data: visibleNodes.slice(0, 50).map((n) => ({
-                          row: [
-                            { id: n.id, labels: [n.category, n.vehicleType].filter(Boolean), properties: n.properties },
-                            visibleEdges.filter((e) => e.source === n.id).map((e) => ({ type: e.label, target: e.target })),
-                          ],
-                        })),
-                      },
-                    ],
-                    summary: {
-                      query: cypherQuery,
-                      nodesMatched: visibleNodes.length,
-                      relationshipsMatched: visibleEdges.length,
-                      database: 'visioniq-graph-aura',
-                      executionTimeMs: 18,
-                      plan: { operatorType: 'ProduceResults', arguments: { version: 'CYPHER 5' } },
-                    },
-                  },
-                  null,
-                  2
-                )}
-              </pre>
-            </div>
-          )}
+          </div>
 
         {/* RIGHT NODE DETAILS PANEL - OPENS ONLY WHEN A NODE IS SELECTED */}
         {selectedNode && (
@@ -2040,13 +1636,25 @@ export default function KnowledgeGraphPage({
       )}
       </div>
 
-      {/* TAB 2: QUERY TELEMETRY SEARCH PAGE */}
+      {/* TAB 2: QUERY STUDIO (NATURAL LANGUAGE TELEMETRY SEARCH) */}
       {!isQueryEmbedded && activeTab === 'query' && (
-        <div className="kg-query-tab-view">
+        <div className="kg-query-tab-view" style={{ minHeight: 'calc(100vh - 120px)' }}>
           <Suspense
             fallback={
-              <div className="query-empty-results" style={{ padding: '60px 20px' }}>
-                <Loader2 className="spinning" size={32} style={{ color: '#2563eb' }} />
+              <div
+                className="query-empty-results"
+                style={{
+                  padding: '80px 20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Loader2 className="spinning" size={32} style={{ color: '#0284c7' }} />
+                <p style={{ marginTop: '14px', color: '#64748b', fontSize: '13px' }}>
+                  Loading Telemetry Query Engine...
+                </p>
               </div>
             }
           >

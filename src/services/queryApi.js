@@ -255,3 +255,29 @@ export async function searchVehiclesDatabase(searchTerm, limit = 50) {
   }
 }
 
+/**
+ * Convert natural language traffic query into Cypher using Ollama LLM (qwen2.5/llama3.2) with rule fallback.
+ */
+export async function convertNaturalLanguageToCypher(query) {
+  try {
+    const res = await fetch(`${API_URL}/api/query/natural-to-cypher`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    })
+    if (!res.ok) {
+      throw new Error(`API responded with HTTP ${res.status}`)
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[queryApi] natural-to-cypher failed:', err.message)
+    return {
+      success: true,
+      cypher: 'MATCH (n)\nOPTIONAL MATCH (n)-[r]->(m)\nRETURN *',
+      source: 'client-fallback',
+      explanation: `Natural query: "${query}"`,
+    }
+  }
+}
+
+

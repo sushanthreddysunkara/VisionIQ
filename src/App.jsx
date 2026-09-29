@@ -6,6 +6,7 @@ import DashboardDetail from './components/DashboardDetail'
 import DashboardHub from './components/DashboardHub'
 import OntologyPage from './components/ontology/OntologyPage'
 import KnowledgeGraphPage from './components/knowledgeGraph/KnowledgeGraphPage'
+import QueryPage from './components/QueryPage'
 import DocumentIntelligence from './components/DocumentIntelligence'
 import ProjectConnectionRequired from './components/ProjectConnectionRequired'
 import ProjectComingSoon from './components/ProjectComingSoon'
@@ -745,7 +746,7 @@ export default function App() {
                   }
                 />
 
-                {/* PROJECTS MANAGEMENT (NEO4J DESKTOP STYLE) */}
+                {/* PROJECTS MANAGEMENT */}
                 <Route
                   path="/projects"
                   element={
@@ -796,14 +797,7 @@ export default function App() {
                     !connectedProject ? (
                       <ProjectConnectionRequired />
                     ) : (
-                      <KnowledgeGraphPage
-                        fileName={fileName}
-                        importError={importError}
-                        initialTab="query"
-                        onImport={handleImport}
-                        projectName={connectedProject.name}
-                        rows={trafficData}
-                      />
+                      <QueryPage fileName={fileName} rows={trafficData} />
                     )
                   }
                 />

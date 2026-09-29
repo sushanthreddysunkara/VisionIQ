@@ -978,6 +978,26 @@ export default function QueryPage({ rows = [], fileName = 'Active Dataset' }) {
 
   return (
     <div className="query-page">
+      {/* Horizontal Sub-Pages Tab Bar */}
+      <div className="tr-tab-row" style={{ marginTop: '0', marginBottom: '16px', background: 'transparent' }}>
+        <button
+          type="button"
+          className="tr-tab-btn"
+          onClick={() => navigate('/knowledge-graph')}
+        >
+          <Network size={15} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }} />
+          Knowledge Graph
+        </button>
+        <button
+          type="button"
+          className="tr-tab-btn active"
+          onClick={() => navigate('/query')}
+        >
+          <Search size={15} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }} />
+          Query
+        </button>
+      </div>
+
       {/* Intro Header */}
       <div className="page-intro query-page-header">
         <div>

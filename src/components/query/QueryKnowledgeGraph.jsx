@@ -1080,7 +1080,7 @@ export default function QueryKnowledgeGraph({
       wheelSensitivity: 0.15,
       layout: layoutConfig,
       style: [
-        // ─── Base Neo4j Nodes (Floating 3D Orbs with Centered Labels) ───
+        // ─── Base Graph Nodes (Floating 3D Orbs with Centered Labels) ───
         {
           selector: 'node',
           style: {
@@ -1109,12 +1109,12 @@ export default function QueryKnowledgeGraph({
                 return customColor
               }
               const cat = node.data('category')
-              if (cat === 'Observation') return '#F79767' // Neo4j Coral / Rust
-              if (cat === 'Location') return '#4C8DAE'    // Neo4j Deep Teal
-              if (cat === 'Camera') return '#8D6CAB'      // Neo4j Violet
-              if (cat === 'VehicleType') return '#FFC454'  // Neo4j Warm Gold
-              if (cat === 'Violation') return '#DE5747'    // Neo4j Crimson
-              if (cat === 'Signal') return '#8DCC95'       // Neo4j Mint
+              if (cat === 'Observation') return '#F79767' // Coral / Rust
+              if (cat === 'Location') return '#4C8DAE'    // Deep Teal
+              if (cat === 'Camera') return '#8D6CAB'      // Violet
+              if (cat === 'VehicleType') return '#FFC454'  // Warm Gold
+              if (cat === 'Violation') return '#DE5747'    // Crimson
+              if (cat === 'Signal') return '#8DCC95'       // Mint
               return customColor || '#F79767'
             },
             'background-opacity': 1,
