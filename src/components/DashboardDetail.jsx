@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -37,10 +37,13 @@ import {
   YAxis,
 } from 'recharts'
 import { formatTimestampIst, groupBy, summarizeData } from '../data/dashboardData'
+import { cameraFeeds, getCameraFeed } from '../data/cameraFeeds'
 import { getVehicleMeta } from '../data/vehicleTypes'
 import VehicleBadge from './VehicleBadge'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
 import MediaPreviewModal from './MediaPreviewModal'
+import CameraFeedModal from './CameraFeedModal'
+import CameraFeedPanel from './CameraFeedPanel'
 
 function getRecordTimestampScore(row) {
   const raw = String(row.timestampIst || row.timestamp || row.time || row.date || '')
@@ -107,6 +110,9 @@ export default function DashboardDetail({
   const [initialModalTab, setInitialModalTab] = useState('vehicle')
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false)
   const [cameraRemoveDialogOpen, setCameraRemoveDialogOpen] = useState(false)
+  const [cameraFeedOpen, setCameraFeedOpen] = useState(false)
+  const [selectedCameraFeed, setSelectedCameraFeed] = useState(null)
+  const [inlineCameraFeed, setInlineCameraFeed] = useState(null)
   const [isFetchingBatch, setIsFetchingBatch] = useState(false)
   const [cameraForm, setCameraForm] = useState({ name: '', location: '', streamUrl: '' })
   const [trafficTab, setTrafficTab] = useState('overview')
@@ -140,6 +146,16 @@ export default function DashboardDetail({
     (camera) => !removedCameras.includes(camera.id),
   )
   const topCameras = cameraRecords.sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 6)
+  const cameraFeedOptions = cameraFeeds.map((feed) => ({
+    ...feed,
+    ...(cameraRecords.find((camera) => camera.id === feed.id || camera.name === feed.name) || {}),
+  }))
+
+  useEffect(() => {
+    if (kind === 'cameras' && !inlineCameraFeed && cameraFeedOptions.length) {
+      setInlineCameraFeed(cameraFeedOptions[0])
+    }
+  }, [cameraFeedOptions, inlineCameraFeed, kind])
 
   const averageSpeed = safeRows.length
     ? Math.round(safeRows.reduce((total, row) => total + Number(row.speed || 0), 0) / safeRows.length)
@@ -148,6 +164,16 @@ export default function DashboardDetail({
   const overspeedRows = safeRows.filter((row) => row.overSpeed === 'Yes' || row.isOverSpeed)
   const overspeedCount = overspeedRows.length
   const overspeedPercent = safeRows.length ? Math.round((overspeedCount / safeRows.length) * 100) : 0
+
+  function openCameraFeed(camera) {
+    setSelectedCameraFeed(getCameraFeed(camera))
+    setCameraFeedOpen(true)
+  }
+
+  function closeCameraFeed() {
+    setCameraFeedOpen(false)
+    setSelectedCameraFeed(null)
+  }
 
   function submitCamera(event) {
     event.preventDefault()
@@ -484,6 +510,7 @@ export default function DashboardDetail({
               </button>
             </div>
           </div>
+          <CameraFeedPanel cameras={cameraFeedOptions} camera={inlineCameraFeed} onSelectCamera={setInlineCameraFeed} />
           <div className="camera-source-grid">
             {topCameras.length ? (
               topCameras.map((camera, index) => (
@@ -498,9 +525,14 @@ export default function DashboardDetail({
                       {camera.location ? ` · ${camera.location}` : ''}
                     </span>
                   </div>
-                  <b className={camera.status === 'Active' || index === 0 ? 'active' : ''}>
-                    {camera.status || (index === 0 ? 'LIVE' : 'ACTIVE')}
-                  </b>
+                  <div className="camera-source-actions">
+                    <b className={camera.status === 'Active' || index === 0 ? 'active' : ''}>
+                      {camera.status || (index === 0 ? 'LIVE' : 'ACTIVE')}
+                    </b>
+                    <button className="camera-feed-open-button" onClick={() => openCameraFeed(camera)} type="button">
+                      <Play size={11} /> View Feed
+                    </button>
+                  </div>
                 </div>
               ))
             ) : (
@@ -518,7 +550,9 @@ export default function DashboardDetail({
               <p className="section-kicker">DATA REPRESENTATION</p>
               <h2>{config.chartTitle}</h2>
             </div>
-            <span className="nh44-live-pill">Live Stream</span>
+            <button className="nh44-live-pill nh44-live-button" onClick={() => openCameraFeed(topCameras[0] || cameraFeedOptions[0])} type="button">
+              <span className="pulse-dot" /> Live Stream
+            </button>
           </div>
           <div className="chart-frame" style={{ height: '260px' }}>
             <ResponsiveContainer height="100%" width="100%">
@@ -1050,6 +1084,16 @@ export default function DashboardDetail({
           onClose={() => setPreviewModalRow(null)}
           onSelectRow={setPreviewModalRow}
           row={previewModalRow}
+        />
+      )}
+
+      {cameraFeedOpen && selectedCameraFeed && (
+        <CameraFeedModal
+          camera={selectedCameraFeed}
+          cameras={cameraFeedOptions}
+          isOpen={cameraFeedOpen}
+          onClose={closeCameraFeed}
+          onSelectCamera={setSelectedCameraFeed}
         />
       )}
     </div>
