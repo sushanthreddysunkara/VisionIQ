@@ -1,19 +1,70 @@
-import { AlertTriangle, ArrowUpRight, Camera, Clock3 } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, Camera, Car, Clock3, ShieldCheck } from 'lucide-react'
+import { sortObservationsChronologically } from '../../data/vehicleTrackingData'
 
-export default function VehicleList({ vehicles, selectedVehicle, onSelect }) {
+function formatTime(timestamp) {
+  if (!timestamp) return 'Live'
+  try {
+    return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return String(timestamp)
+  }
+}
+
+export default function VehicleList({ vehicles = [], selectedVehicle, onSelect }) {
   return (
     <section className="vehicle-panel vehicle-list-panel">
-      <div className="vehicle-panel-heading"><div><p className="section-kicker">INCIDENT QUEUE</p><h2>Collision vehicles</h2></div><span>{vehicles.length} active cases</span></div>
+      <div className="vehicle-panel-heading">
+        <div>
+          <p className="section-kicker">INCIDENT QUEUE · NH-44 HIGHWAY</p>
+          <h2>Collision & Tracked Vehicles</h2>
+        </div>
+        <span className="corridor-active-cams">{vehicles.length} Active Targets</span>
+      </div>
+
       <div className="vehicle-list">
         {vehicles.map((vehicle) => {
-          const lastObservation = vehicle.observations[vehicle.observations.length - 1]
-          const selected = selectedVehicle?.vehicleNumber === vehicle.vehicleNumber
+          const observations = sortObservationsChronologically(vehicle.observations || [])
+          const lastObservation = observations[observations.length - 1] || {}
+          const isSelected = selectedVehicle?.vehicleNumber === vehicle.vehicleNumber
+          const isCollision = /collision|accident/i.test(vehicle.incidentType || '')
+
           return (
-            <button className={`vehicle-list-item ${selected ? 'selected' : ''}`} key={vehicle.vehicleNumber} onClick={() => onSelect(vehicle)} type="button">
-              <span className="vehicle-list-icon"><AlertTriangle size={17} /></span>
-              <span className="vehicle-list-copy"><strong>{vehicle.vehicleNumber}</strong><span>{vehicle.incidentType} · {vehicle.collisionCamera}</span></span>
-              <span className="vehicle-list-meta"><span><Clock3 size={12} />{new Date(vehicle.incidentTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><span><Camera size={12} />{lastObservation.cameraId}</span></span>
-              <span className={`vehicle-status status-${vehicle.status.toLowerCase()}`}>{vehicle.status}</span><ArrowUpRight size={16} />
+            <button
+              className={`vehicle-list-item ${isSelected ? 'selected' : ''} ${isCollision ? 'item-collision' : ''}`}
+              key={vehicle.vehicleNumber}
+              onClick={() => onSelect(vehicle)}
+              type="button"
+            >
+              <span className={`vehicle-list-icon ${isCollision ? 'icon-danger' : 'icon-normal'}`}>
+                {isCollision ? <AlertTriangle size={17} /> : <Car size={17} />}
+              </span>
+
+              <span className="vehicle-list-copy">
+                <div className="hsrp-plate-badge-small">
+                  <span className="hsrp-country-mini">IND</span>
+                  <span className="hsrp-code-mini">{vehicle.vehicleNumber}</span>
+                </div>
+                <span className="vehicle-list-subtitle">
+                  {vehicle.vehicleType} · {vehicle.incidentType} at {vehicle.collisionCamera?.replace('CAM-NH44-', '') || 'NH-44'}
+                </span>
+              </span>
+
+              <span className="vehicle-list-meta">
+                <span>
+                  <Clock3 size={12} />
+                  {formatTime(vehicle.incidentTime)}
+                </span>
+                <span>
+                  <Camera size={12} />
+                  {lastObservation.cameraId?.replace('CAM-NH44-', '') || 'Live Camera'}
+                </span>
+              </span>
+
+              <span className={`vehicle-status ${isCollision ? 'status-danger' : 'status-tracking'}`}>
+                {isCollision ? 'COLLISION' : vehicle.status || 'TRACKING'}
+              </span>
+
+              <ArrowUpRight size={16} className="list-item-arrow" />
             </button>
           )
         })}
