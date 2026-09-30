@@ -25073,11 +25073,11 @@ body {
 .viq-dashboard-container {
   display: flex !important;
   flex-direction: column !important;
-  gap: 22px !important;
+  gap: 24px !important;
   max-width: 100% !important;
   width: 100% !important;
   margin: 0 !important;
-  padding: 16px 20px 48px !important;
+  padding: 16px 20px 140px !important;
   box-sizing: border-box !important;
 }
 

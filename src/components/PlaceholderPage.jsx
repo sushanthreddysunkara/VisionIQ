@@ -119,7 +119,7 @@ export default function PlaceholderPage({
   }
 
   return (
-    <div className="viq-dashboard-container">
+    <div className="viq-dashboard-container" style={{ minHeight: '100%', paddingBottom: '160px' }}>
       {/* 1. TOP HEADER: Corridor Command View */}
       <div className="corridor-top-header">
         <div className="corridor-title-group">

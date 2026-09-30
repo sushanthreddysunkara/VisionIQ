@@ -711,7 +711,7 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
           <MapContainer
             center={[15.2, 77.9]}
             className="corridor-real-leaflet-map"
-            scrollWheelZoom
+            scrollWheelZoom={false}
             style={{ width: '100%', height: '100%', minHeight: '480px' }}
             zoom={7}
             zoomControl={false}

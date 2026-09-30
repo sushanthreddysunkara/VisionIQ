@@ -281,7 +281,7 @@ export default function VehicleMap({ vehicle, cameras = [], showCameraJourney = 
           <MapContainer
             center={currentPoint || [17.35, 78.45]}
             zoom={12}
-            scrollWheelZoom
+            scrollWheelZoom={false}
             className="vehicle-route-map"
           >
             <TileLayer
