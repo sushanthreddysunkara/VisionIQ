@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -112,7 +112,7 @@ export default function DashboardDetail({
   const [cameraRemoveDialogOpen, setCameraRemoveDialogOpen] = useState(false)
   const [cameraFeedOpen, setCameraFeedOpen] = useState(false)
   const [selectedCameraFeed, setSelectedCameraFeed] = useState(null)
-  const [inlineCameraFeed, setInlineCameraFeed] = useState(null)
+  const [inlineCameraFeed, setInlineCameraFeed] = useState(() => cameraFeeds[0] || null)
   const [isFetchingBatch, setIsFetchingBatch] = useState(false)
   const [cameraForm, setCameraForm] = useState({ name: '', location: '', streamUrl: '' })
   const [trafficTab, setTrafficTab] = useState('overview')
@@ -124,9 +124,66 @@ export default function DashboardDetail({
   const safeRows = Array.isArray(rows) ? rows : []
   const summary = summarizeData(safeRows)
 
-  const chartData = groupBy(safeRows, config.chartKey)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10)
+  const importedCameras = groupBy(safeRows, 'camera').map((camera) => ({
+    ...camera,
+    id: camera.name,
+    status: 'ACTIVE',
+  }))
+
+  const baseCameras = cameraFeeds.map((feed) => {
+    const matched = importedCameras.find((c) => c.name === feed.name || c.id === feed.id)
+    return {
+      ...feed,
+      value: matched ? matched.value : 0,
+      status: 'ACTIVE',
+    }
+  })
+
+  const extraImported = importedCameras.filter(
+    (c) => !cameraFeeds.some((feed) => feed.name === c.name || feed.id === c.id)
+  )
+
+  const cameraRecords = [...baseCameras, ...extraImported, ...addedCameras].filter(
+    (camera) => !removedCameras.includes(camera.id),
+  )
+
+  const topCameras = useMemo(() => {
+    return [...cameraRecords].sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 6)
+  }, [cameraRecords])
+
+  const cameraFeedOptions = useMemo(() => {
+    const knownFeeds = cameraFeeds.map((feed) => ({
+      ...feed,
+      ...(cameraRecords.find((camera) => camera.id === feed.id || camera.name === feed.name) || {}),
+    }))
+    const extraCameras = addedCameras
+      .filter((cam) => !cameraFeeds.some((feed) => feed.id === cam.id || feed.name === cam.name))
+      .map((cam) => ({
+        ...cam,
+        videoUrl: cam.videoUrl || cam.streamUrl || cameraFeeds[0].videoUrl,
+      }))
+    return [...knownFeeds, ...extraCameras]
+  }, [cameraRecords, addedCameras])
+
+  useEffect(() => {
+    if (kind === 'cameras' && !inlineCameraFeed && cameraFeedOptions.length) {
+      setInlineCameraFeed(cameraFeedOptions[0])
+    }
+  }, [cameraFeedOptions, inlineCameraFeed, kind])
+
+  const chartData = useMemo(() => {
+    const grouped = groupBy(safeRows, config.chartKey)
+    if (grouped.length > 0) {
+      return grouped.sort((a, b) => b.value - a.value).slice(0, 10)
+    }
+    if (kind === 'cameras') {
+      return cameraRecords.slice(0, 6).map((cam) => ({
+        name: cam.name.replace('CAM-NH44-', ''),
+        value: cam.value || 0,
+      }))
+    }
+    return []
+  }, [safeRows, config.chartKey, kind, cameraRecords])
 
   const pieData = groupBy(safeRows, 'type')
     .sort((a, b) => b.value - a.value)
@@ -135,27 +192,6 @@ export default function DashboardDetail({
   const topLocations = groupBy(safeRows, 'location')
     .sort((a, b) => b.value - a.value)
     .slice(0, 5)
-
-  const importedCameras = groupBy(safeRows, 'camera').map((camera) => ({
-    ...camera,
-    id: camera.name,
-    status: 'ACTIVE',
-  }))
-
-  const cameraRecords = [...importedCameras, ...addedCameras].filter(
-    (camera) => !removedCameras.includes(camera.id),
-  )
-  const topCameras = cameraRecords.sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 6)
-  const cameraFeedOptions = cameraFeeds.map((feed) => ({
-    ...feed,
-    ...(cameraRecords.find((camera) => camera.id === feed.id || camera.name === feed.name) || {}),
-  }))
-
-  useEffect(() => {
-    if (kind === 'cameras' && !inlineCameraFeed && cameraFeedOptions.length) {
-      setInlineCameraFeed(cameraFeedOptions[0])
-    }
-  }, [cameraFeedOptions, inlineCameraFeed, kind])
 
   function openCameraFeed(camera) {
     setSelectedCameraFeed(getCameraFeed(camera))
