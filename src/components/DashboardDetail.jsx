@@ -36,7 +36,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { formatTimestampIst, groupBy, summarizeData } from '../data/dashboardData'
+import { formatTimestampIst, groupBy, sampleTrafficData, summarizeData } from '../data/dashboardData'
 import { getVehicleMeta } from '../data/vehicleTypes'
 import { cameraFeeds, getCameraFeed } from '../data/cameraFeeds'
 import VehicleBadge from './VehicleBadge'
@@ -121,7 +121,10 @@ export default function DashboardDetail({
   const config = configs[kind] || configs.vehicles
   const Icon = config.icon
 
-  const safeRows = Array.isArray(rows) ? rows : []
+  const safeRows = useMemo(() => {
+    if (Array.isArray(rows) && rows.length > 0) return rows
+    return sampleTrafficData
+  }, [rows])
   const summary = summarizeData(safeRows)
 
   const importedCameras = groupBy(safeRows, 'camera').map((camera) => ({

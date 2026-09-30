@@ -3571,7 +3571,7 @@ body {
   background-size: 28px 28px;
 }
 
-.app-shell { position: relative; overflow: hidden; }
+.app-shell { position: relative; overflow: visible; }
 .app-shell::before { content: ''; position: fixed; top: 82px; right: 4%; width: 360px; height: 360px; border: 1px solid rgba(19, 195, 214, .11); border-radius: 50%; box-shadow: 0 0 0 34px rgba(19, 195, 214, .035), 0 0 0 68px rgba(19, 195, 214, .025); pointer-events: none; }
 
 .topbar { position: relative; z-index: 2; backdrop-filter: blur(14px); }
@@ -3581,7 +3581,7 @@ body {
 .top-search { border-color: #bcd4f2; background: rgba(239, 246, 255, .86); box-shadow: inset 0 1px 3px rgba(28, 83, 154, .04); }
 .topbar-date { border-left-style: dashed; }
 
-.content-wrap { position: relative; z-index: 1; overflow: hidden; border-color: rgba(185, 211, 243, .9); background: rgba(249, 252, 255, .76); backdrop-filter: blur(16px); }
+.content-wrap { position: relative; z-index: 1; overflow: visible; border-color: rgba(185, 211, 243, .9); background: rgba(249, 252, 255, .76); backdrop-filter: blur(16px); }
 .content-wrap::before { content: 'VISIONIQ / SITUATIONAL AWARENESS'; position: absolute; top: 13px; right: 22px; color: #a1b9dc; font: 700 7px/1 'Space Grotesk', sans-serif; letter-spacing: .16em; }
 .page-intro { position: relative; }
 .page-intro h1 { letter-spacing: -.045em; text-shadow: 0 3px 15px rgba(19, 72, 140, .12); }
@@ -12678,7 +12678,7 @@ body {
   background-size: 28px 28px;
 }
 
-.app-shell { position: relative; overflow: hidden; }
+.app-shell { position: relative; overflow: visible; }
 .app-shell::before { content: ''; position: fixed; top: 82px; right: 4%; width: 360px; height: 360px; border: 1px solid rgba(19, 195, 214, .11); border-radius: 50%; box-shadow: 0 0 0 34px rgba(19, 195, 214, .035), 0 0 0 68px rgba(19, 195, 214, .025); pointer-events: none; }
 
 .topbar { position: relative; z-index: 2; backdrop-filter: blur(14px); }
@@ -12688,7 +12688,7 @@ body {
 .top-search { border-color: #bcd4f2; background: rgba(239, 246, 255, .86); box-shadow: inset 0 1px 3px rgba(28, 83, 154, .04); }
 .topbar-date { border-left-style: dashed; }
 
-.content-wrap { position: relative; z-index: 1; overflow: hidden; border-color: rgba(185, 211, 243, .9); background: rgba(249, 252, 255, .76); backdrop-filter: blur(16px); }
+.content-wrap { position: relative; z-index: 1; overflow: visible; border-color: rgba(185, 211, 243, .9); background: rgba(249, 252, 255, .76); backdrop-filter: blur(16px); }
 .content-wrap::before { content: 'VISIONIQ / SITUATIONAL AWARENESS'; position: absolute; top: 13px; right: 22px; color: #a1b9dc; font: 700 7px/1 'Space Grotesk', sans-serif; letter-spacing: .16em; }
 .page-intro { position: relative; }
 .page-intro h1 { letter-spacing: -.045em; text-shadow: 0 3px 15px rgba(19, 72, 140, .12); }
@@ -26446,6 +26446,53 @@ body {
   .camera-volume {
     width: 58px;
   }
+}
+
+/* =========================================================
+   GLOBAL SCROLLABILITY & VIEWPORT SCROLL OVERRIDES
+   ========================================================= */
+
+html, body {
+  overflow-x: clip !important;
+  overflow-y: auto !important;
+  height: auto !important;
+  min-height: 100vh !important;
+  scroll-behavior: smooth;
+}
+
+#root,
+.app-shell {
+  min-height: 100vh !important;
+  height: auto !important;
+  overflow: visible !important;
+  display: flex !important;
+}
+
+.main-content {
+  min-height: 100vh !important;
+  height: auto !important;
+  overflow-y: visible !important;
+  overflow-x: clip !important;
+  flex: 1 !important;
+}
+
+.content-wrap {
+  min-height: calc(100vh - 82px) !important;
+  height: auto !important;
+  overflow: visible !important;
+  display: block !important;
+}
+
+.dashboard-page,
+.dashboard-detail-page,
+.rules-events-container,
+.vehicle-clean-page,
+.proj-page-container,
+.kg-full-page {
+  overflow: visible !important;
+  min-height: auto !important;
+  height: auto !important;
+  padding-bottom: 80px !important;
 }
 
 
