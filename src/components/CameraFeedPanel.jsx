@@ -23,10 +23,17 @@ export default function CameraFeedPanel({ camera, cameras = [], onSelectCamera }
   useEffect(() => {
     const video = videoRef.current
     if (!video || !camera?.videoUrl) return undefined
-    const startPlayback = () => video.play().catch(() => undefined)
-    video.addEventListener('canplay', startPlayback, { once: true })
+    video.muted = isMuted
+    const startPlayback = () => {
+      video.play().catch(() => undefined)
+    }
+    if (video.readyState >= 3) {
+      startPlayback()
+    } else {
+      video.addEventListener('canplay', startPlayback, { once: true })
+    }
     return () => video.removeEventListener('canplay', startPlayback)
-  }, [camera?.id, camera?.videoUrl])
+  }, [camera?.id, camera?.videoUrl, isMuted])
 
   function toggleMute() {
     if (!videoRef.current) return
@@ -61,7 +68,26 @@ export default function CameraFeedPanel({ camera, cameras = [], onSelectCamera }
         </div>
       </header>
       <div className="camera-live-feed-stage" ref={playerRef}>
-        {!hasError && <video autoPlay crossOrigin="anonymous" key={camera.id} loop muted={isMuted} onCanPlay={() => setIsLoading(false)} onError={() => { setIsLoading(false); setHasError(true) }} onLoadedData={() => setIsLoading(false)} playsInline preload="auto" ref={videoRef} src={camera.videoUrl} />}
+        {!hasError && (
+          <video
+            autoPlay
+            crossOrigin="anonymous"
+            defaultMuted
+            key={camera.id}
+            loop
+            muted={isMuted}
+            onCanPlay={() => setIsLoading(false)}
+            onError={() => {
+              setIsLoading(false)
+              setHasError(true)
+            }}
+            onLoadedData={() => setIsLoading(false)}
+            playsInline
+            preload="auto"
+            ref={videoRef}
+            src={camera.videoUrl}
+          />
+        )}
         {isLoading && !hasError && <div className="camera-live-feed-message"><span className="camera-loading-spinner" />Loading camera feed...</div>}
         {hasError && <div className="camera-live-feed-message camera-live-feed-error"><Camera size={24} /><strong>Unable to load camera feed</strong><span>Please check the camera stream.</span></div>}
         <span className="camera-live-feed-badge"><i /> LIVE</span>

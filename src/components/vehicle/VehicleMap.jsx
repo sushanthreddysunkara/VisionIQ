@@ -67,10 +67,29 @@ function MapResizeHandler() {
 
   useEffect(() => {
     function refreshMapSize() {
-      window.requestAnimationFrame(() => map.invalidateSize())
+      window.requestAnimationFrame(() => {
+        try {
+          map.invalidateSize()
+        } catch {
+          // ignore
+        }
+      })
     }
+
+    refreshMapSize()
+    const timer1 = setTimeout(refreshMapSize, 100)
+    const timer2 = setTimeout(refreshMapSize, 400)
+    const timer3 = setTimeout(refreshMapSize, 1000)
+
+    window.addEventListener('resize', refreshMapSize)
     document.addEventListener('fullscreenchange', refreshMapSize)
-    return () => document.removeEventListener('fullscreenchange', refreshMapSize)
+    return () => {
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+      clearTimeout(timer3)
+      window.removeEventListener('resize', refreshMapSize)
+      document.removeEventListener('fullscreenchange', refreshMapSize)
+    }
   }, [map])
 
   return null
@@ -276,13 +295,14 @@ export default function VehicleMap({ vehicle, cameras = [], showCameraJourney = 
         <span className="vehicle-playback-step">{validObservations.length ? boundedObservationIndex + 1 : 0} / {validObservations.length}</span>
       </div>
 
-      <div className="vehicle-route-map-wrap">
+      <div className="vehicle-route-map-wrap" style={{ height: '520px', minHeight: '480px', width: '100%', position: 'relative' }}>
         {routePoints.length ? (
           <MapContainer
             center={currentPoint || [17.35, 78.45]}
             zoom={12}
-            scrollWheelZoom
+            scrollWheelZoom={false}
             className="vehicle-route-map"
+            style={{ height: '100%', minHeight: '480px', width: '100%' }}
           >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

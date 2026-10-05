@@ -882,7 +882,7 @@ export default function App() {
 
                 {/* DASHBOARD DETAILS */}
                 <Route
-                  path="/dashboards/:kind"
+                  path="/dashboards/:kind/:incidentId?"
                   element={
                     !connectedProject ? (
                       <ProjectConnectionRequired />
