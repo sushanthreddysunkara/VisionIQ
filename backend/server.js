@@ -69,6 +69,19 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }))
 
 app.get('/api/health', (req, res) => res.json({ success: true, message: 'VisionIQ API is running.' }))
 
+app.get('/api/toll-rates', async (req, res) => {
+  try {
+    if (!pool) return res.status(503).json({ success: false, message: 'Toll rates database is unavailable.' })
+    const [rates] = await pool.query(
+      'SELECT vehicle_class AS vehicleClass, amount, currency FROM toll_rates ORDER BY vehicle_class',
+    )
+    res.json({ success: true, rates: rates.map((rate) => ({ ...rate, amount: Number(rate.amount) })) })
+  } catch (error) {
+    console.error('Unable to load toll rates:', error.message)
+    res.status(500).json({ success: false, message: 'Unable to load toll rates from the database.' })
+  }
+})
+
 // Upload new Excel/CSV file to store in MySQL and switch active live stream
 app.post('/api/vehicles/upload', async (req, res) => {
   try {

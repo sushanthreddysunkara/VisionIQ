@@ -1,22 +1,4 @@
-import {
-  AlertTriangle,
-  ArrowLeft,
-  BarChart3,
-  Bus,
-  Car,
-  CarFront,
-  Flame,
-  Layers,
-  MapPinned,
-  ShieldCheck,
-  Target,
-  Truck,
-  Zap,
-} from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import VehicleList from './vehicle/VehicleList'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   CarFront,
@@ -31,6 +13,7 @@ import IncidentAnalyticsCards from './vehicle/IncidentAnalyticsCards'
 import CollisionVehiclesTable from './vehicle/CollisionVehiclesTable'
 import VehiclePathTable from './vehicle/VehiclePathTable'
 import VehicleMap from './vehicle/VehicleMap'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   getCameras,
   getVehicleIncidents,
@@ -75,64 +58,184 @@ function readStoredSelectedPlate() {
   }
 }
 
-export default function VehicleInformation({ rows = [], dbStats = null }) {
-  const [vehicles, setVehicles] = useState([])
 export default function VehicleInformation() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const defaultIncidentCatalog = [
+    {
+      id: 'ACC-401',
+      title: 'NH-44 / Kurnool Incident',
+      severity: 'HIGH',
+      queueKm: 3.2,
+      probability: 87,
+      location: 'NH-44 / Kurnool',
+      currentZone: 'ZONE 04 — Kurnool',
+      upstream: 'ZONE 03 — Kothakota',
+      downstream: 'ZONE 05 — Dhone',
+      affectedCameras: ['CAM-401', 'CAM-402', 'CAM-403', 'CAM-404'],
+      affectedSegments: ['RS-401', 'RS-402'],
+      categories: ['CONGESTION', 'ACCIDENT', 'ROAD WORK', 'LANE CLOSURE', 'BLACK SPOT'],
+      description: 'Severe congestion triggered by a major accident impact along the Kurnool corridor with a queue extending into the upstream zone.',
+      queueTrend: [
+        { time: '00:00', speed: 88, queue: 0.6, flow: 1180 },
+        { time: '02:00', speed: 76, queue: 1.1, flow: 1260 },
+        { time: '04:00', speed: 62, queue: 2.0, flow: 1340 },
+        { time: '06:00', speed: 44, queue: 3.2, flow: 1385 },
+        { time: '08:00', speed: 39, queue: 3.9, flow: 1420 },
+        { time: '10:00', speed: 48, queue: 3.2, flow: 1380 },
+      ],
+      impactBreakdown: [
+        { name: 'Congestion', value: 42 },
+        { name: 'Accident', value: 28 },
+        { name: 'Road work', value: 16 },
+        { name: 'Lane closure', value: 10 },
+        { name: 'Black spot', value: 4 },
+      ],
+      zoneImpact: [
+        { zone: '03', name: 'Kothakota', status: 'Potential congestion', value: 64 },
+        { zone: '04', name: 'Kurnool', status: 'Severe congestion', value: 92 },
+        { zone: '05', name: 'Dhone', status: 'Traffic inflow reduced', value: 51 },
+      ],
+    },
+    {
+      id: 'ACC-402',
+      title: 'Jadcherla Black Spot',
+      severity: 'MEDIUM',
+      queueKm: 1.4,
+      probability: 61,
+      location: 'Jadcherla / NH-44',
+      currentZone: 'ZONE 02 — Jadcherla',
+      upstream: 'ZONE 02 — Farukhnagar',
+      downstream: 'ZONE 03 — Kothakota',
+      affectedCameras: ['CAM-201', 'CAM-202', 'CAM-203'],
+      affectedSegments: ['RS-201', 'RS-202'],
+      categories: ['BLACK SPOT', 'CONGESTION', 'WEATHER', 'ROAD CONDITION'],
+      description: 'Recurring speed instability and vehicle weaving around the Farukhnagar–Jadcherla black-spot corridor increase collision risk.',
+      queueTrend: [
+        { time: '00:00', speed: 82, queue: 0.4, flow: 980 },
+        { time: '02:00', speed: 74, queue: 0.8, flow: 1040 },
+        { time: '04:00', speed: 61, queue: 1.1, flow: 1105 },
+        { time: '06:00', speed: 53, queue: 1.4, flow: 1170 },
+        { time: '08:00', speed: 58, queue: 1.2, flow: 1160 },
+        { time: '10:00', speed: 64, queue: 1.0, flow: 1080 },
+      ],
+      impactBreakdown: [
+        { name: 'Black spot', value: 37 },
+        { name: 'Road condition', value: 24 },
+        { name: 'Weather', value: 18 },
+        { name: 'Congestion', value: 14 },
+        { name: 'Lane issue', value: 7 },
+      ],
+      zoneImpact: [
+        { zone: '02', name: 'Farukhnagar', status: 'Rising queue', value: 58 },
+        { zone: '02', name: 'Jadcherla', status: 'Black spot risk', value: 72 },
+        { zone: '03', name: 'Kothakota', status: 'Approach slowdown', value: 48 },
+      ],
+    },
+    {
+      id: 'ACC-403',
+      title: 'Dhone Junction Merge',
+      severity: 'MEDIUM',
+      queueKm: 1.8,
+      probability: 68,
+      location: 'Dhone / NH-44 Junction',
+      currentZone: 'ZONE 05 — Dhone',
+      upstream: 'ZONE 04 — Kurnool',
+      downstream: 'ZONE 06 — Gooty',
+      affectedCameras: ['CAM-301', 'CAM-302', 'CAM-303'],
+      affectedSegments: ['RS-301', 'RS-302'],
+      categories: ['JUNCTION', 'HEAVY VEHICLE', 'URBAN MERGE', 'CONGESTION'],
+      description: 'Dense lane merging around the Dhone junction is increasing heavy-vehicle interaction and lower-speed queueing.',
+      queueTrend: [
+        { time: '00:00', speed: 84, queue: 0.3, flow: 1080 },
+        { time: '02:00', speed: 70, queue: 0.9, flow: 1145 },
+        { time: '04:00', speed: 57, queue: 1.5, flow: 1230 },
+        { time: '06:00', speed: 46, queue: 1.8, flow: 1285 },
+        { time: '08:00', speed: 51, queue: 1.6, flow: 1210 },
+        { time: '10:00', speed: 63, queue: 1.1, flow: 1120 },
+      ],
+      impactBreakdown: [
+        { name: 'Heavy vehicle', value: 35 },
+        { name: 'Urban merge', value: 25 },
+        { name: 'Junction', value: 22 },
+        { name: 'Congestion', value: 13 },
+        { name: 'Road work', value: 5 },
+      ],
+      zoneImpact: [
+        { zone: '04', name: 'Kurnool', status: 'Reduced flow', value: 56 },
+        { zone: '05', name: 'Dhone', status: 'Merge pressure', value: 81 },
+        { zone: '06', name: 'Gooty', status: 'Adaptive flow', value: 43 },
+      ],
+    },
+    {
+      id: 'ACC-404',
+      title: 'Penukonda Toll Node Delay',
+      severity: 'LOW',
+      queueKm: 0.9,
+      probability: 45,
+      location: 'Penukonda / Toll Plaza',
+      currentZone: 'ZONE 08 — Penukonda',
+      upstream: 'ZONE 07 — Gooty',
+      downstream: 'ZONE 09 — Bagepalli',
+      affectedCameras: ['CAM-401', 'CAM-402'],
+      affectedSegments: ['RS-401', 'RS-402'],
+      categories: ['TOLL PLAZA', 'LANE CLOSURE', 'CONGESTION', 'ROAD WORK'],
+      description: 'Toll plaza approach queues build as stop-and-go traffic begins to merge with highway flow near Penukonda.',
+      queueTrend: [
+        { time: '00:00', speed: 86, queue: 0.2, flow: 870 },
+        { time: '02:00', speed: 76, queue: 0.4, flow: 950 },
+        { time: '04:00', speed: 68, queue: 0.7, flow: 1035 },
+        { time: '06:00', speed: 58, queue: 0.9, flow: 1100 },
+        { time: '08:00', speed: 63, queue: 0.8, flow: 1040 },
+        { time: '10:00', speed: 71, queue: 0.4, flow: 940 },
+      ],
+      impactBreakdown: [
+        { name: 'Toll plaza', value: 38 },
+        { name: 'Congestion', value: 28 },
+        { name: 'Road work', value: 17 },
+        { name: 'Lane closure', value: 12 },
+        { name: 'Merge', value: 5 },
+      ],
+      zoneImpact: [
+        { zone: '07', name: 'Gooty', status: 'Mild build-up', value: 41 },
+        { zone: '08', name: 'Penukonda', status: 'Toll delay', value: 63 },
+        { zone: '09', name: 'Bagepalli', status: 'Stable inflow', value: 35 },
+      ],
+    },
+  ]
+
+  const triggeredIncident = useMemo(() => {
+    const stateIncident = location.state?.trafficIncident || null
+    if (!stateIncident) return null
+    const catalogIncident = defaultIncidentCatalog.find((incident) => incident.id === stateIncident.id)
+    return catalogIncident ? { ...catalogIncident, ...stateIncident } : stateIncident
+  }, [location.state, defaultIncidentCatalog])
+
+  const incidentCatalog = useMemo(() => {
+    const routeCatalog = Array.isArray(location.state?.incidentCatalog)
+      ? location.state.incidentCatalog
+      : []
+    const merged = [...routeCatalog, ...defaultIncidentCatalog]
+    const unique = merged.filter(
+      (incident, index, list) => list.findIndex((item) => item.id === incident.id) === index,
+    )
+    return unique.length ? unique : defaultIncidentCatalog
+  }, [location.state, defaultIncidentCatalog])
+
+  const [activeIncidentTab, setActiveIncidentTab] = useState('overview')
+
+  const selectedTrafficIncident = useMemo(() => {
+    return triggeredIncident || incidentCatalog[0] || null
+  }, [incidentCatalog, triggeredIncident])
+
+  const incidentTabs = ['overview', 'impact', 'cameras', 'risk', 'analytics']
+
   const [cameras, setCameras] = useState([])
   const [allCollisions, setAllCollisions] = useState([])
   const [displayedCollisions, setDisplayedCollisions] = useState(() => readStoredCollisions() || [])
   const [selectedVehicle, setSelectedVehicle] = useState(null)
   const [newlyAddedPlate, setNewlyAddedPlate] = useState(null)
   const [searchValue, setSearchValue] = useState('')
-  const [searched, setSearched] = useState(false)
-  const [selectedPairing, setSelectedPairing] = useState('All')
-
-  useEffect(() => {
-    if (rows && rows.length > 0) {
-      const liveVehicles = rows.map((r, idx) => {
-        const plate = r.vehicleNumberPlate || r.numberPlate || r.id || `OBS-${idx + 1}`
-        const isOver = r.isOverSpeed || r.overSpeed === 'Yes' || Number(r.speed) > Number(r.speedLimit || 60)
-        return {
-          vehicleNumber: plate,
-          vehicleType: r.vehicleType || r.type || 'Car',
-          incidentType: isOver ? 'Speed Violation' : (r.events || 'Corridor Telemetry'),
-          incidentTime: r.timestampIst || r.timestamp || 'Live',
-          collisionCamera: r.camera || 'CAM-NH44-01-SHAMSHABAD',
-          status: isOver ? 'Tracking' : 'Detected',
-          observations: [
-            {
-              cameraId: r.camera || 'CAM-NH44-01-SHAMSHABAD',
-              timestamp: r.timestampIst || r.timestamp || 'Live',
-              latitude: Number(r.latitude) || 17.385044,
-              longitude: Number(r.longitude) || 78.486671,
-              location: r.location || r.roadName || 'NH-44 Corridor',
-              detectionType: isOver ? 'Overspeeding Alert' : 'Vehicle Detected',
-              confidence: Number(r.plateConfidence || 0.95),
-              imageUrl: r.vehicleImagePath || r.vehicleImage,
-              speed: r.speed,
-              speedLimit: r.speedLimit || 60,
-            },
-          ],
-        }
-      })
-      setVehicles(liveVehicles)
-      setSelectedVehicle((prev) => prev || liveVehicles[0] || null)
-    } else {
-      Promise.all([getVehicleIncidents(), getCameras()]).then(([incidentData, cameraData]) => {
-        if (incidentData && incidentData.length) {
-          setVehicles(incidentData)
-          setSelectedVehicle((prev) => prev || incidentData[0] || null)
-        }
-        if (cameraData && cameraData.length) setCameras(cameraData)
-      })
-    }
-  }, [rows])
-
-  useEffect(() => {
-    getCameras().then((cameraData) => {
-      if (cameraData && cameraData.length) setCameras(cameraData)
-    })
-  }, [])
   const [searchLoading, setSearchLoading] = useState(false)
 
   const nextQueueIndexRef = useRef(readStoredIndex())
@@ -215,21 +318,6 @@ export default function VehicleInformation() {
   async function handleSearch(e) {
     if (e?.preventDefault) e.preventDefault()
     const query = searchValue.trim()
-    if (!query) {
-      setSearched(false)
-      setSelectedVehicle(vehicles[0] || null)
-      return
-    }
-    // Search local rows first for instant match
-    const localMatch = vehicles.find((v) =>
-      v.vehicleNumber.toLowerCase().includes(query.toLowerCase())
-    )
-    if (localMatch) {
-      setSelectedVehicle(localMatch)
-      setSearched(true)
-      return
-    }
-    const vehicle = await getVehicleTracking(query)
     if (!query) return
 
     setSearchLoading(true)
@@ -270,292 +358,199 @@ export default function VehicleInformation() {
     nextQueueIndexRef.current = 3
   }
 
-  function clearSearch() {
-    setSearchValue('')
-    setSearched(false)
-    setSelectedVehicle(vehicles[0] || null)
-  }
-
-  const trackedCount = vehicles.filter((vehicle) => vehicle.status === 'Tracking').length
-  const collisionVehicles = vehicles.filter((vehicle) => /collision|accident|violation|speed/i.test(vehicle.incidentType))
-  const collisionCount = collisionVehicles.length || (dbStats?.overspeedTotal ? dbStats.overspeedTotal : 14)
-  const collisionTypes = ['Car', 'Bike', 'Auto', 'Bus', 'Truck'].map((type) => ({
-    type,
-    count: collisionVehicles.filter((vehicle) => vehicle.vehicleType === type).length,
-  }))
-  const chartColors = { Car: '#3978db', Bike: '#2b9c7b', Auto: '#d98a43', Bus: '#8a63c7', Truck: '#d94d58' }
-  const maxCollisionCount = Math.max(...collisionTypes.map((item) => item.count), 1)
-  const vehicleIcon = { Car, Bike: CarFront, Auto: CarFront, Bus, Truck }
-
-  // Collision Combination Matrix Data
-  const collisionCombinations = [
-    { pair: 'Truck ↔ Car', primary: 'Truck', secondary: 'Car', count: 14, severity: 'High', color: '#d94d58', desc: 'Highway high-speed rear-end impact during lane merging' },
-    { pair: 'Bus ↔ Auto', primary: 'Bus', secondary: 'Auto', count: 8, severity: 'Critical', color: '#dc2626', desc: 'Interchange side-swipe collision at toll approach' },
-    { pair: 'Car ↔ Bike', primary: 'Car', secondary: 'Bike', count: 11, severity: 'Moderate', color: '#d98a43', desc: 'Queue tailback collision at Raikal Toll Plaza' },
-    { pair: 'Multi-Vehicle Pileup', primary: 'Multi', secondary: '3+ Vehicles', count: 5, severity: 'Extreme', color: '#7c3aed', desc: 'Corridor fog morning pileup on NH-44 KM 58' },
-    { pair: 'Truck ↔ LCV', primary: 'Truck', secondary: 'LCV', count: 6, severity: 'High', color: '#e11d48', desc: 'Night shift fast overtaking impact' },
-  ]
-
-  const filteredVehicles = selectedPairing === 'All'
-    ? vehicles
-    : vehicles.filter((v) => {
-        if (selectedPairing === 'Truck ↔ Car') return v.vehicleType === 'Truck' || v.vehicleType === 'Car'
-        if (selectedPairing === 'Bus ↔ Auto') return v.vehicleType === 'Bus' || v.vehicleType === 'Auto'
-        if (selectedPairing === 'Car ↔ Bike') return v.vehicleType === 'Car' || v.vehicleType === 'Bike'
-        return true
-      })
-
-  return (
-    <div className="vehicle-information-page">
-      <div className="page-intro vehicle-information-intro">
-        <div>
-          <p className="section-kicker">VEHICLE FORENSICS &amp; INCIDENT MATRIX</p>
-          <h1>Vehicle Tracking &amp; Incident Intelligence</h1>
-          <p className="intro-copy">
-            Trace collision vehicles across the camera network, reconstruct movement, and analyze multi-vehicle collision combinations.
-          </p>
-        </div>
-        <div className="vehicle-hero-mark">
-          <CarFront size={26} />
-        </div>
-      </div>
-
-      <VehicleSearch onChange={setSearchValue} onClear={clearSearch} onSubmit={handleSearch} value={searchValue} />
-
-      {searched && !selectedVehicle ? (
-        <div className="vehicle-empty-state">
-          <AlertTriangle size={28} />
-          <h2>No vehicle found</h2>
-          <p>
-            No tracking information is available for <strong>{searchValue}</strong>.
-          </p>
-          <button className="secondary-action" onClick={clearSearch} type="button">
-            Back to all vehicles
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="vehicle-stat-grid">
-            <div>
-              <span>
-                <AlertTriangle size={15} />
-                Total incidents
-              </span>
-              <strong>{collisionCount}</strong>
-              <small>Across the camera network</small>
-            </div>
-            <div>
-              <span>
-                <Target size={15} />
-                Vehicles tracked
-              </span>
-              <strong>{trackedCount}</strong>
-              <small>Cases with an active route</small>
-            </div>
-            <div>
-              <span>
-                <MapPinned size={15} />
-                Cameras online
-              </span>
-              <strong>{cameras.filter((camera) => camera.status === 'Active').length}</strong>
-              <small>Operational sources</small>
-            </div>
-            <div>
-              <span>
-                <ShieldCheck size={15} />
-                Network confidence
-              </span>
-              <strong>94.2%</strong>
-              <small>Average detection quality</small>
-            </div>
-          </div>
-
-          {/* ── COLLISION COMBINATION & INCIDENT MATRIX PANEL ── */}
-          <div className="vehicle-panel" style={{ padding: '20px', background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
-            <div className="vehicle-panel-heading" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <p className="section-kicker" style={{ color: '#dc2626', fontWeight: '800' }}>INCIDENT PAIRING MATRIX</p>
-                <h2 style={{ margin: 0, fontSize: '18px', color: '#0f172a' }}>Multi-Vehicle Collision Combinations</h2>
-              </div>
-              <span style={{ fontSize: '12px', background: '#fef2f2', color: '#dc2626', padding: '4px 10px', borderRadius: '20px', fontWeight: '700', border: '1px solid #fecdd3' }}>
-                <Flame size={13} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
-                44 Active Corridor Collision Records
-              </span>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
-              {collisionCombinations.map((combo) => {
-                const isSelected = selectedPairing === combo.pair
-                return (
-                  <div
-                    key={combo.pair}
-                    onClick={() => setSelectedPairing(isSelected ? 'All' : combo.pair)}
-                    style={{
-                      padding: '14px',
-                      borderRadius: '10px',
-                      border: `2px solid ${isSelected ? combo.color : '#e2e8f0'}`,
-                      background: isSelected ? `${combo.color}0d` : '#f8fafc',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      boxShadow: isSelected ? `0 4px 12px ${combo.color}25` : 'none',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <strong style={{ fontSize: '14px', color: '#1e293b' }}>{combo.pair}</strong>
-                      <span
-                        style={{
-                          fontSize: '10px',
-                          fontWeight: '800',
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          background: `${combo.color}20`,
-                          color: combo.color,
-                        }}
-                      >
-                        {combo.severity}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '20px', fontWeight: '800', color: combo.color, marginBottom: '4px' }}>
-                      {combo.count} <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>cases</span>
-                    </div>
-                    <p style={{ margin: 0, fontSize: '11px', color: '#64748b', lineHeight: '1.4' }}>
-                      {combo.desc}
-                    </p>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          <section className="collision-intelligence-grid">
-            <div className="vehicle-panel collision-chart-panel">
-              <div className="vehicle-panel-heading">
-                <div>
-                  <p className="section-kicker">COLLISION PROFILE</p>
-                  <h2>Vehicles by type</h2>
-                </div>
-                <span>
-                  <BarChart3 size={14} />
-                  {collisionCount} cases
-                </span>
-              </div>
-              <div className="collision-bars">
-                {collisionTypes.map((item) => {
-                  const Icon = vehicleIcon[item.type]
-                  return (
-                    <div className="collision-bar-row" key={item.type}>
-                      <span className="collision-bar-label">
-                        <Icon size={16} />
-                        {item.type}
-                      </span>
-                      <div className="collision-bar-track">
-                        <i style={{ width: `${(item.count / maxCollisionCount) * 100}%`, background: chartColors[item.type] }} />
-                      </div>
-                      <strong>{item.count}</strong>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="vehicle-panel collision-donut-panel">
-              <div className="vehicle-panel-heading">
-                <div>
-                  <p className="section-kicker">INCIDENT MIX</p>
-                  <h2>Collision distribution</h2>
-                </div>
-              </div>
-              <div className="collision-donut">
-                <ResponsiveContainer height="100%" width="100%">
-                  <PieChart>
-                    <Pie
-                      data={collisionTypes.filter((item) => item.count)}
-                      dataKey="count"
-                      innerRadius={48}
-                      nameKey="type"
-                      outerRadius={74}
-                      paddingAngle={4}
-                    >
-                      {collisionTypes
-                        .filter((item) => item.count)
-                        .map((item) => (
-                          <Cell fill={chartColors[item.type]} key={item.type} />
-                        ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-                <strong>{collisionCount}</strong>
-                <span>incidents</span>
-              </div>
-              <div className="collision-legend">
-                {collisionTypes.map((item) => (
-                  <span key={item.type}>
-                    <i style={{ background: chartColors[item.type] }} />
-                    {item.type}
-                    <b>{item.count}</b>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="vehicle-panel collision-column-panel">
-              <div className="vehicle-panel-heading">
-                <div>
-                  <p className="section-kicker">COMPARISON VIEW</p>
-                  <h2>Collision count chart</h2>
-                </div>
-              </div>
-              <div className="collision-recharts">
-                <ResponsiveContainer height="100%" width="100%">
-                  <BarChart data={collisionTypes} margin={{ left: -20, right: 8, top: 10, bottom: 0 }}>
-                    <XAxis axisLine={false} dataKey="type" tick={{ fill: '#71807a', fontSize: 10 }} tickLine={false} />
-                    <YAxis allowDecimals={false} axisLine={false} tick={{ fill: '#71807a', fontSize: 10 }} tickLine={false} />
-                    <Tooltip />
-                    <Bar dataKey="count" radius={[5, 5, 0, 0]}>
-                      {collisionTypes.map((item) => (
-                        <Cell fill={chartColors[item.type]} key={item.type} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </section>
-
-          {!searched && (
-            <VehicleList
-              onSelect={setSelectedVehicle}
-              selectedVehicle={selectedVehicle}
-              vehicles={filteredVehicles}
-            />
-          )}
-
-          {selectedVehicle && (
-            <div className="vehicle-detail-layout">
-              <div className="vehicle-detail-column">
-                <button
-                  className="vehicle-back-button"
-                  onClick={() => {
-                    setSearched(false)
-                    setSelectedVehicle(null)
-                  }}
-                  type="button"
-                >
-                  <ArrowLeft size={15} />
-                  Back to all vehicles
-                </button>
-                <VehicleSummary vehicle={selectedVehicle} />
-                <VehicleTimeline vehicle={selectedVehicle} />
-              </div>
-              <VehicleMap cameras={cameras} vehicle={selectedVehicle} />
-            </div>
-          )}
-        </>
-      )}
-    </div>
   return (
     <main className="vehicle-clean-page">
+      {triggeredIncident && (
+        <div className="traffic-trigger-banner" style={{
+          marginBottom: '16px',
+          padding: '14px 18px',
+          borderRadius: '14px',
+          background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(251,146,60,0.08))',
+          border: '1px solid rgba(239,68,68,0.25)',
+          color: '#1e293b',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+        }}>
+          <div>
+            <div style={{ fontSize: '10px', letterSpacing: '0.12em', fontWeight: 800, color: '#b91c1c', textTransform: 'uppercase' }}>
+              Triggered from Traffic Flow
+            </div>
+            <div style={{ fontSize: '18px', fontWeight: 800, marginTop: '4px' }}>{triggeredIncident.title}</div>
+            <div style={{ fontSize: '12px', color: '#475569', marginTop: '3px' }}>
+              {triggeredIncident.location} · {triggeredIncident.severity} severity · {triggeredIncident.queueKm} km queue
+            </div>
+          </div>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: '#7f1d1d', background: 'rgba(254,226,226,0.8)', borderRadius: '999px', padding: '7px 10px' }}>
+            {triggeredIncident.currentZone}
+          </div>
+        </div>
+      )}
+
+      {selectedTrafficIncident && (
+        <section className="incident-control-center">
+          <div className={`incident-detail-panel severity-${selectedTrafficIncident.severity?.toLowerCase() || 'low'}`}>
+            <header className="incident-detail-heading">
+              <div>
+                <div className="incident-heading-kicker">Incident intelligence / {selectedTrafficIncident.id}</div>
+                <h2>{selectedTrafficIncident.title}</h2>
+              </div>
+              <div className="incident-live-status">
+                <span className="incident-live-dot" />
+                Monitoring
+              </div>
+            </header>
+
+            <div className="incident-subtabs" role="tablist" aria-label="Incident details">
+              {incidentTabs.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeIncidentTab === tab}
+                  className={`incident-subtab ${activeIncidentTab === tab ? 'is-active' : ''}`}
+                  onClick={() => setActiveIncidentTab(tab)}
+                >
+                  {tab === 'risk' ? 'Risk profile' : tab}
+                </button>
+              ))}
+            </div>
+
+            {activeIncidentTab === 'overview' && (
+            <section className="incident-expanded-section" aria-label="Incident overview">
+              <div className="incident-overview-grid">
+                <div className="incident-overview-copy">
+                  <div className="incident-metric-label">Corridor event summary</div>
+                  <p>{selectedTrafficIncident.description}</p>
+                  <div className="incident-location-line"><Radio size={15} /> {selectedTrafficIncident.location}</div>
+                </div>
+
+                <div className="incident-kpi-grid">
+                  <div className="incident-mini-kpi">
+                    <span>Severity</span>
+                    <strong className={`incident-severity-text severity-${selectedTrafficIncident.severity?.toLowerCase() || 'low'}`}>{selectedTrafficIncident.severity}</strong>
+                  </div>
+                  <div className="incident-mini-kpi">
+                    <span>Queue length</span>
+                    <strong>{selectedTrafficIncident.queueKm} <small>km</small></strong>
+                  </div>
+                  <div className="incident-mini-kpi">
+                    <span>Modeled occurrence risk</span>
+                    <strong>{selectedTrafficIncident.probability || 0}<small>%</small></strong>
+                  </div>
+                  <div className="incident-mini-kpi">
+                    <span>Segment speed</span>
+                    <strong>{selectedTrafficIncident.corridorSpeed ?? 42}<small>km/h</small></strong>
+                  </div>
+                </div>
+              </div>
+            </section>
+            )}
+
+            {activeIncidentTab === 'impact' && (
+            <section className="incident-expanded-section" aria-label="Incident impact">
+              <div className="incident-data-grid">
+                <div className="incident-data-column">
+                  <div className="incident-metric-label">Affected zones</div>
+                  <div className="incident-data-list">
+                    {(selectedTrafficIncident.zoneImpact || []).map((zone) => (
+                      <div key={`${selectedTrafficIncident.id}-${zone.zone}-${zone.name}`} className="incident-data-row">
+                        <div className="incident-data-row-heading">
+                          <span>Zone {zone.zone} — {zone.name}</span>
+                          <strong>{zone.value}%</strong>
+                        </div>
+                        <div className="incident-progress-track">
+                          <div className={`incident-progress-fill ${zone.status.includes('Severe') ? 'is-critical' : ''}`} style={{ width: `${zone.value}%` }} />
+                        </div>
+                        <div className="incident-row-caption">{zone.status}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="incident-data-column">
+                  <div className="incident-metric-label">Primary drivers</div>
+                  <div className="incident-data-list">
+                    {(selectedTrafficIncident.impactBreakdown || []).map((entry, index) => (
+                      <div key={`${selectedTrafficIncident.id}-${entry.name}`} className="incident-data-row">
+                        <div className="incident-data-row-heading">
+                          <span>{entry.name}</span>
+                          <strong>{entry.value}%</strong>
+                        </div>
+                        <div className="incident-progress-track">
+                          <div className={`incident-progress-fill driver-color-${index % 5}`} style={{ width: `${entry.value}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+            )}
+
+            {activeIncidentTab === 'cameras' && (
+            <section className="incident-expanded-section" aria-label="Affected cameras and segments">
+              <div className="incident-data-grid">
+                <div className="incident-data-column">
+                  <div className="incident-metric-label">Affected cameras</div>
+                  <div className="incident-token-list">
+                    {(selectedTrafficIncident.affectedCameras || []).map((camera) => (
+                      <button
+                        key={`${selectedTrafficIncident.id}-${camera}`}
+                        className="incident-token camera-token incident-camera-link"
+                        type="button"
+                        onClick={() => navigate('/dashboards/cameras', {
+                          state: { selectedCameraId: camera, incidentId: selectedTrafficIncident.id },
+                        })}
+                        title={`Open ${camera} in Camera Network`}
+                      >
+                        {camera}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="incident-data-column">
+                  <div className="incident-metric-label">Affected segments</div>
+                  <div className="incident-token-list">
+                    {(selectedTrafficIncident.affectedSegments || []).map((segment) => (
+                      <span key={`${selectedTrafficIncident.id}-${segment}`} className="incident-token segment-token">{segment}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+            )}
+
+            {activeIncidentTab === 'risk' && (
+            <section className="incident-expanded-section" aria-label="Incident risk profile">
+              <div className="incident-risk-grid">
+                <div className="incident-zone-card current-zone">
+                  <div className="incident-metric-label">Current zone</div>
+                  <div>{selectedTrafficIncident.currentZone}</div>
+                </div>
+                <div className="incident-zone-card">
+                  <div className="incident-metric-label">Upstream</div>
+                  <div>{selectedTrafficIncident.upstream}</div>
+                </div>
+                <div className="incident-zone-card">
+                  <div className="incident-metric-label">Downstream</div>
+                  <div>{selectedTrafficIncident.downstream}</div>
+                </div>
+              </div>
+            </section>
+            )}
+
+            {activeIncidentTab === 'analytics' && (
+            <section className="incident-expanded-section incident-analytics-section" aria-label="Incident analytics">
+                <IncidentAnalyticsCards incident={selectedTrafficIncident} />
+            </section>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* 1. HEADER */}
       <header className="vehicle-clean-header">
         <div className="clean-header-title">
@@ -607,12 +602,7 @@ export default function VehicleInformation() {
         </div>
       </header>
 
-      {/* 2. AT TOP: ANALYTICS GRAPH PART (UPDATES DYNAMICALLY WITH VEHICLE DATA) */}
-      <section className="clean-analytics-section" aria-label="Incident Analytics">
-        <IncidentAnalyticsCards vehicles={displayedCollisions} />
-      </section>
-
-      {/* 3. THEN: TABLE OF VEHICLE (COLLISION VEHICLES TABLE) */}
+      {/* 2. COLLISION VEHICLE REGISTRY */}
       <section className="clean-collision-section" aria-label="Collision Vehicles Registry">
         <CollisionVehiclesTable
           vehicles={displayedCollisions}

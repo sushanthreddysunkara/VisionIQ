@@ -23,12 +23,14 @@ import {
   Users,
   Zap,
 } from 'lucide-react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  Line,
+  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -36,9 +38,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { formatTimestampIst, groupBy, summarizeData } from '../data/dashboardData'
-import { cameraFeeds, getCameraFeed } from '../data/cameraFeeds'
+import { formatTimestampIst, groupBy, sampleTrafficData, summarizeData } from '../data/dashboardData'
 import { getVehicleMeta } from '../data/vehicleTypes'
+import { cameraFeeds, getCameraFeed } from '../data/cameraFeeds'
 import VehicleBadge from './VehicleBadge'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
 import MediaPreviewModal from './MediaPreviewModal'
@@ -112,21 +114,372 @@ export default function DashboardDetail({
   const [cameraRemoveDialogOpen, setCameraRemoveDialogOpen] = useState(false)
   const [cameraFeedOpen, setCameraFeedOpen] = useState(false)
   const [selectedCameraFeed, setSelectedCameraFeed] = useState(null)
-  const [inlineCameraFeed, setInlineCameraFeed] = useState(null)
+  const [inlineCameraFeed, setInlineCameraFeed] = useState(() => cameraFeeds[0] || null)
   const [isFetchingBatch, setIsFetchingBatch] = useState(false)
   const [cameraForm, setCameraForm] = useState({ name: '', location: '', streamUrl: '' })
   const [trafficTab, setTrafficTab] = useState('overview')
 
-  const { kind } = useParams()
+  const { kind, incidentId } = useParams()
+  const location = useLocation()
+  const navigate = useNavigate()
   const config = configs[kind] || configs.vehicles
   const Icon = config.icon
 
-  const safeRows = Array.isArray(rows) ? rows : []
+  const incidentDetails = useMemo(() => ({
+    'acc-401': {
+      id: 'ACC-401',
+      title: 'NH-44 / Kurnool Incident',
+      severity: 'HIGH',
+      queueKm: 3.2,
+      description: 'Severe congestion triggered by a major accident impact along the Kurnool corridor with a queue extending into the upstream zone.',
+      location: 'NH-44 / Kurnool',
+      affectedCameras: ['CAM-401', 'CAM-402', 'CAM-403', 'CAM-404'],
+      affectedSegments: ['RS-401', 'RS-402'],
+      upstream: 'ZONE 03 — Kothakota',
+      currentZone: 'ZONE 04 — Kurnool',
+      downstream: 'ZONE 05 — Dhone',
+      categories: ['CONGESTION', 'ACCIDENT', 'ROAD WORK', 'LANE CLOSURE', 'BLACK SPOT'],
+      queueTrend: [
+        { time: '00:00', speed: 88, queue: 0.6, flow: 1180 },
+        { time: '02:00', speed: 76, queue: 1.1, flow: 1260 },
+        { time: '04:00', speed: 62, queue: 2.0, flow: 1340 },
+        { time: '06:00', speed: 44, queue: 3.2, flow: 1385 },
+        { time: '08:00', speed: 39, queue: 3.9, flow: 1420 },
+        { time: '10:00', speed: 48, queue: 3.2, flow: 1380 },
+      ],
+      impactBreakdown: [
+        { name: 'Congestion', value: 42 },
+        { name: 'Accident', value: 28 },
+        { name: 'Road work', value: 16 },
+        { name: 'Lane closure', value: 10 },
+        { name: 'Black spot', value: 4 },
+      ],
+      zoneImpact: [
+        { zone: '03', name: 'Kothakota', status: 'Potential congestion', value: 64 },
+        { zone: '04', name: 'Kurnool', status: 'Severe congestion', value: 92 },
+        { zone: '05', name: 'Dhone', status: 'Traffic inflow reduced', value: 51 },
+      ],
+    },
+  }), [])
+
+  const activeIncident = kind === 'traffic' && incidentId ? incidentDetails[incidentId.toLowerCase()] : null
+
+  const trafficIncidentCatalog = useMemo(() => ({
+    'acc-401': {
+      id: 'ACC-401',
+      title: 'NH-44 / Kurnool Incident',
+      severity: 'HIGH',
+      queueKm: 3.2,
+      occurrenceRate: 26,
+      probability: 87,
+      description: 'Severe congestion triggered by a major accident impact along the Kurnool corridor with a queue extending into the upstream zone.',
+      location: 'NH-44 / Kurnool',
+      affectedCameras: ['CAM-401', 'CAM-402', 'CAM-403', 'CAM-404'],
+      affectedSegments: ['RS-401', 'RS-402'],
+      upstream: 'ZONE 03 — Kothakota',
+      currentZone: 'ZONE 04 — Kurnool',
+      downstream: 'ZONE 05 — Dhone',
+      categories: ['CONGESTION', 'ACCIDENT', 'ROAD WORK', 'LANE CLOSURE', 'BLACK SPOT'],
+      queueTrend: [
+        { time: '00:00', speed: 88, queue: 0.6, flow: 1180 },
+        { time: '02:00', speed: 76, queue: 1.1, flow: 1260 },
+        { time: '04:00', speed: 62, queue: 2.0, flow: 1340 },
+        { time: '06:00', speed: 44, queue: 3.2, flow: 1385 },
+        { time: '08:00', speed: 39, queue: 3.9, flow: 1420 },
+        { time: '10:00', speed: 48, queue: 3.2, flow: 1380 },
+      ],
+      impactBreakdown: [
+        { name: 'Congestion', value: 42 },
+        { name: 'Accident', value: 28 },
+        { name: 'Road work', value: 16 },
+        { name: 'Lane closure', value: 10 },
+        { name: 'Black spot', value: 4 },
+      ],
+      zoneImpact: [
+        { zone: '03', name: 'Kothakota', status: 'Potential congestion', value: 64 },
+        { zone: '04', name: 'Kurnool', status: 'Severe congestion', value: 92 },
+        { zone: '05', name: 'Dhone', status: 'Traffic inflow reduced', value: 51 },
+      ],
+    },
+    'acc-402': {
+      id: 'ACC-402',
+      title: 'Jadcherla Black Spot',
+      severity: 'MEDIUM',
+      queueKm: 1.4,
+      occurrenceRate: 12,
+      probability: 61,
+      description: 'Recurring speed instability and vehicle weaving around the Farukhnagar–Jadcherla black-spot corridor increase collision risk.',
+      location: 'Jadcherla / NH-44',
+      affectedCameras: ['CAM-201', 'CAM-202', 'CAM-203'],
+      affectedSegments: ['RS-201', 'RS-202'],
+      upstream: 'ZONE 02 — Farukhnagar',
+      currentZone: 'ZONE 02 — Jadcherla',
+      downstream: 'ZONE 03 — Kothakota',
+      categories: ['BLACK SPOT', 'CONGESTION', 'WEATHER', 'ROAD CONDITION'],
+      queueTrend: [
+        { time: '00:00', speed: 82, queue: 0.4, flow: 980 },
+        { time: '02:00', speed: 74, queue: 0.8, flow: 1040 },
+        { time: '04:00', speed: 61, queue: 1.1, flow: 1105 },
+        { time: '06:00', speed: 53, queue: 1.4, flow: 1170 },
+        { time: '08:00', speed: 58, queue: 1.2, flow: 1160 },
+        { time: '10:00', speed: 64, queue: 1.0, flow: 1080 },
+      ],
+      impactBreakdown: [
+        { name: 'Black spot', value: 37 },
+        { name: 'Road condition', value: 24 },
+        { name: 'Weather', value: 18 },
+        { name: 'Congestion', value: 14 },
+        { name: 'Lane issue', value: 7 },
+      ],
+      zoneImpact: [
+        { zone: '02', name: 'Farukhnagar', status: 'Rising queue', value: 58 },
+        { zone: '02', name: 'Jadcherla', status: 'Black spot risk', value: 72 },
+        { zone: '03', name: 'Kothakota', status: 'Approach slowdown', value: 48 },
+      ],
+    },
+    'acc-403': {
+      id: 'ACC-403',
+      title: 'Dhone Junction Merge',
+      severity: 'MEDIUM',
+      queueKm: 1.8,
+      occurrenceRate: 17,
+      probability: 68,
+      description: 'Dense lane merging around the Dhone junction is increasing heavy-vehicle interaction and lower-speed queueing.',
+      location: 'Dhone / NH-44 Junction',
+      affectedCameras: ['CAM-301', 'CAM-302', 'CAM-303'],
+      affectedSegments: ['RS-301', 'RS-302'],
+      upstream: 'ZONE 04 — Kurnool',
+      currentZone: 'ZONE 05 — Dhone',
+      downstream: 'ZONE 06 — Gooty',
+      categories: ['JUNCTION', 'HEAVY VEHICLE', 'URBAN MERGE', 'CONGESTION'],
+      queueTrend: [
+        { time: '00:00', speed: 84, queue: 0.3, flow: 1080 },
+        { time: '02:00', speed: 70, queue: 0.9, flow: 1145 },
+        { time: '04:00', speed: 57, queue: 1.5, flow: 1230 },
+        { time: '06:00', speed: 46, queue: 1.8, flow: 1285 },
+        { time: '08:00', speed: 51, queue: 1.6, flow: 1210 },
+        { time: '10:00', speed: 63, queue: 1.1, flow: 1120 },
+      ],
+      impactBreakdown: [
+        { name: 'Heavy vehicle', value: 35 },
+        { name: 'Urban merge', value: 25 },
+        { name: 'Junction', value: 22 },
+        { name: 'Congestion', value: 13 },
+        { name: 'Road work', value: 5 },
+      ],
+      zoneImpact: [
+        { zone: '04', name: 'Kurnool', status: 'Reduced flow', value: 56 },
+        { zone: '05', name: 'Dhone', status: 'Merge pressure', value: 81 },
+        { zone: '06', name: 'Gooty', status: 'Adaptive flow', value: 43 },
+      ],
+    },
+    'acc-404': {
+      id: 'ACC-404',
+      title: 'Penukonda Toll Node Delay',
+      severity: 'LOW',
+      queueKm: 0.9,
+      occurrenceRate: 9,
+      probability: 45,
+      description: 'Toll plaza approach queues build as stop-and-go traffic begins to merge with highway flow near Penukonda.',
+      location: 'Penukonda / Toll Plaza',
+      affectedCameras: ['CAM-401', 'CAM-402'],
+      affectedSegments: ['RS-401', 'RS-402'],
+      upstream: 'ZONE 07 — Gooty',
+      currentZone: 'ZONE 08 — Penukonda',
+      downstream: 'ZONE 09 — Bagepalli',
+      categories: ['TOLL PLAZA', 'LANE CLOSURE', 'CONGESTION', 'ROAD WORK'],
+      queueTrend: [
+        { time: '00:00', speed: 86, queue: 0.2, flow: 870 },
+        { time: '02:00', speed: 76, queue: 0.4, flow: 950 },
+        { time: '04:00', speed: 68, queue: 0.7, flow: 1035 },
+        { time: '06:00', speed: 58, queue: 0.9, flow: 1100 },
+        { time: '08:00', speed: 63, queue: 0.8, flow: 1040 },
+        { time: '10:00', speed: 71, queue: 0.4, flow: 940 },
+      ],
+      impactBreakdown: [
+        { name: 'Toll plaza', value: 38 },
+        { name: 'Congestion', value: 28 },
+        { name: 'Road work', value: 17 },
+        { name: 'Lane closure', value: 12 },
+        { name: 'Merge', value: 5 },
+      ],
+      zoneImpact: [
+        { zone: '07', name: 'Gooty', status: 'Mild build-up', value: 41 },
+        { zone: '08', name: 'Penukonda', status: 'Toll delay', value: 63 },
+        { zone: '09', name: 'Bagepalli', status: 'Stable inflow', value: 35 },
+      ],
+    },
+  }), [])
+
+  const incidentCardList = useMemo(() => Object.values(trafficIncidentCatalog), [trafficIncidentCatalog])
+
+  const corridorZoneData = [
+    { id: '01', name: 'Hyderabad / Bahadurpura–Petlaburj', type: 'Urban', status: 'High', note: 'Heavy city inflow and merge pressure', speed: 41, queue: 2.8 },
+    { id: '02', name: 'Farukhnagar–Jadcherla', type: 'Black Spot', status: 'Watch', note: 'Repeated incident and speed disruption', speed: 48, queue: 2.1 },
+    { id: '03', name: 'Kothakota', type: 'Upstream', status: 'Watch', note: 'Traffic queue begins to form upstream', speed: 54, queue: 1.6 },
+    { id: '04', name: 'Kurnool', type: 'Critical', status: 'Critical', note: 'Primary flow collapse and severe queueing', speed: 22, queue: 3.9 },
+    { id: '05', name: 'Dhone', type: 'Downstream', status: 'Watch', note: 'Reduced inflow and redistributed traffic', speed: 49, queue: 1.9 },
+    { id: '06', name: 'Dhone–Gooty', type: 'Junction', status: 'Normal', note: 'Merging heavy-vehicle movement', speed: 63, queue: 0.9 },
+    { id: '07', name: 'Gooty–Anantapur', type: 'Highway', status: 'Normal', note: 'Stable corridor throughput', speed: 70, queue: 0.8 },
+    { id: '08', name: 'Penukonda', type: 'Toll', status: 'Watch', note: 'Toll approach with queue variation', speed: 58, queue: 1.1 },
+    { id: '09', name: 'Bagepalli', type: 'Border', status: 'Normal', note: 'Cross-border movement remains moderate', speed: 68, queue: 0.7 },
+    { id: '10', name: 'Chikkaballapur', type: 'Urban', status: 'Normal', note: 'Approach is recovering smoothly', speed: 66, queue: 0.7 },
+    { id: '11', name: 'Devanahalli–Bengaluru', type: 'Urban', status: 'High', note: 'Airport traffic and final approach pressure', speed: 44, queue: 2.5 },
+  ]
+
+  const corridorSegmentIncidents = corridorZoneData.map((zone, index) => {
+    const linkedIncidentIds = { '02': 'acc-402', '04': 'acc-401', '05': 'acc-403', '08': 'acc-404' }
+    const existingIncident = trafficIncidentCatalog[linkedIncidentIds[zone.id]]
+    const upstreamZone = corridorZoneData[Math.max(0, index - 1)]
+    const downstreamZone = corridorZoneData[Math.min(corridorZoneData.length - 1, index + 1)]
+    const severity = zone.status === 'Critical' || zone.status === 'High'
+      ? 'HIGH'
+      : zone.status === 'Watch' ? 'MEDIUM' : 'LOW'
+    const risk = existingIncident?.probability ?? Math.min(92, Math.max(18, Math.round(zone.queue * 14 + (80 - zone.speed) * 0.55 + 20)))
+    const impactScore = Math.min(96, Math.round(zone.queue * 14 + (90 - zone.speed) * 0.45 + 18))
+
+    return {
+      ...(existingIncident || {}),
+      id: existingIncident?.id || `SEG-${zone.id}`,
+      title: existingIncident?.title || `${zone.name} Corridor Segment`,
+      severity,
+      probability: risk,
+      queueKm: zone.queue,
+      corridorSpeed: zone.speed,
+      segmentId: zone.id,
+      segmentType: zone.type,
+      segmentStatus: zone.status,
+      description: `${zone.note}. Current segment speed is ${zone.speed} km/h with ${zone.queue} km of queue pressure across the ${zone.name} corridor segment.`,
+      location: zone.name,
+      currentZone: `ZONE ${zone.id} — ${zone.name}`,
+      upstream: `ZONE ${upstreamZone.id} — ${upstreamZone.name}`,
+      downstream: `ZONE ${downstreamZone.id} — ${downstreamZone.name}`,
+      affectedCameras: existingIncident?.affectedCameras || [`CAM-${zone.id}01`, `CAM-${zone.id}02`],
+      affectedSegments: existingIncident?.affectedSegments || [`RS-${zone.id}01`, `RS-${zone.id}02`],
+      categories: existingIncident?.categories || [zone.type.toUpperCase(), 'CONGESTION', 'SPEED DISRUPTION'],
+      queueTrend: Array.from({ length: 6 }, (_, step) => {
+        const factor = [0.45, 0.6, 0.78, 1, 0.88, 0.7][step]
+        return {
+          time: `${String(step * 2).padStart(2, '0')}:00`,
+          speed: Math.max(15, Math.round(zone.speed + (1 - factor) * (82 - zone.speed))),
+          queue: Number((zone.queue * factor).toFixed(1)),
+          flow: Math.round((1000 + zone.speed * 7) * factor + 250),
+        }
+      }),
+      impactBreakdown: existingIncident?.impactBreakdown || [
+        { name: zone.type, value: 44 },
+        { name: 'Congestion', value: 34 },
+        { name: 'Speed disruption', value: 22 },
+      ],
+      zoneImpact: [upstreamZone, zone, downstreamZone].map((impactZone, impactIndex) => ({
+        zone: impactZone.id,
+        name: impactZone.name,
+        status: impactZone.id === zone.id ? `${zone.status} segment impact` : impactIndex < 1 ? 'Upstream traffic exposure' : 'Downstream flow exposure',
+        value: impactZone.id === zone.id ? impactScore : Math.min(88, Math.round(impactZone.queue * 13 + (85 - impactZone.speed) * 0.4 + 18)),
+      })),
+    }
+  })
+
+  const bottleneckRows = [
+    { zone: '01', segment: 'Hyderabad / Bahadurpura–Petlaburj', type: 'Urban congestion', effect: 'Queue build-up and lower speeds', monitor: 'Camera + traffic flow', severity: 82 },
+    { zone: '02', segment: 'Farukhnagar–Jadcherla', type: 'Black-spot section', effect: 'Incident and speed disruption', monitor: 'Camera + incident', severity: 71 },
+    { zone: '03', segment: 'Kothakota Upstream', type: 'Approach queue', effect: 'Incoming congestion spillback', monitor: 'Zone + speed', severity: 68 },
+    { zone: '04', segment: 'Kurnool corridor', type: 'Accident / lane closure', effect: 'Severe lane-speed reduction', monitor: 'Camera + flow', severity: 96 },
+    { zone: '05', segment: 'Dhone downstream', type: 'Junction / inflow shift', effect: 'Traffic inflow reduced', monitor: 'Camera + queue', severity: 58 },
+    { zone: '06', segment: 'Dhone–Gooty interchange', type: 'Heavy-vehicle merge', effect: 'Merging and heavy vehicles', monitor: 'Camera + vehicle mix', severity: 60 },
+    { zone: '08', segment: 'Penukonda approaches', type: 'Toll / highway node', effect: 'Queue variation', monitor: 'Toll + flow', severity: 63 },
+    { zone: '11', segment: 'Devanahalli–Bengaluru / Hebbal', type: 'Urban approach', effect: 'Peak-hour congestion', monitor: 'Camera + incident', severity: 75 },
+  ]
+
+  const impactFlowData = [
+    { stage: 'Upstream', value: 64, label: 'ZONE 03 — Kothakota', status: 'Potential congestion' },
+    { stage: 'Current', value: 94, label: 'ZONE 04 — Kurnool', status: 'Severe congestion' },
+    { stage: 'Downstream', value: 52, label: 'ZONE 05 — Dhone', status: 'Traffic inflow reduced' },
+  ]
+
+  const safeRows = useMemo(() => {
+    if (Array.isArray(rows) && rows.length > 0) return rows
+    return sampleTrafficData
+  }, [rows])
   const summary = summarizeData(safeRows)
 
-  const chartData = groupBy(safeRows, config.chartKey)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10)
+  const importedCameras = groupBy(safeRows, 'camera').map((camera) => ({
+    ...camera,
+    id: camera.name,
+    status: 'ACTIVE',
+  }))
+
+  const baseCameras = cameraFeeds.map((feed) => {
+    const matched = importedCameras.find((c) => c.name === feed.name || c.id === feed.id)
+    return {
+      ...feed,
+      value: matched ? matched.value : 0,
+      status: 'ACTIVE',
+    }
+  })
+
+  const extraImported = importedCameras.filter(
+    (c) => !cameraFeeds.some((feed) => feed.name === c.name || feed.id === c.id)
+  )
+
+  const cameraRecords = [...baseCameras, ...extraImported, ...addedCameras].filter(
+    (camera) => !removedCameras.includes(camera.id),
+  )
+
+  const topCameras = useMemo(() => {
+    return [...cameraRecords].sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 6)
+  }, [cameraRecords])
+
+  const cameraFeedOptions = useMemo(() => {
+    const knownFeeds = cameraFeeds.map((feed) => ({
+      ...feed,
+      ...(cameraRecords.find((camera) => camera.id === feed.id || camera.name === feed.name) || {}),
+    }))
+    const extraCameras = addedCameras
+      .filter((cam) => !cameraFeeds.some((feed) => feed.id === cam.id || feed.name === cam.name))
+      .map((cam) => ({
+        ...cam,
+        videoUrl: cam.videoUrl || cam.streamUrl || cameraFeeds[0].videoUrl,
+      }))
+    return [...knownFeeds, ...extraCameras]
+  }, [cameraRecords, addedCameras])
+
+  useEffect(() => {
+    if (kind === 'cameras' && !inlineCameraFeed && cameraFeedOptions.length) {
+      setInlineCameraFeed(cameraFeedOptions[0])
+    }
+  }, [cameraFeedOptions, inlineCameraFeed, kind])
+
+  useEffect(() => {
+    if (kind !== 'cameras' || !location.state?.selectedCameraId || !cameraFeedOptions.length) return
+
+    const requestedId = String(location.state.selectedCameraId)
+    const cameraCode = requestedId.match(/^CAM-(\d+)/i)?.[1]
+    const corridorCameraCode = cameraCode?.length === 3 ? cameraCode[0].padStart(2, '0') : null
+    const matchingCamera = cameraFeedOptions.find((camera) =>
+      camera.id === requestedId || camera.name === requestedId
+    ) || cameraFeedOptions.find((camera) =>
+      corridorCameraCode && camera.id.includes(`-${corridorCameraCode}-`)
+    )
+
+    if (matchingCamera && inlineCameraFeed?.id !== matchingCamera.id) {
+      setInlineCameraFeed(matchingCamera)
+    }
+  }, [cameraFeedOptions, inlineCameraFeed?.id, kind, location.state])
+
+  const chartData = useMemo(() => {
+    const grouped = groupBy(safeRows, config.chartKey)
+    if (grouped.length > 0) {
+      return grouped.sort((a, b) => b.value - a.value).slice(0, 10)
+    }
+    if (kind === 'cameras') {
+      return cameraRecords.slice(0, 6).map((cam) => ({
+        name: cam.name.replace('CAM-NH44-', ''),
+        value: cam.value || 0,
+      }))
+    }
+    return []
+  }, [safeRows, config.chartKey, kind, cameraRecords])
 
   const pieData = groupBy(safeRows, 'type')
     .sort((a, b) => b.value - a.value)
@@ -135,35 +488,6 @@ export default function DashboardDetail({
   const topLocations = groupBy(safeRows, 'location')
     .sort((a, b) => b.value - a.value)
     .slice(0, 5)
-
-  const importedCameras = groupBy(safeRows, 'camera').map((camera) => ({
-    ...camera,
-    id: camera.name,
-    status: 'ACTIVE',
-  }))
-
-  const cameraRecords = [...importedCameras, ...addedCameras].filter(
-    (camera) => !removedCameras.includes(camera.id),
-  )
-  const topCameras = cameraRecords.sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 6)
-  const cameraFeedOptions = cameraFeeds.map((feed) => ({
-    ...feed,
-    ...(cameraRecords.find((camera) => camera.id === feed.id || camera.name === feed.name) || {}),
-  }))
-
-  useEffect(() => {
-    if (kind === 'cameras' && !inlineCameraFeed && cameraFeedOptions.length) {
-      setInlineCameraFeed(cameraFeedOptions[0])
-    }
-  }, [cameraFeedOptions, inlineCameraFeed, kind])
-
-  const averageSpeed = safeRows.length
-    ? Math.round(safeRows.reduce((total, row) => total + Number(row.speed || 0), 0) / safeRows.length)
-    : 62
-
-  const overspeedRows = safeRows.filter((row) => row.overSpeed === 'Yes' || row.isOverSpeed)
-  const overspeedCount = overspeedRows.length
-  const overspeedPercent = safeRows.length ? Math.round((overspeedCount / safeRows.length) * 100) : 0
 
   function openCameraFeed(camera) {
     setSelectedCameraFeed(getCameraFeed(camera))
@@ -174,6 +498,14 @@ export default function DashboardDetail({
     setCameraFeedOpen(false)
     setSelectedCameraFeed(null)
   }
+
+  const averageSpeed = safeRows.length
+    ? Math.round(safeRows.reduce((total, row) => total + Number(row.speed || 0), 0) / safeRows.length)
+    : 62
+
+  const overspeedRows = safeRows.filter((row) => row.overSpeed === 'Yes' || row.isOverSpeed)
+  const overspeedCount = overspeedRows.length
+  const overspeedPercent = safeRows.length ? Math.round((overspeedCount / safeRows.length) * 100) : 0
 
   function submitCamera(event) {
     event.preventDefault()
@@ -218,6 +550,232 @@ export default function DashboardDetail({
     }
     return safeRows.slice(0, 12)
   }, [safeRows])
+
+  if (activeIncident) {
+    return (
+      <div className="dashboard-page dashboard-detail-page nh44-theme" style={{ gap: '18px' }}>
+        <div className="detail-back-row">
+          <Link className="back-link" to="/dashboards/traffic">
+            <ArrowLeft size={16} />
+            Back to Traffic Flow
+          </Link>
+        </div>
+
+        <div className="page-intro nh44-header">
+          <div>
+            <div className="nh44-badge-row">
+              <span className="nh44-highway-tag">
+                <Radio size={13} className="nh44-pulse-icon" />
+                {activeIncident.id} INCIDENT RADAR
+              </span>
+              <span className="nh44-db-pill">
+                <AlertTriangle size={13} />
+                Severity {activeIncident.severity}
+              </span>
+            </div>
+            <h1>{activeIncident.title}</h1>
+            <p className="intro-copy">{activeIncident.description}</p>
+          </div>
+          <div className="detail-heading-icon" style={{ borderColor: '#ef444440', color: '#ef4444' }}>
+            <AlertTriangle size={26} />
+          </div>
+        </div>
+
+        <div className="nh44-kpi-grid">
+          <div className="nh44-kpi-card">
+            <div className="kpi-icon-wrap" style={{ background: '#fff1f2', color: '#dc2626' }}>
+              <AlertTriangle size={22} />
+            </div>
+            <div className="kpi-content">
+              <span className="kpi-label">Queue Length</span>
+              <div className="kpi-value-row">
+                <strong className="kpi-number">{activeIncident.queueKm}</strong>
+                <span className="kpi-unit">km</span>
+              </div>
+              <span className="kpi-subtext">Immediate corridor obstruction</span>
+            </div>
+          </div>
+
+          <div className="nh44-kpi-card">
+            <div className="kpi-icon-wrap" style={{ background: '#eff6ff', color: '#2563eb' }}>
+              <MapPin size={22} />
+            </div>
+            <div className="kpi-content">
+              <span className="kpi-label">Current Zone</span>
+              <div className="kpi-value-row">
+                <strong className="kpi-number" style={{ fontSize: '1.15rem' }}>{activeIncident.currentZone}</strong>
+              </div>
+              <span className="kpi-subtext">Primary impact zone</span>
+            </div>
+          </div>
+
+          <div className="nh44-kpi-card">
+            <div className="kpi-icon-wrap" style={{ background: '#fef3c7', color: '#d97706' }}>
+              <Gauge size={22} />
+            </div>
+            <div className="kpi-content">
+              <span className="kpi-label">Average Speed</span>
+              <div className="kpi-value-row">
+                <strong className="kpi-number">42</strong>
+                <span className="kpi-unit">km/h</span>
+              </div>
+              <span className="kpi-subtext">Below safe corridor flow</span>
+            </div>
+          </div>
+
+          <div className="nh44-kpi-card">
+            <div className="kpi-icon-wrap" style={{ background: '#ecfdf5', color: '#059669' }}>
+              <Camera size={22} />
+            </div>
+            <div className="kpi-content">
+              <span className="kpi-label">Affected Cameras</span>
+              <div className="kpi-value-row">
+                <strong className="kpi-number" style={{ fontSize: '1.05rem' }}>{activeIncident.affectedCameras.length}</strong>
+              </div>
+              <span className="kpi-subtext">Monitoring incident spread</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="traffic-static-page">
+          <div className="traffic-static-hero">
+            <div>
+              <p className="section-kicker">INCIDENT IMPACT</p>
+              <h2>{activeIncident.location}</h2>
+              <p>Upstream and downstream traffic conditions are being evaluated through the affected corridor segments and camera network.</p>
+            </div>
+            <div className="traffic-static-status"><span className="pulse-dot" /> {activeIncident.severity} severity</div>
+          </div>
+
+          <div className="impact-zone-board">
+            <div className="impact-zone-card watch">
+              <span>UPSTREAM</span>
+              <h3>{activeIncident.upstream}</h3>
+              <b>Potential congestion</b>
+              <p>Queue formation beginning to build against the current incident zone.</p>
+            </div>
+            <div className="impact-zone-card critical">
+              <span>CURRENT</span>
+              <h3>{activeIncident.currentZone}</h3>
+              <b>Severe congestion</b>
+              <p>Primary incident area with the most concentrated disruption.</p>
+            </div>
+            <div className="impact-zone-card watch">
+              <span>DOWNSTREAM</span>
+              <h3>{activeIncident.downstream}</h3>
+              <b>Traffic inflow reduced</b>
+              <p>Outflow and inflow are being redistributed due to incident clearance timing.</p>
+            </div>
+          </div>
+
+          <div className="detail-chart-grid">
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">TRAFFIC FLOW</p>
+                  <h2>Speed vs Queue Trend</h2>
+                </div>
+                <span className="nh44-live-pill">Last 10 hours</span>
+              </div>
+              <div className="chart-frame" style={{ height: '260px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={activeIncident.queueTrend} margin={{ top: 10, right: 12, left: -20, bottom: 2 }}>
+                    <CartesianGrid stroke="#eef2f7" vertical={false} />
+                    <XAxis dataKey="time" tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="speed" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} name="Speed (km/h)" />
+                    <Line type="monotone" dataKey="queue" stroke="#ef4444" strokeWidth={3} dot={{ r: 4 }} name="Queue (km)" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">IMPACT MIX</p>
+                  <h2>Incident Drivers</h2>
+                </div>
+                <span className="nh44-live-pill">Classified factors</span>
+              </div>
+              <div className="chart-frame" style={{ height: '260px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={activeIncident.impactBreakdown} margin={{ top: 10, right: 12, left: -20, bottom: 2 }}>
+                    <CartesianGrid stroke="#eef2f7" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip />
+                    <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                      {activeIncident.impactBreakdown.map((entry, index) => (
+                        <Cell key={entry.name} fill={['#2563eb', '#f59e0b', '#10b981', '#f97316', '#ef4444'][index % 5]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          <div className="detail-chart-grid">
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">ZONE RESPONSE</p>
+                  <h2>Zone Impact Overview</h2>
+                </div>
+              </div>
+              <div className="chart-frame" style={{ height: '220px', padding: '8px 0 0' }}>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {activeIncident.zoneImpact.map((zone) => (
+                    <div key={zone.zone}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px', color: '#475569' }}>
+                        <span>Zone {zone.zone} — {zone.name}</span>
+                        <strong>{zone.value}%</strong>
+                      </div>
+                      <div style={{ height: '10px', borderRadius: '999px', background: '#e2e8f0', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${zone.value}%`, background: zone.status.includes('Severe') ? '#ef4444' : '#f59e0b', borderRadius: '999px' }} />
+                      </div>
+                      <div style={{ marginTop: '4px', fontSize: '10px', color: '#64748b' }}>{zone.status}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">CORRIDOR DATA</p>
+                  <h2>Operational Summary</h2>
+                </div>
+              </div>
+              <div className="chart-frame" style={{ height: '220px', padding: '12px 0 0' }}>
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #edf2f7', paddingBottom: '8px' }}>
+                    <span style={{ color: '#64748b', fontSize: '12px' }}>Affected cameras</span>
+                    <strong>{activeIncident.affectedCameras.join(', ')}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #edf2f7', paddingBottom: '8px' }}>
+                    <span style={{ color: '#64748b', fontSize: '12px' }}>Affected segments</span>
+                    <strong>{activeIncident.affectedSegments.join(', ')}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #edf2f7', paddingBottom: '8px' }}>
+                    <span style={{ color: '#64748b', fontSize: '12px' }}>Current impact</span>
+                    <strong>{activeIncident.queueKm} km queue</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#64748b', fontSize: '12px' }}>Event class</span>
+                    <strong>{activeIncident.categories.join(' • ')}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={`dashboard-page dashboard-detail-page dashboard-kind-${kind || 'vehicles'} nh44-theme`}>
@@ -275,7 +833,28 @@ export default function DashboardDetail({
             className={`tr-tab-btn ${trafficTab === 'overview' ? 'active' : ''}`}
             onClick={() => setTrafficTab('overview')}
           >
-            Traffic Flow Overview
+            Flow Overview
+          </button>
+          <button
+            type="button"
+            className={`tr-tab-btn ${trafficTab === 'corridor' ? 'active' : ''}`}
+            onClick={() => setTrafficTab('corridor')}
+          >
+            Corridor Segments
+          </button>
+          <button
+            type="button"
+            className={`tr-tab-btn ${trafficTab === 'bottlenecks' ? 'active' : ''}`}
+            onClick={() => setTrafficTab('bottlenecks')}
+          >
+            Bottlenecks
+          </button>
+          <button
+            type="button"
+            className={`tr-tab-btn ${trafficTab === 'impact' ? 'active' : ''}`}
+            onClick={() => setTrafficTab('impact')}
+          >
+            Corridor Impact
           </button>
           <button
             type="button"
@@ -442,6 +1021,38 @@ export default function DashboardDetail({
               <strong>{overspeedCount}</strong>
               <span>speed alerts</span>
             </div>
+            <div className="flow-pulse incident-link-panel" style={{ marginTop: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                <div>
+                  <strong style={{ fontSize: '12px', display: 'block' }}>ACC-401</strong>
+                  <span style={{ fontSize: '11px', opacity: 0.8 }}>NH-44 / Kurnool</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate('/vehicle-information', {
+                    state: {
+                      trafficIncident: {
+                        id: 'ACC-401',
+                        title: 'NH-44 / Kurnool Incident',
+                        severity: 'HIGH',
+                        queueKm: 3.2,
+                        location: 'NH-44 / Kurnool',
+                        currentZone: 'ZONE 04 — Kurnool',
+                        upstream: 'ZONE 03 — Kothakota',
+                        downstream: 'ZONE 05 — Dhone',
+                        affectedCameras: ['CAM-401', 'CAM-402', 'CAM-403', 'CAM-404'],
+                        affectedSegments: ['RS-401', 'RS-402'],
+                        categories: ['CONGESTION', 'ACCIDENT', 'ROAD WORK', 'LANE CLOSURE', 'BLACK SPOT'],
+                      },
+                    },
+                  })}
+                  className="nh44-control-btn nh44-trigger-btn"
+                  style={{ padding: '8px 12px', borderRadius: '10px', minWidth: 'auto', fontSize: '11px' }}
+                >
+                  Open incident
+                </button>
+              </div>
+            </div>
           </div>
           <div className="flow-location-board">
             <div className="alternate-section-heading">
@@ -478,6 +1089,323 @@ export default function DashboardDetail({
         </section>
       )}
 
+        </>
+      )}
+
+      {/* STATIC NH-44 CORRIDOR SUB-PAGES */}
+      {kind === 'traffic' && trafficTab === 'corridor' && (
+        <section className="traffic-static-page">
+          <div className="traffic-static-hero">
+            <div>
+              <p className="section-kicker">NH-44 CORRIDOR INTELLIGENCE</p>
+              <h2>Hyderabad → Bengaluru Corridor</h2>
+              <p>Current congestion mapping for the Kurnool incident shows queue spillback into upstream segments and reduced throughput into the downstream zone.</p>
+            </div>
+            <div className="traffic-static-status"><span className="pulse-dot" /> 11 monitored zones</div>
+          </div>
+
+          <div className="corridor-incident-alerts">
+            <div className="panel-heading">
+              <div>
+                <p className="section-kicker">ACTIVE EVENTS</p>
+                <h2>Incident alerts</h2>
+              </div>
+              <span className="nh44-live-pill">{incidentCardList.length} incidents</span>
+            </div>
+            <div className="traffic-trigger-list" style={{ display: 'grid', gap: '10px' }}>
+              {incidentCardList.map((incident) => (
+                <button
+                  key={incident.id}
+                  type="button"
+                  onClick={() => navigate('/vehicle-information', {
+                    state: {
+                      trafficIncident: {
+                        id: incident.id,
+                        title: incident.title,
+                        severity: incident.severity,
+                        queueKm: incident.queueKm,
+                        location: incident.location,
+                        currentZone: incident.currentZone,
+                        upstream: incident.upstream,
+                        downstream: incident.downstream,
+                        affectedCameras: incident.affectedCameras,
+                        affectedSegments: incident.affectedSegments,
+                        categories: incident.categories,
+                      },
+                      incidentCatalog: incidentCardList,
+                    },
+                  })}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '12px',
+                    border: '1px solid #dfe8f3',
+                    background: '#fff',
+                    borderRadius: '12px',
+                    padding: '12px 14px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#64748b', fontWeight: 800 }}>{incident.id}</div>
+                    <div style={{ fontWeight: 800, color: '#11233d', marginTop: '2px' }}>{incident.title}</div>
+                    <div style={{ fontSize: '11px', color: '#475569', marginTop: '2px' }}>{incident.location}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span style={{ background: '#fef2f2', color: '#991b1b', padding: '4px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 800 }}>{incident.severity}</span>
+                    <span style={{ background: '#ecfeff', color: '#0f766e', padding: '4px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 800 }}>{incident.probability}% risk</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="detail-chart-grid">
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">ZONE SPEED</p>
+                  <h2>Corridor Speed Profile</h2>
+                </div>
+                <span className="nh44-live-pill">Speed (km/h)</span>
+              </div>
+              <div className="chart-frame" style={{ height: '240px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={corridorZoneData} margin={{ top: 8, right: 12, left: -20, bottom: 2 }}>
+                    <CartesianGrid stroke="#eef2f7" vertical={false} />
+                    <XAxis dataKey="id" tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="speed" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} name="Speed" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">QUEUE PRESSURE</p>
+                  <h2>Queue Intensity by Zone</h2>
+                </div>
+                <span className="nh44-live-pill">Queue (km)</span>
+              </div>
+              <div className="chart-frame" style={{ height: '240px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={corridorZoneData} margin={{ top: 8, right: 12, left: -20, bottom: 2 }}>
+                    <CartesianGrid stroke="#eef2f7" vertical={false} />
+                    <XAxis dataKey="id" tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip />
+                    <Bar dataKey="queue" radius={[6, 6, 0, 0]}>
+                      {corridorZoneData.map((entry, index) => (
+                        <Cell key={entry.id} fill={entry.id === '04' ? '#ef4444' : ['#60a5fa', '#93c5fd', '#fbbf24', '#f59e0b', '#34d399'][index % 5]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          <div className="traffic-zone-grid">
+            {corridorZoneData.map((zone, index) => {
+              const { id, name, type, status, note, speed, queue } = zone
+              const incident = corridorSegmentIncidents[index]
+              return (
+              <button
+                className="traffic-zone-card traffic-zone-card-button"
+                key={id}
+                type="button"
+                aria-label={`Open incident details for Zone ${id}, ${name}`}
+                onClick={() => navigate('/vehicle-information', {
+                  state: {
+                    trafficIncident: incident,
+                    incidentCatalog: corridorSegmentIncidents,
+                  },
+                })}
+              >
+                <div className="traffic-zone-number">{id}</div>
+                <div className="traffic-zone-main">
+                  <div className="traffic-zone-title-row">
+                    <div><span>{type}</span><h3>{name}</h3></div>
+                    <b className={`zone-status ${status.toLowerCase()}`}>{status}</b>
+                  </div>
+                  <p>{note}</p>
+                  <div className="traffic-zone-metrics">
+                    <span>Speed <strong>{speed} km/h</strong></span>
+                    <span>Queue <strong>{queue} km</strong></span>
+                    <span>Impact <strong>{id === '04' ? 'Critical' : 'Live'}</strong></span>
+                  </div>
+                </div>
+              </button>
+            )})}
+          </div>
+        </section>
+      )}
+
+      {kind === 'traffic' && trafficTab === 'bottlenecks' && (
+        <section className="traffic-static-page">
+          <div className="traffic-static-hero">
+            <div>
+              <p className="section-kicker">BOTTLENECK REGISTER</p>
+              <h2>NH-44 Corridor Bottleneck Map</h2>
+              <p>Live congestion pressure points are mapped to the affected corridor network, with queue growth concentrated around Kurnool and upstream route spillback.</p>
+            </div>
+          </div>
+
+          <div className="detail-chart-grid">
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">SEVERITY</p>
+                  <h2>Bottleneck Severity Index</h2>
+                </div>
+                <span className="nh44-live-pill">0–100</span>
+              </div>
+              <div className="chart-frame" style={{ height: '240px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={bottleneckRows} margin={{ top: 8, right: 12, left: -20, bottom: 2 }}>
+                    <CartesianGrid stroke="#eef2f7" vertical={false} />
+                    <XAxis dataKey="zone" tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip />
+                    <Bar dataKey="severity" radius={[6, 6, 0, 0]} fill="#f97316" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">RISK NOTES</p>
+                  <h2>Current Operational Risks</h2>
+                </div>
+              </div>
+              <div className="chart-frame" style={{ height: '240px', padding: '10px 0 0' }}>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {bottleneckRows.slice(0, 4).map((row) => (
+                    <div key={row.zone} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#475569', marginBottom: '4px' }}>
+                        <strong style={{ color: '#10233d' }}>Zone {row.zone}</strong>
+                        <span>{row.severity}/100</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#475569' }}>{row.effect}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bottleneck-table-wrap">
+            <table className="bottleneck-table">
+              <thead><tr><th>ZONE</th><th>LOCATION / SEGMENT</th><th>TYPE</th><th>EXPECTED EFFECT</th><th>MONITORING</th></tr></thead>
+              <tbody>
+                {bottleneckRows.map((row) => (
+                  <tr key={row.zone + row.segment}>
+                    <td><strong>{row.zone}</strong></td>
+                    <td>{row.segment}</td>
+                    <td>{row.type}</td>
+                    <td>{row.effect}</td>
+                    <td>{row.monitor}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {kind === 'traffic' && trafficTab === 'impact' && (
+        <section className="traffic-static-page">
+          <div className="traffic-static-hero">
+            <div>
+              <p className="section-kicker">CORRIDOR IMPACT MODEL</p>
+              <h2>How the Kurnool incident propagates through NH-44</h2>
+              <p>Queue pressure begins upstream, peaks in Kurnool, and then reduces downstream inflow as route capacity is diverted and the main corridor clears.</p>
+            </div>
+          </div>
+
+          <div className="detail-chart-grid">
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">IMPACT SPREAD</p>
+                  <h2>Zone Pressure Trend</h2>
+                </div>
+                <span className="nh44-live-pill">Current impact</span>
+              </div>
+              <div className="chart-frame" style={{ height: '240px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={impactFlowData} margin={{ top: 8, right: 12, left: -20, bottom: 2 }}>
+                    <CartesianGrid stroke="#eef2f7" vertical={false} />
+                    <XAxis dataKey="stage" tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="value" stroke="#ef4444" strokeWidth={3} dot={{ r: 4 }} name="Impact score" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">SEGMENT LOAD</p>
+                  <h2>Impact Points</h2>
+                </div>
+              </div>
+              <div className="chart-frame" style={{ height: '240px', padding: '10px 0 0' }}>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {impactFlowData.map((item) => (
+                    <div key={item.stage}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px', color: '#475569' }}>
+                        <span>{item.label}</span>
+                        <strong>{item.value}%</strong>
+                      </div>
+                      <div style={{ height: '10px', borderRadius: '999px', background: '#e2e8f0', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${item.value}%`, background: item.stage === 'Current' ? '#ef4444' : '#f59e0b', borderRadius: '999px' }} />
+                      </div>
+                      <div style={{ marginTop: '4px', fontSize: '10px', color: '#64748b' }}>{item.status}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="impact-flow-board">
+            <div className="impact-node"><span>01</span><strong>Incident</strong><small>Accident and lane disruption observed in Kurnool</small></div>
+            <div className="impact-arrow">→</div>
+            <div className="impact-node"><span>02</span><strong>Road Segment</strong><small>Vehicle flow slows and queue forms on RS-401 and RS-402</small></div>
+            <div className="impact-arrow">→</div>
+            <div className="impact-node"><span>03</span><strong>Zone Impact</strong><small>Upstream queue forms while downstream inflow reduces</small></div>
+            <div className="impact-arrow">→</div>
+            <div className="impact-node"><span>04</span><strong>Corridor Impact</strong><small>Network-wide congestion risk remains elevated until clearance</small></div>
+          </div>
+
+          <div className="impact-zone-board">
+            {[
+              ['Zone 03','Kothakota','WATCH','Potential upstream queue'],
+              ['Zone 04','Kurnool','CRITICAL','Primary incident zone with severe congestion'],
+              ['Zone 05','Dhone','WATCH','Reduced / redistributed flow'],
+            ].map(([zone, location, status, note]) => (
+              <div className={`impact-zone-card ${status.toLowerCase()}`} key={zone}>
+                <div><span>{zone}</span><h3>{location}</h3></div>
+                <b>{status}</b>
+                <p>{note}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {(kind !== 'traffic' || trafficTab === 'overview') && (
+        <>
       {/* CAMERA COVERAGE SPECIFIC SECTION */}
       {kind === 'cameras' && (
         <section className="alternate-dashboard-layout camera-coverage-layout">

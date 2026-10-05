@@ -90,6 +90,33 @@ async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `)
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS toll_rates (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        vehicle_class VARCHAR(80) NOT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        currency CHAR(3) NOT NULL DEFAULT 'INR',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY toll_rate_vehicle_class (vehicle_class)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+
+    const defaultTollRates = [
+      ['Car', 135],
+      ['SUV', 135],
+      ['Bus', 280],
+      ['Truck', 410],
+      ['Auto', 80],
+      ['LCV', 210],
+      ['Default', 135],
+    ]
+    await pool.query(
+      'INSERT IGNORE INTO toll_rates (vehicle_class, amount) VALUES ?',
+      [defaultTollRates],
+    )
+
     // Auto-sync admin users into MySQL so logins never fail with "invalid password"
     for (const admin of adminUsers) {
       const email = admin.email.trim().toLowerCase()

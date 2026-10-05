@@ -38,14 +38,22 @@ export default function CameraFeedModal({ camera, cameras = [], isOpen, onClose,
     setIsLoading(Boolean(camera?.videoUrl))
     setIsPlaying(false)
     setCanUsePictureInPicture(Boolean(document.pictureInPictureEnabled && video.requestPictureInPicture))
-    video.pause()
-    video.src = camera?.videoUrl || ''
-    video.load()
+    video.muted = isMuted
     if (camera?.videoUrl) {
-      video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false))
+      const playPromise = video.play()
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            setIsPlaying(true)
+            setIsLoading(false)
+          })
+          .catch(() => {
+            setIsPlaying(false)
+          })
+      }
     }
     return () => video.pause()
-  }, [camera?.id, camera?.videoUrl, isOpen])
+  }, [camera?.id, camera?.videoUrl, isOpen, isMuted])
 
   if (!isOpen || !camera) return null
 
@@ -132,16 +140,21 @@ export default function CameraFeedModal({ camera, cameras = [], isOpen, onClose,
           <video
             autoPlay
             controls={false}
+            crossOrigin="anonymous"
+            defaultMuted
+            key={camera.id}
             loop
             muted={isMuted}
             onCanPlay={() => setIsLoading(false)}
             onDurationChange={(event) => setDuration(event.currentTarget.duration || 0)}
             onError={handleVideoError}
+            onLoadedData={() => setIsLoading(false)}
             onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
             onPlay={() => setIsPlaying(true)}
             onTimeUpdate={(event) => setProgress(event.currentTarget.currentTime)}
             playsInline
             ref={videoRef}
+            src={camera.videoUrl}
           />
           {isLoading && !loadError && <div className="camera-feed-message"><span className="camera-loading-spinner" />Loading camera feed...</div>}
           {loadError && <div className="camera-feed-message camera-feed-error"><Camera size={25} /><strong>Unable to load camera feed</strong><span>Please check the camera stream.</span></div>}
