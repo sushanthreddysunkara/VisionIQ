@@ -58,6 +58,52 @@ function readStoredSelectedPlate() {
   }
 }
 
+function buildIncidentCatalog(rows = []) {
+  const byId = new Map()
+  for (const row of rows) {
+    if (!row.incidentId) continue
+    let incident = byId.get(row.incidentId)
+    if (!incident) {
+      const impact = row.impact || {}
+      const risk = row.risk || {}
+      incident = {
+        id: row.incidentId,
+        title: row.incidentType || 'Road incident',
+        severity: String(row.severity || 'Low').toUpperCase(),
+        queueKm: Number(impact.maxQueueKm || 0),
+        probability: Number(risk.score || 0),
+        location: row.location || 'NH-44 Corridor',
+        description: row.summary || row.incidentType || 'Incident reported on NH-44.',
+        currentZone: row.location || 'NH-44 Corridor',
+        upstream: 'Adjacent upstream zone',
+        downstream: 'Adjacent downstream zone',
+        affectedCameras: row.cameraId ? [row.cameraId] : [],
+        affectedSegments: row.roadSegmentId ? [row.roadSegmentId] : [],
+        categories: [row.incidentType || 'Incident'],
+        zoneImpact: [{ zone: '', name: row.location || 'NH-44 Corridor', status: row.status || 'Reported', value: Number(risk.score || 0) }],
+        impactBreakdown: [
+          { name: 'Estimated delay', value: Math.min(Number(impact.estimatedDelayMin || 0), 100), displayValue: `${Number(impact.estimatedDelayMin || 0)} min` },
+          { name: 'Traffic flow reduction', value: Number(impact.trafficFlowReductionPct || 0), displayValue: `${Number(impact.trafficFlowReductionPct || 0)}%` },
+          { name: 'Affected lanes', value: Math.min(Number(row.lanesBlocked || 0) * 25, 100), displayValue: `${Number(row.lanesBlocked || 0)} lanes` },
+        ],
+        involvedVehicles: [],
+        status: row.status,
+        riskProfile: risk,
+        impactAnalysis: impact,
+      }
+      byId.set(row.incidentId, incident)
+    }
+    if (row.vehicleNumber && row.vehicleNumber !== 'N/A') {
+      incident.involvedVehicles.push({ plate: row.vehicleNumber, type: row.vehicleType, role: row.involvementRole })
+    }
+  }
+
+  return [...byId.values()].map((incident) => ({
+    ...incident,
+    categories: [...incident.categories, `${incident.involvedVehicles.length} linked vehicle${incident.involvedVehicles.length === 1 ? '' : 's'}`],
+  }))
+}
+
 export default function VehicleInformation() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -204,23 +250,25 @@ export default function VehicleInformation() {
     },
   ]
 
+  const [databaseIncidentCatalog, setDatabaseIncidentCatalog] = useState([])
+
   const triggeredIncident = useMemo(() => {
     const stateIncident = location.state?.trafficIncident || null
     if (!stateIncident) return null
-    const catalogIncident = defaultIncidentCatalog.find((incident) => incident.id === stateIncident.id)
+    const catalogIncident = [...databaseIncidentCatalog, ...defaultIncidentCatalog].find((incident) => incident.id === stateIncident.id)
     return catalogIncident ? { ...catalogIncident, ...stateIncident } : stateIncident
-  }, [location.state, defaultIncidentCatalog])
+  }, [location.state, defaultIncidentCatalog, databaseIncidentCatalog])
 
   const incidentCatalog = useMemo(() => {
     const routeCatalog = Array.isArray(location.state?.incidentCatalog)
       ? location.state.incidentCatalog
       : []
-    const merged = [...routeCatalog, ...defaultIncidentCatalog]
+    const merged = [...routeCatalog, ...databaseIncidentCatalog, ...defaultIncidentCatalog]
     const unique = merged.filter(
       (incident, index, list) => list.findIndex((item) => item.id === incident.id) === index,
     )
     return unique.length ? unique : defaultIncidentCatalog
-  }, [location.state, defaultIncidentCatalog])
+  }, [location.state, defaultIncidentCatalog, databaseIncidentCatalog])
 
   const [activeIncidentTab, setActiveIncidentTab] = useState('overview')
 
@@ -232,7 +280,7 @@ export default function VehicleInformation() {
 
   const [cameras, setCameras] = useState([])
   const [allCollisions, setAllCollisions] = useState([])
-  const [displayedCollisions, setDisplayedCollisions] = useState(() => readStoredCollisions() || [])
+  const [displayedCollisions, setDisplayedCollisions] = useState([])
   const [selectedVehicle, setSelectedVehicle] = useState(null)
   const [newlyAddedPlate, setNewlyAddedPlate] = useState(null)
   const [searchValue, setSearchValue] = useState('')
@@ -244,6 +292,7 @@ export default function VehicleInformation() {
     Promise.all([getVehicleIncidents(), getCameras()]).then(
       ([incidentData, cameraData]) => {
         const loadedVehicles = incidentData || []
+        setDatabaseIncidentCatalog(buildIncidentCatalog(loadedVehicles))
         setCameras(cameraData || [])
 
         // Filter all collision / accident / fire vehicles
@@ -255,22 +304,13 @@ export default function VehicleInformation() {
 
         setAllCollisions(collisions)
 
-        // If records were already stored in localStorage, preserve them!
-        const existingStored = readStoredCollisions()
-        let activeList = existingStored
-
-        if (!activeList || activeList.length === 0) {
-          // Initialize with first 3 records on very first load
-          activeList = collisions.slice(0, 3)
-          setDisplayedCollisions(activeList)
-          try {
-            localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(activeList))
-            localStorage.setItem(STORAGE_KEY_INDEX, '3')
-          } catch {}
-          nextQueueIndexRef.current = 3
-        } else {
-          setDisplayedCollisions(activeList)
-        }
+        const activeList = collisions.slice(0, 3)
+        setDisplayedCollisions(activeList)
+        try {
+          localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(activeList))
+          localStorage.setItem(STORAGE_KEY_INDEX, String(activeList.length))
+        } catch {}
+        nextQueueIndexRef.current = activeList.length
 
         // Restore selected vehicle if previously saved, otherwise pick first
         const savedPlate = readStoredSelectedPlate()
@@ -424,6 +464,18 @@ export default function VehicleInformation() {
                   <div className="incident-metric-label">Corridor event summary</div>
                   <p>{selectedTrafficIncident.description}</p>
                   <div className="incident-location-line"><Radio size={15} /> {selectedTrafficIncident.location}</div>
+                  {selectedTrafficIncident.involvedVehicles?.length > 0 && (
+                    <div className="incident-involved-vehicles">
+                      <div className="incident-metric-label">Involved vehicle plates</div>
+                      <div className="incident-token-list">
+                        {selectedTrafficIncident.involvedVehicles.map((vehicle) => (
+                          <span className="incident-token segment-token" key={`${selectedTrafficIncident.id}-${vehicle.plate}`}>
+                            {vehicle.plate}{vehicle.type ? ` · ${vehicle.type}` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="incident-kpi-grid">
@@ -476,10 +528,10 @@ export default function VehicleInformation() {
                       <div key={`${selectedTrafficIncident.id}-${entry.name}`} className="incident-data-row">
                         <div className="incident-data-row-heading">
                           <span>{entry.name}</span>
-                          <strong>{entry.value}%</strong>
+                          <strong>{entry.displayValue || `${entry.value}%`}</strong>
                         </div>
                         <div className="incident-progress-track">
-                          <div className={`incident-progress-fill driver-color-${index % 5}`} style={{ width: `${entry.value}%` }} />
+                          <div className={`incident-progress-fill driver-color-${index % 5}`} style={{ width: `${Math.min(100, Math.max(0, Number(entry.value) || 0))}%` }} />
                         </div>
                       </div>
                     ))}
@@ -539,6 +591,22 @@ export default function VehicleInformation() {
                   <div>{selectedTrafficIncident.downstream}</div>
                 </div>
               </div>
+              {selectedTrafficIncident.riskProfile && (
+                <div className="incident-data-grid">
+                  <div className="incident-data-column">
+                    <div className="incident-metric-label">Risk score</div>
+                    <div className="incident-zone-card current-zone">
+                      <strong>{selectedTrafficIncident.riskProfile.score}/100 · {selectedTrafficIncident.riskProfile.category}</strong>
+                    </div>
+                  </div>
+                  <div className="incident-data-column">
+                    <div className="incident-metric-label">Contributing factors</div>
+                    <p>{selectedTrafficIncident.riskProfile.contributingFactors || 'No risk factors recorded.'}</p>
+                    <div className="incident-metric-label">Recommended action</div>
+                    <p>{selectedTrafficIncident.riskProfile.recommendedAction || 'No action recommendation recorded.'}</p>
+                  </div>
+                </div>
+              )}
             </section>
             )}
 

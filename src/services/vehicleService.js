@@ -3,7 +3,6 @@ import { cameras, vehicleIncidents, NH44_HIGHWAY_WAYPOINTS } from '../data/vehic
 const apiBaseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
 async function getJson(path, fallback) {
-  if (!apiBaseUrl) return fallback
   try {
     const response = await fetch(`${apiBaseUrl}${path}`)
     if (!response.ok) return fallback
@@ -80,18 +79,16 @@ export async function getVehicleTracking(vehicleNumber) {
   if (match) return match
 
   // 2. Query backend search endpoint for database records
-  if (apiBaseUrl) {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/vehicles/search?q=${encodeURIComponent(vehicleNumber)}&limit=15`)
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success && Array.isArray(data.vehicles) && data.vehicles.length) {
-          return buildTrackedVehicleFromRecords(vehicleNumber, data.vehicles)
-        }
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/vehicles/search?q=${encodeURIComponent(vehicleNumber)}&limit=15`)
+    if (response.ok) {
+      const data = await response.json()
+      if (data.success && Array.isArray(data.vehicles) && data.vehicles.length) {
+        return buildTrackedVehicleFromRecords(vehicleNumber, data.vehicles)
       }
-    } catch {
-      // ignore network errors and fallback
     }
+  } catch {
+    // ignore network errors and fallback
   }
 
   // 3. Substring match fallback

@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import { getCanonicalVehicleDomain, getVehicleMeta, isVehicleTypeMatch } from '../../data/vehicleTypes'
 import MediaPreviewModal from '../MediaPreviewModal'
+import { getNetworkOverview } from '../../services/networkApi'
 
 const QueryPage = lazy(() => import('../QueryPage'))
 
@@ -117,6 +118,18 @@ export default function KnowledgeGraphPage({
   const location = useLocation()
   const navigate = useNavigate()
   const shouldHideFilters = hideFilters || isQueryEmbedded
+  const [networkData, setNetworkData] = useState(null)
+  const [networkLoadFailed, setNetworkLoadFailed] = useState(false)
+
+  useEffect(() => {
+    let isCurrent = true
+    getNetworkOverview().then((data) => {
+      if (!isCurrent) return
+      setNetworkData(data)
+      setNetworkLoadFailed(!data)
+    })
+    return () => { isCurrent = false }
+  }, [])
 
   const [activeTab, setActiveTab] = useState(() => {
     if (initialTab === 'query') return 'query'
@@ -216,6 +229,34 @@ export default function KnowledgeGraphPage({
 
   const renderedObsIdsRef = useRef(new Set())
   const firstNeighborsRef = useRef(new Set())
+
+  const databaseGraph = useMemo(() => {
+    if (!networkData) return { nodes: [], edges: [] }
+
+    const entities = [
+      ...(networkData.corridors || []).map((row) => ({ id: row.corridor_id, label: row.corridor_name, category: 'Location', isHub: true, properties: { Route: row.route, 'Length (km)': row.length_km, Status: row.status } })),
+      ...(networkData.zones || []).map((row) => ({ id: row.zone_id, label: row.zone_name, category: 'Location', isHub: true, properties: { 'Corridor ID': row.corridor_id, 'Kilometer marker': row.km_marker, Latitude: row.latitude, Longitude: row.longitude } })),
+      ...(networkData.roadSegments || []).map((row) => ({ id: row.road_segment_id, label: row.segment_name, category: 'Location', properties: { 'Zone ID': row.zone_id, 'KM start': row.km_start, 'KM end': row.km_end, Lanes: row.lanes, 'Speed limit': `${row.speed_limit_kmh} km/h` } })),
+      ...(networkData.cameras || []).map((row) => ({ id: `cam-${row.camera_id}`, label: row.camera_name, category: 'Camera', properties: { 'Camera ID': row.camera_id, 'Zone ID': row.zone_id, Status: row.status, Latitude: row.latitude, Longitude: row.longitude } })),
+      ...(networkData.vehicles || []).map((row) => ({ id: row.vehicle_id, label: row.plate_number, category: 'Observation', vehicleType: row.vehicle_type, properties: { 'Vehicle ID': row.vehicle_id, 'Plate number': row.plate_number, 'Synthetic sample plate': row.plate_is_synthetic, 'Vehicle type': row.vehicle_type, Color: row.vehicle_color } })),
+      ...(networkData.incidents || []).map((row) => ({ id: row.incident_id, label: `${row.incident_type} · ${row.severity}`, category: 'Violation', isCenter: true, properties: { 'Incident ID': row.incident_id, Type: row.incident_type, 'Occurred (IST)': row.occurred_at_ist, Severity: row.severity, Status: row.status, Description: row.description } })),
+      ...(networkData.impactAnalysis || []).map((row) => ({ id: row.impact_id, label: `${row.estimated_delay_min} min delay`, category: 'Entity', properties: { 'Impact ID': row.impact_id, 'Incident ID': row.incident_id, 'Delay (min)': row.estimated_delay_min, 'Queue (km)': row.max_queue_km, 'Flow reduction (%)': row.traffic_flow_reduction_pct, 'Diversion recommended': row.diversion_recommended } })),
+      ...(networkData.riskProfiles || []).map((row) => ({ id: row.risk_profile_id, label: `${row.risk_category} risk · ${row.risk_score_0_100}`, category: 'OperationalStatus', properties: { 'Risk profile ID': row.risk_profile_id, 'Incident ID': row.incident_id, 'Risk score': row.risk_score_0_100, Category: row.risk_category, 'Contributing factors': row.contributing_factors, 'Recommended action': row.recommended_action } })),
+    ]
+    const knownNodeIds = new Set(entities.map((entity) => entity.id))
+    const mapEndpointId = (type, id) => (type === 'Camera' ? `cam-${id}` : id)
+    const nodes = entities.map((entity) => ({ ...entity, ...getNodeColorMeta(entity.category, entity.vehicleType) }))
+    const edges = (networkData.graphEdges || [])
+      .map((edge) => ({
+        id: edge.graph_edge_id,
+        source: mapEndpointId(edge.source_type, edge.source_id),
+        target: mapEndpointId(edge.target_type, edge.target_id),
+        label: edge.relationship,
+        color: '#94a3b8',
+      }))
+      .filter((edge) => knownNodeIds.has(edge.source) && knownNodeIds.has(edge.target))
+    return { nodes, edges }
+  }, [networkData])
 
   // Dynamic active rows based on filters
   const activeRows = useMemo(() => {
@@ -474,13 +515,12 @@ export default function KnowledgeGraphPage({
       return { currentNodes: nodes, currentEdges: edges }
     }
 
-    if (!activeRows || !activeRows.length) {
+    if ((!activeRows || !activeRows.length) && !databaseGraph.nodes.length) {
       return { currentNodes: [], currentEdges: [] }
     }
 
-    const standardDomains = ['Car', 'Bike', 'Truck', 'Auto', 'Van', 'Bus']
     const rowDomains = Array.from(new Set(activeRows.map((r) => getCanonicalVehicleDomain(r.vehicleType || r.type)).filter(Boolean)))
-    const domains = Array.from(new Set([...standardDomains, ...rowDomains]))
+    const domains = rowDomains
     const cameras = Array.from(new Set(activeRows.map((r) => r.camera).filter(Boolean)))
     if (focusMode === 'CAMERA' && focusedCamera && !cameras.includes(focusedCamera)) {
       cameras.push(focusedCamera)
@@ -624,17 +664,14 @@ export default function KnowledgeGraphPage({
         })
       }
 
-      // Secondary edge: ~25% connect to vehicle type domain to form classification spokes
-      if (i % 4 === 0) {
-        edges.push({
-          id: `edge-${edgeIndex++}`,
-          source: obsId,
-          target: `type-${domain}`,
-          label: 'OF_TYPE',
-          isInterCluster: false,
-          color: '#cbd5e1',
-        })
-      }
+      edges.push({
+        id: `edge-${edgeIndex++}`,
+        source: obsId,
+        target: `type-${domain}`,
+        label: 'OF_TYPE',
+        isInterCluster: false,
+        color: '#cbd5e1',
+      })
 
       // If overspeed, link to violation hub
       if (isOver) {
@@ -683,8 +720,20 @@ export default function KnowledgeGraphPage({
       }
     })
 
-    return { currentNodes: nodes, currentEdges: edges }
-  }, [activeRows, focusMode, frozenVehicle, focusedCamera, recordLimit])
+    const mergedNodes = new Map()
+    ;[...nodes, ...databaseGraph.nodes].forEach((node) => {
+      const existing = mergedNodes.get(node.id)
+      mergedNodes.set(node.id, existing
+        ? { ...existing, ...node, properties: { ...existing.properties, ...node.properties } }
+        : node)
+    })
+    const mergedEdges = new Map([...edges, ...databaseGraph.edges].map((edge) => [edge.id, edge]))
+
+    return {
+      currentNodes: Array.from(mergedNodes.values()),
+      currentEdges: Array.from(mergedEdges.values()),
+    }
+  }, [activeRows, focusMode, frozenVehicle, focusedCamera, recordLimit, databaseGraph])
 
   const visibleNodes = useMemo(() => {
     if (focusMode === 'VEHICLE') return currentNodes

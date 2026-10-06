@@ -46,6 +46,8 @@ import VehicleImageThumbnail from './VehicleImageThumbnail'
 import MediaPreviewModal from './MediaPreviewModal'
 import CameraFeedModal from './CameraFeedModal'
 import CameraFeedPanel from './CameraFeedPanel'
+import { getCameras } from '../services/vehicleService'
+import { getNetworkOverview } from '../services/networkApi'
 
 function getRecordTimestampScore(row) {
   const raw = String(row.timestampIst || row.timestamp || row.time || row.date || '')
@@ -57,6 +59,58 @@ function getRecordTimestampScore(row) {
   }
   const idNum = Number(String(row.id || row.csvRecordId || '').replace(/\D/g, ''))
   return idNum || 0
+}
+
+function toTrafficIncident(incident, networkData) {
+  const zone = networkData.zones?.find((item) => item.zone_id === incident.zone_id)
+  const segment = networkData.roadSegments?.find((item) => item.road_segment_id === incident.road_segment_id)
+  const impact = networkData.impactAnalysis?.find((item) => item.incident_id === incident.incident_id) || {}
+  const risk = networkData.riskProfiles?.find((item) => item.incident_id === incident.incident_id) || {}
+  const linkedVehicles = networkData.incidentVehicles?.filter((item) => item.incident_id === incident.incident_id) || []
+  const zoneIndex = networkData.zones?.findIndex((item) => item.zone_id === incident.zone_id) ?? -1
+  const flowRows = (networkData.trafficFlow || [])
+    .filter((item) => item.road_segment_id === incident.road_segment_id)
+    .sort((left, right) => new Date(left.observed_at_ist) - new Date(right.observed_at_ist))
+
+  return {
+    id: incident.incident_id,
+    title: incident.incident_type,
+    severity: String(incident.severity || 'Low').toUpperCase(),
+    queueKm: Number(impact.max_queue_km || 0),
+    occurrenceRate: networkData.incidents.filter((item) => item.road_segment_id === incident.road_segment_id).length,
+    probability: Number(risk.risk_score_0_100 || 0),
+    description: incident.description || incident.incident_type,
+    location: zone?.zone_name || 'NH-44 Corridor',
+    zoneId: incident.zone_id,
+    roadSegmentId: incident.road_segment_id,
+    affectedCameras: [incident.camera_id],
+    affectedSegments: [incident.road_segment_id],
+    upstream: networkData.zones?.[Math.max(zoneIndex - 1, 0)]?.zone_name || 'Upstream zone unavailable',
+    currentZone: zone?.zone_name || 'NH-44 Corridor',
+    downstream: networkData.zones?.[Math.min(zoneIndex + 1, (networkData.zones?.length || 1) - 1)]?.zone_name || 'Downstream zone unavailable',
+    categories: [incident.incident_type, `${linkedVehicles.length} linked vehicle${linkedVehicles.length === 1 ? '' : 's'}`, `Risk ${risk.risk_category || 'Unknown'}`],
+    involvedVehicles: linkedVehicles.map((vehicle) => vehicle.plate_number),
+    queueTrend: flowRows.map((flow) => ({
+      time: new Date(flow.observed_at_ist).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
+      speed: Number(flow.average_speed_kmh || 0),
+      queue: Number(impact.max_queue_km || 0),
+      flow: Number(flow.vehicles_per_5_min || 0),
+    })),
+    impactBreakdown: [
+      { name: 'Flow reduction (%)', value: Number(impact.traffic_flow_reduction_pct || 0) },
+      { name: 'Estimated delay (min)', value: Number(impact.estimated_delay_min || 0) },
+      { name: 'Affected lanes', value: Number(impact.affected_lanes || incident.lanes_blocked || 0) },
+    ],
+    zoneImpact: [{
+      zone: String(zone?.km_marker ?? ''),
+      name: zone?.zone_name || 'NH-44 Corridor',
+      status: incident.status,
+      value: Number(risk.risk_score_0_100 || 0),
+    }],
+    riskProfile: risk,
+    impactAnalysis: impact,
+    segmentName: segment?.segment_name || incident.road_segment_id,
+  }
 }
 
 const configs = {
@@ -115,6 +169,8 @@ export default function DashboardDetail({
   const [cameraFeedOpen, setCameraFeedOpen] = useState(false)
   const [selectedCameraFeed, setSelectedCameraFeed] = useState(null)
   const [inlineCameraFeed, setInlineCameraFeed] = useState(() => cameraFeeds[0] || null)
+  const [networkCameras, setNetworkCameras] = useState([])
+  const [networkOverview, setNetworkOverview] = useState(null)
   const [isFetchingBatch, setIsFetchingBatch] = useState(false)
   const [cameraForm, setCameraForm] = useState({ name: '', location: '', streamUrl: '' })
   const [trafficTab, setTrafficTab] = useState('overview')
@@ -124,6 +180,16 @@ export default function DashboardDetail({
   const navigate = useNavigate()
   const config = configs[kind] || configs.vehicles
   const Icon = config.icon
+
+  useEffect(() => {
+    let isCurrent = true
+    Promise.all([getCameras(), getNetworkOverview()]).then(([cameras, overview]) => {
+      if (!isCurrent) return
+      if (Array.isArray(cameras)) setNetworkCameras(cameras)
+      setNetworkOverview(overview)
+    })
+    return () => { isCurrent = false }
+  }, [])
 
   const incidentDetails = useMemo(() => ({
     'acc-401': {
@@ -162,7 +228,7 @@ export default function DashboardDetail({
     },
   }), [])
 
-  const activeIncident = kind === 'traffic' && incidentId ? incidentDetails[incidentId.toLowerCase()] : null
+  const staticActiveIncident = kind === 'traffic' && incidentId ? incidentDetails[incidentId.toLowerCase()] : null
 
   const trafficIncidentCatalog = useMemo(() => ({
     'acc-401': {
@@ -311,9 +377,24 @@ export default function DashboardDetail({
     },
   }), [])
 
-  const incidentCardList = useMemo(() => Object.values(trafficIncidentCatalog), [trafficIncidentCatalog])
+  const databaseIncidentCards = useMemo(() => (networkOverview?.incidents || []).map((incident) => toTrafficIncident(incident, networkOverview)), [networkOverview])
+  const incidentCardList = databaseIncidentCards.length ? databaseIncidentCards : Object.values(trafficIncidentCatalog)
+  const activeIncident = kind === 'traffic' && incidentId
+    ? databaseIncidentCards.find((incident) => incident.id.toLowerCase() === incidentId.toLowerCase()) || staticActiveIncident
+    : null
 
-  const corridorZoneData = [
+  const latestNetworkFlows = useMemo(() => {
+    const latestBySegment = new Map()
+    for (const observation of networkOverview?.trafficFlow || []) {
+      const current = latestBySegment.get(observation.road_segment_id)
+      if (!current || new Date(observation.observed_at_ist) > new Date(current.observed_at_ist)) {
+        latestBySegment.set(observation.road_segment_id, observation)
+      }
+    }
+    return [...latestBySegment.values()]
+  }, [networkOverview])
+
+  const fallbackCorridorZoneData = [
     { id: '01', name: 'Hyderabad / Bahadurpura–Petlaburj', type: 'Urban', status: 'High', note: 'Heavy city inflow and merge pressure', speed: 41, queue: 2.8 },
     { id: '02', name: 'Farukhnagar–Jadcherla', type: 'Black Spot', status: 'Watch', note: 'Repeated incident and speed disruption', speed: 48, queue: 2.1 },
     { id: '03', name: 'Kothakota', type: 'Upstream', status: 'Watch', note: 'Traffic queue begins to form upstream', speed: 54, queue: 1.6 },
@@ -327,9 +408,34 @@ export default function DashboardDetail({
     { id: '11', name: 'Devanahalli–Bengaluru', type: 'Urban', status: 'High', note: 'Airport traffic and final approach pressure', speed: 44, queue: 2.5 },
   ]
 
+  const corridorZoneData = networkOverview?.zones?.length
+    ? networkOverview.zones.map((zone, index) => {
+      const segment = networkOverview.roadSegments?.find((item) => item.zone_id === zone.zone_id)
+      const flow = latestNetworkFlows.find((item) => item.road_segment_id === segment?.road_segment_id)
+      const incident = databaseIncidentCards.find((item) => item.zoneId === zone.zone_id)
+      const flowState = String(flow?.flow_state || '').toLowerCase()
+      const status = incident?.severity === 'CRITICAL' || flowState.includes('incident')
+        ? 'Critical'
+        : incident?.severity === 'HIGH' || flowState.includes('congested')
+          ? 'High'
+          : flowState.includes('slow') ? 'Watch' : 'Normal'
+      return {
+        id: String(zone.km_marker ?? index + 1).padStart(2, '0'),
+        zoneId: zone.zone_id,
+        name: zone.zone_name,
+        type: incident ? 'Incident zone' : 'Highway',
+        status,
+        note: incident?.description || `${flow?.flow_state || 'No recent flow state'} on ${segment?.segment_name || zone.zone_name}`,
+        speed: Number(flow?.average_speed_kmh || 0),
+        queue: incident?.queueKm || 0,
+      }
+    })
+    : fallbackCorridorZoneData
+
   const corridorSegmentIncidents = corridorZoneData.map((zone, index) => {
     const linkedIncidentIds = { '02': 'acc-402', '04': 'acc-401', '05': 'acc-403', '08': 'acc-404' }
-    const existingIncident = trafficIncidentCatalog[linkedIncidentIds[zone.id]]
+    const existingIncident = databaseIncidentCards.find((incident) => incident.zoneId && incident.zoneId === zone.zoneId)
+      || trafficIncidentCatalog[linkedIncidentIds[zone.id]]
     const upstreamZone = corridorZoneData[Math.max(0, index - 1)]
     const downstreamZone = corridorZoneData[Math.min(corridorZoneData.length - 1, index + 1)]
     const severity = zone.status === 'Critical' || zone.status === 'High'
@@ -409,10 +515,16 @@ export default function DashboardDetail({
     status: 'ACTIVE',
   }))
 
-  const baseCameras = cameraFeeds.map((feed) => {
-    const matched = importedCameras.find((c) => c.name === feed.name || c.id === feed.id)
+  const baseCameras = (networkCameras.length ? networkCameras : cameraFeeds).map((camera) => {
+    const feed = getCameraFeed(camera)
+    const matched = importedCameras.find((c) => c.name === camera.name || c.id === camera.id)
     return {
       ...feed,
+      ...camera,
+      id: camera.id || feed.id,
+      name: camera.name || feed.name,
+      location: camera.location || feed.location,
+      videoUrl: camera.videoUrl || camera.streamUrl || feed.videoUrl,
       value: matched ? matched.value : 0,
       status: 'ACTIVE',
     }
@@ -468,6 +580,17 @@ export default function DashboardDetail({
   }, [cameraFeedOptions, inlineCameraFeed?.id, kind, location.state])
 
   const chartData = useMemo(() => {
+    if (kind === 'traffic' && latestNetworkFlows.length) {
+      const segmentNames = new Map((networkOverview?.roadSegments || []).map((segment) => [segment.road_segment_id, segment.segment_name]))
+      return latestNetworkFlows.map((flow) => ({
+        name: segmentNames.get(flow.road_segment_id) || flow.road_segment_id,
+        value: Number(flow.vehicles_per_5_min || 0),
+        averageSpeed: Number(flow.average_speed_kmh || 0),
+      }))
+    }
+    if (kind === 'cameras' && networkCameras.length) {
+      return cameraRecords.slice(0, 6).map((camera) => ({ name: camera.name, value: Number(camera.value || 0) }))
+    }
     const grouped = groupBy(safeRows, config.chartKey)
     if (grouped.length > 0) {
       return grouped.sort((a, b) => b.value - a.value).slice(0, 10)
@@ -479,7 +602,7 @@ export default function DashboardDetail({
       }))
     }
     return []
-  }, [safeRows, config.chartKey, kind, cameraRecords])
+  }, [safeRows, config.chartKey, kind, cameraRecords, latestNetworkFlows, networkOverview, networkCameras.length])
 
   const pieData = groupBy(safeRows, 'type')
     .sort((a, b) => b.value - a.value)
@@ -499,9 +622,11 @@ export default function DashboardDetail({
     setSelectedCameraFeed(null)
   }
 
-  const averageSpeed = safeRows.length
-    ? Math.round(safeRows.reduce((total, row) => total + Number(row.speed || 0), 0) / safeRows.length)
-    : 62
+  const averageSpeed = kind === 'traffic' && latestNetworkFlows.length
+    ? Math.round(latestNetworkFlows.reduce((total, row) => total + Number(row.average_speed_kmh || 0), 0) / latestNetworkFlows.length)
+    : safeRows.length
+      ? Math.round(safeRows.reduce((total, row) => total + Number(row.speed || 0), 0) / safeRows.length)
+      : 62
 
   const overspeedRows = safeRows.filter((row) => row.overSpeed === 'Yes' || row.isOverSpeed)
   const overspeedCount = overspeedRows.length

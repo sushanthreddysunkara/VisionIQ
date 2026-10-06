@@ -7,6 +7,7 @@ const http = require('http')
 const { Server } = require('socket.io')
 const authRoutes = require('./routes/authRoutes')
 const queryRoutes = require('./routes/queryRoutes')
+const networkRoutes = require('./routes/networkRoutes')
 const { initializeDatabase } = require('./config/database')
 const {
   getLatestStreamStatus,
@@ -23,7 +24,7 @@ const {
   searchVehicles,
   toClientRecord,
 } = require('./services/vehicleStream')
-const { pool } = require('./config/database')
+const { pool, isMockMode } = require('./config/database')
 
 const app = express()
 const httpServer = http.createServer(app)
@@ -154,7 +155,59 @@ app.get('/api/vehicles/search', async (req, res) => {
       return res.json({ success: true, count: 0, vehicles: [] })
     }
 
-    const vehicles = await searchVehicles(q, limit)
+    let vehicles = await searchVehicles(q, limit)
+    if (!vehicles.length && pool && !isMockMode()) {
+      const normalizedQuery = String(q).replace(/[^a-z0-9]/gi, '')
+      const networkLimit = Math.min(Math.max(Number(limit) || 50, 1), 200)
+      const [networkRows] = await pool.query(
+        `SELECT v.vehicle_id, v.plate_number, v.plate_is_synthetic, v.vehicle_type,
+                iv.involvement_role, iv.plate_confidence, i.incident_id, i.incident_type,
+                i.occurred_at_ist, i.severity, i.status, i.description,
+                i.latitude, i.longitude, z.zone_name, c.camera_name,
+                impact.max_queue_km, risk.risk_score_0_100, risk.risk_category
+         FROM network_vehicles v
+         LEFT JOIN network_incident_vehicles iv ON iv.vehicle_id = v.vehicle_id
+         LEFT JOIN network_incidents i ON i.incident_id = iv.incident_id
+         LEFT JOIN network_zones z ON z.zone_id = i.zone_id
+         LEFT JOIN network_cameras c ON c.camera_id = i.camera_id
+         LEFT JOIN network_impact_analysis impact ON impact.incident_id = i.incident_id
+         LEFT JOIN network_risk_profiles risk ON risk.incident_id = i.incident_id
+         WHERE REPLACE(REPLACE(v.plate_number, ' ', ''), '-', '') LIKE ?
+            OR v.vehicle_id LIKE ?
+            OR v.vehicle_type LIKE ?
+         ORDER BY i.occurred_at_ist DESC, v.vehicle_id
+         LIMIT ?`,
+        [`%${normalizedQuery}%`, `%${q}%`, `%${q}%`, networkLimit],
+      )
+      vehicles = networkRows.map((row) => ({
+        id: row.vehicle_id,
+        observationId: row.incident_id || row.vehicle_id,
+        csvRecordId: row.incident_id || row.vehicle_id,
+        timestampIst: row.occurred_at_ist,
+        vehicleType: row.vehicle_type || 'Unknown',
+        vehicleNumberPlate: row.plate_number,
+        plateConfidence: row.plate_confidence == null ? null : Number(row.plate_confidence),
+        vehicleImage: null,
+        speed: 0,
+        speedLimit: 0,
+        overSpeed: 'No',
+        isOverSpeed: false,
+        latitude: row.latitude == null ? null : Number(row.latitude),
+        longitude: row.longitude == null ? null : Number(row.longitude),
+        location: row.zone_name || 'NH-44 Corridor',
+        camera: row.camera_name || 'Unassigned camera',
+        events: row.incident_type || 'No linked incident',
+        incidentId: row.incident_id,
+        incidentSeverity: row.severity,
+        incidentStatus: row.status,
+        involvementRole: row.involvement_role,
+        incidentDescription: row.description,
+        maxQueueKm: row.max_queue_km == null ? null : Number(row.max_queue_km),
+        riskScore: row.risk_score_0_100 == null ? null : Number(row.risk_score_0_100),
+        riskCategory: row.risk_category,
+        plateIsSynthetic: row.plate_is_synthetic === 'Yes',
+      }))
+    }
 
     let dossier = null
     if (vehicles.length > 0 && isSpecificVehicleQuery(q)) {
@@ -254,39 +307,69 @@ app.get('/api/vehicles/stats', async (req, res) => {
 // Incidents & Violations endpoint
 app.get('/api/vehicles/incidents', async (req, res) => {
   try {
-    const limit = req.query.limit ? Number(req.query.limit) : 50
-    if (!pool) return res.json({ success: true, count: 0, incidents: [] })
+    const requestedLimit = Number(req.query.limit) || 200
+    const limit = Math.min(Math.max(requestedLimit, 1), 1000)
+    if (!pool || isMockMode()) return res.status(503).json({ success: false, message: 'Incident database is unavailable.' })
     const [rows] = await pool.query(
-      `SELECT * FROM vehicle_events 
-       WHERE over_speed = 'Yes' OR events LIKE '%violation%' OR events LIKE '%speed%' OR events LIKE '%collision%'
-       ORDER BY id DESC LIMIT ?`,
+            `SELECT i.incident_id, i.incident_type, i.occurred_at_ist, i.severity, i.status,
+              i.road_segment_id,
+              i.description, i.latitude, i.longitude, i.lanes_blocked,
+              i.camera_id, c.camera_name, z.zone_name,
+              iv.vehicle_id, iv.plate_number, iv.vehicle_type, iv.involvement_role, iv.plate_confidence,
+              impact.estimated_delay_min, impact.max_queue_km, impact.traffic_flow_reduction_pct,
+              impact.estimated_clearance_min, impact.diversion_recommended,
+              risk.risk_score_0_100, risk.risk_category, risk.contributing_factors, risk.recommended_action
+       FROM network_incidents i
+       LEFT JOIN network_cameras c ON c.camera_id = i.camera_id
+       LEFT JOIN network_zones z ON z.zone_id = i.zone_id
+       LEFT JOIN network_incident_vehicles iv ON iv.incident_id = i.incident_id
+       LEFT JOIN network_impact_analysis impact ON impact.incident_id = i.incident_id
+       LEFT JOIN network_risk_profiles risk ON risk.incident_id = i.incident_id
+       ORDER BY i.occurred_at_ist DESC, i.incident_id, iv.vehicle_id LIMIT ?`,
       [limit]
     )
-    const incidents = rows.map((r) => {
-      const client = toClientRecord(r)
-      return {
-        vehicleNumber: client.vehicleNumberPlate,
-        vehicleType: client.vehicleType,
-        incidentType: client.isOverSpeed ? 'Collision' : (client.events || 'Accident'),
-        incidentTime: client.timestampIst,
-        collisionCamera: client.camera,
-        status: client.isOverSpeed ? 'Tracking' : 'Detected',
-        observations: [
-          {
-            cameraId: client.camera,
-            timestamp: client.timestampIst,
-            latitude: client.latitude,
-            longitude: client.longitude,
-            location: client.location,
-            detectionType: client.isOverSpeed ? 'Collision' : 'Incident',
-            confidence: client.plateConfidence,
-            imageUrl: client.vehicleImagePath,
-            speed: client.speed,
-            speedLimit: client.speedLimit,
-          }
-        ]
-      }
-    })
+    const incidents = rows.map((row) => ({
+      incidentId: row.incident_id,
+      vehicleId: row.vehicle_id,
+      vehicleNumber: row.plate_number || 'N/A',
+      vehicleType: row.vehicle_type || 'Unknown',
+      involvementRole: row.involvement_role || 'Unidentified vehicle',
+      plateConfidence: row.plate_confidence == null ? null : Number(row.plate_confidence),
+      incidentType: row.incident_type,
+      incidentTime: row.occurred_at_ist,
+      roadSegmentId: row.road_segment_id,
+      collisionCamera: row.camera_name || row.camera_id,
+      cameraId: row.camera_id,
+      location: row.zone_name || 'NH-44 Corridor',
+      latitude: row.latitude == null ? null : Number(row.latitude),
+      longitude: row.longitude == null ? null : Number(row.longitude),
+      severity: row.severity,
+      status: row.status,
+      summary: row.description,
+      lanesBlocked: Number(row.lanes_blocked || 0),
+      impact: {
+        estimatedDelayMin: row.estimated_delay_min == null ? null : Number(row.estimated_delay_min),
+        maxQueueKm: row.max_queue_km == null ? null : Number(row.max_queue_km),
+        trafficFlowReductionPct: row.traffic_flow_reduction_pct == null ? null : Number(row.traffic_flow_reduction_pct),
+        estimatedClearanceMin: row.estimated_clearance_min == null ? null : Number(row.estimated_clearance_min),
+        diversionRecommended: row.diversion_recommended,
+      },
+      risk: {
+        score: row.risk_score_0_100 == null ? null : Number(row.risk_score_0_100),
+        category: row.risk_category,
+        contributingFactors: row.contributing_factors,
+        recommendedAction: row.recommended_action,
+      },
+      observations: [{
+        cameraId: row.camera_id,
+        timestamp: row.occurred_at_ist,
+        latitude: row.latitude == null ? null : Number(row.latitude),
+        longitude: row.longitude == null ? null : Number(row.longitude),
+        location: row.zone_name || 'NH-44 Corridor',
+        detectionType: row.incident_type,
+        confidence: row.plate_confidence == null ? null : Number(row.plate_confidence),
+      }],
+    }))
     res.json({ success: true, count: incidents.length, incidents })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })
@@ -296,14 +379,23 @@ app.get('/api/vehicles/incidents', async (req, res) => {
 // Camera Network endpoint
 app.get('/api/cameras', async (req, res) => {
   try {
-    const cams = [
-      { id: 'CAM-NH44-01-SHAMSHABAD', name: 'Shamshabad Tollway (KM 18)', latitude: 17.385044, longitude: 78.486671, status: 'Active' },
-      { id: 'CAM-NH44-02-SHADNAGAR', name: 'Shadnagar Interchange (KM 52)', latitude: 17.215, longitude: 78.204, status: 'Active' },
-      { id: 'CAM-NH44-03-RINGROAD', name: 'Hyderabad Ring Corridor', latitude: 17.4431, longitude: 78.3812, status: 'Active' },
-      { id: 'CAM-NH44-04-MEDCHAL', name: 'Medchal North Gateway (KM 36)', latitude: 17.629, longitude: 78.481, status: 'Active' },
-      { id: 'CAM-NH44-05-JADCHERLA', name: 'Jadcherla Express Point (KM 84)', latitude: 16.764, longitude: 78.136, status: 'Active' },
-      { id: 'CAM-NH44-06-TOLLPLAZA', name: 'Raikal Toll Plaza', latitude: 17.062, longitude: 78.243, status: 'Active' },
-    ]
+    if (!pool || isMockMode()) return res.status(503).json({ success: false, message: 'Camera database is unavailable.' })
+    const [rows] = await pool.query(
+      `SELECT c.camera_id, c.camera_name, c.latitude, c.longitude, c.status,
+              z.zone_name, z.km_marker
+       FROM network_cameras c
+       LEFT JOIN network_zones z ON z.zone_id = c.zone_id
+       ORDER BY z.km_marker DESC, c.camera_id`,
+    )
+    const cams = rows.map((row) => ({
+      id: row.camera_id,
+      name: row.camera_name,
+      location: row.zone_name,
+      corridorKm: row.km_marker == null ? null : `KM ${Number(row.km_marker)}`,
+      latitude: row.latitude == null ? null : Number(row.latitude),
+      longitude: row.longitude == null ? null : Number(row.longitude),
+      status: row.status,
+    }))
     res.json({ success: true, count: cams.length, cameras: cams })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })
@@ -312,6 +404,7 @@ app.get('/api/cameras', async (req, res) => {
 
 app.use('/api/auth', authRoutes)
 app.use('/api/query', queryRoutes)
+app.use('/api/network', networkRoutes)
 
 // Serve evidence assets or dynamic high-fidelity surveillance fallback
 const fsSync = require('fs')
