@@ -158,11 +158,11 @@ export default function DashboardHub({
       path: '/dashboards/cameras',
       number: '03',
       title: 'Camera Network & Gateways',
-      subtitle: `${summary.uniqueCameras || 6} Checkpoint Feeds`,
-      description: 'ANPR optical cameras, gateway coverage along NH-44, and checkpoint health.',
+      subtitle: '1 Shared Live Camera Feed',
+      description: 'One live camera feed is shared across the NH-44 camera network entries.',
       icon: Camera,
       accent: '#10b981',
-      badge: 'All Feeds Ready',
+      badge: 'Single Live Source',
     },
   ]
 

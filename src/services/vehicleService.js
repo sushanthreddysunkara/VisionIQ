@@ -12,8 +12,8 @@ async function getJson(path, fallback) {
   }
 }
 
-export async function getVehicleIncidents() {
-  const result = await getJson('/api/vehicles/incidents', null)
+export async function getVehicleIncidents(limit = 1000) {
+  const result = await getJson(`/api/vehicles/incidents?limit=${encodeURIComponent(limit)}`, null)
   return result?.incidents || vehicleIncidents
 }
 

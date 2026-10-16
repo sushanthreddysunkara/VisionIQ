@@ -1,88 +1,406 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowUpDown,
+  Activity,
+  AlertTriangle,
+  CalendarDays,
   Camera,
-  Car,
+  CarFront,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Compass,
+  Clock3,
   Download,
-  FileCheck,
   FileSpreadsheet,
   FileText,
-  Filter,
-  Layers,
+  IndianRupee,
   MapPin,
   Printer,
-  Search,
+  Route,
   ShieldCheck,
-  Sparkles,
-  SunMedium,
-  Table2,
-  TrafficCone,
   Upload,
+  Users,
+  Wrench,
   X,
 } from 'lucide-react'
-import VehicleBadge from './VehicleBadge'
-import { getVehicleMeta } from '../data/vehicleTypes'
-import VehicleImageThumbnail from './VehicleImageThumbnail'
-import MediaPreviewModal from './MediaPreviewModal'
-import { formatTimestampIst } from '../data/dashboardData'
+import { liveHighwayIncidents } from '../data/vehicleTrackingData'
+import { getVehicleIncidents } from '../services/vehicleService'
 
-function escapeCsvValue(value) {
+const REPORT_TEMPLATES = [
+  {
+    id: 'operations',
+    title: 'Operations daily summary',
+    description: 'Corridor activity, vehicle detections, speed exceptions and current dataset coverage.',
+    cadence: 'Daily · 06:00 AM',
+    audience: 'Shift supervisors, operations',
+    source: 'Dashboard, Traffic Flow, Camera Network',
+    icon: Activity,
+    accent: 'blue',
+    selectRows: () => true,
+  },
+  {
+    id: 'incidents',
+    title: 'Incident & response report',
+    description: 'Download every vehicle-linked and live-feed incident with the associated vehicles, locations and event details.',
+    cadence: 'On demand · incident closure',
+    audience: 'Traffic Police, operations',
+    source: 'Incidents',
+    icon: AlertTriangle,
+    accent: 'red',
+    selectRows: (row) => Boolean(row.incidentId || row.incidentType || row.incident) || isSafetyException(row),
+  },
+  {
+    id: 'traffic',
+    title: 'Traffic flow & travel time',
+    description: 'Observed speeds, vehicle volumes and corridor coverage; travel time is included when supplied.',
+    cadence: 'Weekly · Monday',
+    audience: 'Operations, planning',
+    source: 'Traffic Flow',
+    icon: Route,
+    accent: 'orange',
+    selectRows: () => true,
+  },
+  {
+    id: 'revenue',
+    title: 'Toll revenue & leakage',
+    description: 'Toll transactions, collections and leakage indicators when transaction data is connected.',
+    cadence: 'Daily and monthly',
+    audience: 'Toll auditors, finance',
+    source: 'Toll & Revenue',
+    icon: IndianRupee,
+    accent: 'purple',
+    selectRows: (row) => row.tollAmount != null || row.transactionAmount != null || row.leakageAmount != null || row.tollPlaza != null,
+  },
+  {
+    id: 'assets',
+    title: 'Camera & asset health',
+    description: 'Observed camera coverage and device health fields present in the active dataset.',
+    cadence: 'Weekly · Friday',
+    audience: 'Maintenance planners',
+    source: 'Camera Network',
+    icon: Wrench,
+    accent: 'yellow',
+    selectRows: (row) => Boolean(row.camera || row.cameraId || row.camera_id || row.assetId || row.assetStatus),
+  },
+  {
+    id: 'safety',
+    title: 'Road safety & compliance',
+    description: 'Speed-limit exceptions, signal observations and safety evidence from traffic detections.',
+    cadence: 'Quarterly',
+    audience: 'Road safety, operations',
+    source: 'Incidents, Traffic Flow, Rules & Events',
+    icon: ShieldCheck,
+    accent: 'green',
+    selectRows: (row) => isSafetyException(row),
+  },
+]
+
+function isSafetyException(row) {
+  const speed = numericValue(row.speed)
+  const limit = numericValue(row.speedLimit)
+  return row.overSpeed === 'Yes'
+    || Boolean(row.isOverSpeed)
+    || (speed !== null && limit !== null && speed > limit)
+    || String(row.signalState || '').toLowerCase() === 'red'
+    || Boolean(row.ruleViolation || row.violation)
+}
+
+function csvValue(value) {
   const text = String(value ?? '')
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
-function downloadCsv(rows, projectName) {
-  const headers = [
-    'ID',
-    'Timestamp (IST)',
-    'Vehicle Type',
-    'Vehicle Number Plate',
-    'Plate Confidence',
-    'Vehicle Image',
-    'Speed (km/h)',
-    'Speed Limit (km/h)',
-    'Over Speed',
-    'Latitude',
-    'Longitude',
-    'Video Clip Path',
-    'Vehicle Image Path',
-    'Plate Image Path',
+function uniqueValues(rows, selector) {
+  return new Set(rows.map(selector).filter((value) => value !== undefined && value !== null && String(value).trim())).size
+}
+
+function countDistinctIncidentVehicles(incidents) {
+  return new Set(incidents.flatMap((incident) => incident.vehicleNumbers.split('; ').filter(Boolean))).size
+}
+
+function rowsWithField(rows, fields) {
+  return rows.filter((row) => fields.some((field) => row[field] !== undefined && row[field] !== null && row[field] !== ''))
+}
+
+function numericValue(value) {
+  if (value === undefined || value === null || value === '') return null
+  const parsed = Number(String(value).replace(/[₹,\s]/g, ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function normalizeIncidentRows(vehicleIncidents, liveIncidents) {
+  const incidentsById = new Map()
+
+  vehicleIncidents.forEach((incident, index) => {
+    const incidentType = String(incident.incidentType || incident.title || 'Road incident')
+    if (incidentType.toLowerCase() === 'vehicle detected') return
+    const observations = Array.isArray(incident.observations) ? incident.observations : []
+    const key = incident.incidentId || `${incident.vehicleNumber || 'unknown'}-${incident.incidentTime || incident.occurredAt || index}`
+    const incidentObservation = observations.find((observation) =>
+      observation.detectionType && observation.detectionType.toLowerCase() !== 'vehicle detected'
+    )
+    const cameraObservation = observations.find((observation) =>
+      observation.cameraId && (observation.cameraId === incident.collisionCamera || observation.cameraId === incident.cameraId)
+    )
+    const eventObservation = incidentObservation || cameraObservation || observations[observations.length - 1]
+    const routeLocations = observations.map((observation) => observation.location).filter(Boolean)
+    const vehicleNumber = incident.vehicleNumber && incident.vehicleNumber !== 'N/A' ? incident.vehicleNumber : ''
+    const existing = incidentsById.get(key)
+
+    if (existing) {
+      if (vehicleNumber && !existing.vehicleNumbers.includes(vehicleNumber)) existing.vehicleNumbers.push(vehicleNumber)
+      if (incident.vehicleType && !existing.vehicleTypes.includes(incident.vehicleType)) existing.vehicleTypes.push(incident.vehicleType)
+      if (incident.involvementRole && !existing.involvementRoles.includes(incident.involvementRole)) existing.involvementRoles.push(incident.involvementRole)
+      routeLocations.forEach((location) => {
+        if (!existing.routeLocations.includes(location)) existing.routeLocations.push(location)
+      })
+      return
+    }
+
+    incidentsById.set(key, {
+      id: incident.incidentId || `VEH-${key}`,
+      source: 'Vehicle incident records',
+      incidentType,
+      severity: incident.severity || '',
+      status: incident.status || '',
+      vehicleNumbers: vehicleNumber ? [vehicleNumber] : [],
+      vehicleTypes: incident.vehicleType ? [incident.vehicleType] : [],
+      involvementRoles: incident.involvementRole ? [incident.involvementRole] : [],
+      location: incident.location || eventObservation?.location || 'Not recorded',
+      routeLocations: [...new Set(routeLocations)],
+      timestamp: incident.incidentTime || incident.occurredAt || eventObservation?.timestamp || '',
+      camera: incident.cameraId || incident.collisionCamera || eventObservation?.cameraId || '',
+      speed: incident.speed ?? eventObservation?.speed ?? '',
+      speedLimit: incident.speedLimit ?? eventObservation?.speedLimit ?? '',
+      latitude: incident.latitude ?? eventObservation?.latitude ?? '',
+      longitude: incident.longitude ?? eventObservation?.longitude ?? '',
+      description: incident.summary || incident.description || incident.detail || '',
+      notes: eventObservation?.notes || '',
+    })
+  })
+
+  liveIncidents.forEach((incident) => {
+    incidentsById.set(`live-${incident.id}`, {
+      id: incident.id,
+      source: 'Live incident feed',
+      incidentType: incident.type || incident.title || 'Road incident',
+      severity: incident.severity || '',
+      status: 'Reported',
+      vehicleNumbers: incident.vehicleNumber ? [incident.vehicleNumber] : [],
+      vehicleTypes: [],
+      involvementRoles: [],
+      location: incident.location || 'Not recorded',
+      routeLocations: [],
+      timestamp: incident.timestamp || incident.time || '',
+      camera: incident.cameraId || '',
+      speed: '',
+      speedLimit: '',
+      latitude: incident.latitude ?? '',
+      longitude: incident.longitude ?? '',
+      description: incident.detail || incident.description || incident.title || '',
+      notes: '',
+    })
+  })
+
+  return [...incidentsById.values()].map((incident) => ({
+    ...incident,
+    vehicleNumbers: incident.vehicleNumbers.join('; '),
+    vehicleTypes: incident.vehicleTypes.join('; '),
+    involvementRoles: incident.involvementRoles.join('; '),
+    routeLocations: incident.routeLocations.join('; '),
+  }))
+}
+
+function buildReportMetrics(template, rows, incidentRows = []) {
+  const scopedRows = rows.filter(template.selectRows)
+  const numericSpeeds = rows.map((row) => numericValue(row.speed)).filter((value) => value !== null)
+  const averageSpeed = numericSpeeds.length
+    ? Math.round(numericSpeeds.reduce((sum, value) => sum + value, 0) / numericSpeeds.length)
+    : null
+  const speedExceptions = rows.filter((row) => {
+    const speed = numericValue(row.speed)
+    const limit = numericValue(row.speedLimit)
+    return row.overSpeed === 'Yes' || Boolean(row.isOverSpeed)
+      || (speed !== null && limit !== null && speed > limit)
+  }).length
+  const redSignalObservations = rows.filter((row) => String(row.signalState || '').toLowerCase() === 'red').length
+  const datasetIncidentRows = rowsWithField(rows, ['incidentId', 'incidentType', 'incident'])
+  const tollRows = rowsWithField(rows, ['tollAmount', 'transactionAmount', 'leakageAmount', 'tollPlaza'])
+  const assetStatusRows = rowsWithField(rows, ['assetStatus', 'cameraStatus', 'deviceStatus', 'healthStatus'])
+  const locationCounts = new Map()
+  rows.forEach((row) => {
+    const location = row.location || row.roadName || row.road_name
+    if (location) locationCounts.set(location, (locationCounts.get(location) || 0) + 1)
+  })
+  const topLocation = [...locationCounts.entries()].sort((left, right) => right[1] - left[1])[0]
+  const travelTimeRows = rowsWithField(rows, ['travelTimeMinutes', 'travel_time_minutes', 'travelTime'])
+
+  const available = (value, source) => value === null || value === undefined || value === ''
+    ? { value: 'Not available in active dataset', detail: `Connect or load ${source} data to include this measure.` }
+    : { value: String(value), detail: '' }
+
+  switch (template.id) {
+    case 'operations':
+      return {
+        rows: scopedRows,
+        metrics: [
+          { label: 'Vehicle observations', value: rows.length.toLocaleString(), detail: 'Records in the active dataset.' },
+          { label: 'Average observed speed', ...available(averageSpeed === null ? null : `${averageSpeed} km/h`, 'speed') },
+          { label: 'Speed-limit exceptions', value: speedExceptions.toLocaleString(), detail: 'Rows marked over the speed limit.' },
+          { label: 'Vehicle classes observed', value: uniqueValues(rows, (row) => row.vehicleType || row.type).toLocaleString(), detail: 'Distinct vehicle classes in the dataset.' },
+          { label: 'Locations represented', value: locationCounts.size.toLocaleString(), detail: 'Distinct road or location values.' },
+          { label: 'Camera IDs observed', value: uniqueValues(rows, (row) => row.camera || row.cameraId || row.camera_id).toLocaleString(), detail: 'Cameras with detection records; not a device-health check.' },
+        ],
+      }
+    case 'incidents':
+      return {
+        rows: incidentRows,
+        metrics: [
+          { label: 'Incident records', value: incidentRows.length.toLocaleString(), detail: 'Vehicle-linked and live-feed incidents.' },
+          { label: 'Linked vehicle plates', value: countDistinctIncidentVehicles(incidentRows).toLocaleString(), detail: 'Distinct plate fields linked to incident records.' },
+          { label: 'Incident locations', value: uniqueValues(incidentRows, (incident) => incident.location).toLocaleString(), detail: 'Distinct locations recorded by the incident sources.' },
+          { label: 'High-severity incidents', value: incidentRows.filter((incident) => String(incident.severity).toLowerCase() === 'high').length.toLocaleString(), detail: 'High severity as provided by source data.' },
+          { label: 'Incident response times', ...available(null, 'incident response-time') },
+        ],
+      }
+    case 'traffic':
+      return {
+        rows: scopedRows,
+        metrics: [
+          { label: 'Vehicle observations', value: rows.length.toLocaleString(), detail: 'Records in the active traffic dataset.' },
+          { label: 'Average observed speed', ...available(averageSpeed === null ? null : `${averageSpeed} km/h`, 'speed') },
+          { label: 'Travel-time observations', ...available(travelTimeRows.length ? travelTimeRows.length.toLocaleString() : null, 'travel-time') },
+          { label: 'Top observed location', ...available(topLocation ? `${topLocation[0]} (${topLocation[1].toLocaleString()} records)` : null, 'location') },
+        ],
+      }
+    case 'revenue': {
+      const amountRows = rowsWithField(tollRows, ['tollAmount', 'transactionAmount'])
+      const amounts = amountRows.map((row) => numericValue(row.tollAmount ?? row.transactionAmount)).filter((value) => value !== null)
+      const total = amounts.reduce((sum, value) => sum + value, 0)
+      return {
+        rows: tollRows,
+        metrics: [
+          { label: 'Toll transaction records', ...available(tollRows.length ? tollRows.length.toLocaleString() : null, 'Toll & Revenue transaction') },
+          { label: 'Recorded collections', ...available(amounts.length ? total.toLocaleString(undefined, { style: 'currency', currency: 'INR' }) : null, 'toll amount') },
+          { label: 'Leakage indicators', ...available(rowsWithField(tollRows, ['leakageAmount']).length ? rowsWithField(tollRows, ['leakageAmount']).length.toLocaleString() : null, 'toll leakage') },
+          { label: 'Source', value: 'Toll & Revenue tab', detail: 'No toll transactions are passed to Reports from the active dataset.' },
+        ],
+      }
+    }
+    case 'assets':
+      return {
+        rows: scopedRows,
+        metrics: [
+          { label: 'Camera IDs observed', value: uniqueValues(rows, (row) => row.camera || row.cameraId || row.camera_id).toLocaleString(), detail: 'Distinct camera IDs represented by vehicle detections.' },
+          { label: 'Device health records', ...available(assetStatusRows.length ? assetStatusRows.length.toLocaleString() : null, 'camera or asset health status') },
+          { label: 'Faults and maintenance backlog', ...available(null, 'asset maintenance') },
+          { label: 'Source', value: 'Camera Network tab', detail: 'Detection coverage is not the same as device operational health.' },
+        ],
+      }
+    case 'safety':
+      return {
+        rows: scopedRows,
+        metrics: [
+          { label: 'Safety exceptions', value: scopedRows.length.toLocaleString(), detail: 'Rows matching speed, signal or rule-violation indicators.' },
+          { label: 'Speed-limit exceptions', value: speedExceptions.toLocaleString(), detail: 'Rows marked or calculated as over the recorded speed limit.' },
+          { label: 'Red-signal observations', value: redSignalObservations.toLocaleString(), detail: 'Traffic detections with a red signal state.' },
+          { label: 'Incident records', ...available(datasetIncidentRows.length ? datasetIncidentRows.length.toLocaleString() : null, 'incident records from the Incidents tab') },
+        ],
+      }
+    default:
+      return { rows: [], metrics: [] }
+  }
+}
+
+function serializeReport(template, report, rows, projectName, fileName) {
+  const generatedAt = report.generatedAt.toLocaleString()
+  const lines = [
+    ['Report', 'Period', 'Project', 'Dataset', 'Generated', 'Metric', 'Value', 'Notes'],
+    ...report.metrics.map((metric) => [
+      template.title,
+      'Active dataset',
+      projectName,
+      fileName,
+      generatedAt,
+      metric.label,
+      metric.value,
+      metric.detail,
+    ]),
   ]
+  if (report.rows.length) {
+    lines.push(['Detail rows', '', '', '', '', '', '', ''])
+    if (template.id === 'incidents') {
+      lines.push([
+        'Incident ID',
+        'Source',
+        'Incident type',
+        'Severity',
+        'Status',
+        'Vehicle plate(s)',
+        'Vehicle type(s)',
+        'Involvement role(s)',
+        'Incident location',
+        'Other observed route locations',
+        'Incident date/time',
+        'Camera',
+        'Speed km/h',
+        'Speed limit km/h',
+        'Latitude',
+        'Longitude',
+        'Incident details',
+        'Event notes',
+      ])
+      report.rows.forEach((incident) => lines.push([
+        incident.id,
+        incident.source,
+        incident.incidentType,
+        incident.severity,
+        incident.status,
+        incident.vehicleNumbers,
+        incident.vehicleTypes,
+        incident.involvementRoles,
+        incident.location,
+        incident.routeLocations,
+        incident.timestamp,
+        incident.camera,
+        incident.speed,
+        incident.speedLimit,
+        incident.latitude,
+        incident.longitude,
+        incident.description,
+        incident.notes,
+      ]))
+    } else {
+      lines.push(['Observation ID', 'Timestamp', 'Vehicle class', 'Plate', 'Speed km/h', 'Speed limit km/h', 'Location', 'Camera'])
+      report.rows.forEach((row) => lines.push([
+        row.observationId || row.id || '',
+        row.timestampIst || row.timestamp || row.date || '',
+        row.vehicleType || row.type || '',
+        row.vehicleNumberPlate || row.numberPlate || '',
+        row.speed ?? '',
+        row.speedLimit ?? '',
+        row.location || row.roadName || row.road_name || '',
+        row.camera || row.cameraId || row.camera_id || '',
+      ]))
+    }
+  }
+  return lines.map((line) => line.map(csvValue).join(',')).join('\n')
+}
 
-  const csv = [
-    headers.join(','),
-    ...rows.map((r) =>
-      [
-        escapeCsvValue(r.id || r.observationId || 'OBS-0001'),
-        escapeCsvValue(r.timestampIst || r.timestamp || r.time || '2026-09-11 08:12:14'),
-        escapeCsvValue(r.vehicleType || r.type || 'Car'),
-        escapeCsvValue(r.vehicleNumberPlate || r.numberPlate || 'N/A'),
-        escapeCsvValue(r.plateConfidence || r.confidence || 0.95),
-        escapeCsvValue(r.vehicleImage || ''),
-        escapeCsvValue(r.speed || 0),
-        escapeCsvValue(r.speedLimit || 60),
-        escapeCsvValue(r.overSpeed || (r.speed > r.speedLimit ? 'Yes' : 'No')),
-        escapeCsvValue(r.latitude || 17.4485),
-        escapeCsvValue(r.longitude || 78.3742),
-        escapeCsvValue(r.videoClipPath || ''),
-        escapeCsvValue(r.vehicleImagePath || ''),
-        escapeCsvValue(r.plateImagePath || ''),
-      ].join(',')
-    ),
-  ].join('\n')
-
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
+function saveCsv(content, filename) {
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8;' }))
   const link = document.createElement('a')
   link.href = url
-  link.download = `${projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-14-param-telemetry-audit.csv`
+  link.download = filename
   link.click()
-  URL.revokeObjectURL(url)
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function fileNameFor(title, generatedAt) {
+  const date = generatedAt.toISOString().slice(0, 10)
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  return `${slug}-${date}.csv`
+}
+
+function formatGeneratedAt(value) {
+  return value.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
 export default function DocumentIntelligence({
@@ -93,555 +411,231 @@ export default function DocumentIntelligence({
   onLoadSampleData,
   importError,
 }) {
-  const [searchQuery, setSearchQuery] = useState('')
-  const [filterType, setFilterType] = useState('ALL')
-  const [filterSignal, setFilterSignal] = useState('ALL')
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(15)
-  const [previewModalRow, setPreviewModalRow] = useState(null)
-  const [initialModalTab, setInitialModalTab] = useState('vehicle')
+  const [recentReports, setRecentReports] = useState([])
+  const [schedules, setSchedules] = useState({})
+  const [scheduledReportId, setScheduledReportId] = useState('')
+  const [scheduleFrequency, setScheduleFrequency] = useState('Weekly · Monday')
+  const [scheduleTime, setScheduleTime] = useState('06:00')
+  const [scheduleMessage, setScheduleMessage] = useState('')
+  const [recentRange, setRecentRange] = useState('7')
+  const recentReportsRef = useRef(null)
+  const [vehicleIncidents, setVehicleIncidents] = useState([])
+  const [incidentsLoading, setIncidentsLoading] = useState(true)
+  const [incidentLoadError, setIncidentLoadError] = useState('')
 
-  const extractedImagesCount = useMemo(() => {
-    return rows.filter((r) => Boolean(r.extractedImage || r.hasExtractedImage)).length
-  }, [rows])
-
-  // Compute comprehensive 20-parameter statistics
-  const stats = useMemo(() => {
-    const totalRecords = rows.length
-    const typesMap = {}
-    const signalsMap = {}
-    const weatherMap = {}
-    const cameraMap = {}
-    const roadMap = {}
-    const junctionSet = new Set()
-    const plateSet = new Set()
-
-    let totalConfidence = 0
-
-    rows.forEach((r) => {
-      const t = r.type || 'Unknown'
-      typesMap[t] = (typesMap[t] || 0) + 1
-
-      const s = r.signalState || 'Green'
-      signalsMap[s] = (signalsMap[s] || 0) + 1
-
-      const w = r.weather || 'Clear'
-      weatherMap[w] = (weatherMap[w] || 0) + 1
-
-      const c = r.camera || 'CAM-01'
-      cameraMap[c] = (cameraMap[c] || 0) + 1
-
-      const road = r.roadName || r.location || 'Unknown Road'
-      roadMap[road] = (roadMap[road] || 0) + 1
-
-      if (r.junctionId) junctionSet.add(r.junctionId)
-      if (r.numberPlate && r.numberPlate !== 'N/A') plateSet.add(r.numberPlate)
-
-      const conf = r.confidence > 1 ? r.confidence : (r.confidence || 0.95) * 100
-      totalConfidence += conf
-    })
-
-    const avgConfidence = totalRecords ? Math.round(totalConfidence / totalRecords) : 95
-    const uniqueTypes = Object.keys(typesMap).sort((a, b) => typesMap[b] - typesMap[a])
-    const uniqueCameras = Object.keys(cameraMap)
-    const uniqueRoads = Object.keys(roadMap)
-    const uniquePlates = Array.from(plateSet)
-    const uniqueJunctions = Array.from(junctionSet)
-
-    return {
-      totalRecords,
-      typesMap,
-      signalsMap,
-      weatherMap,
-      cameraMap,
-      roadMap,
-      avgConfidence,
-      uniqueTypes,
-      uniqueCameras,
-      uniqueRoads,
-      uniquePlates,
-      uniqueJunctions,
+  useEffect(() => {
+    let isCurrent = true
+    getVehicleIncidents(1000)
+      .then((data) => {
+        if (isCurrent) setVehicleIncidents(Array.isArray(data) ? data : [])
+      })
+      .catch((error) => {
+        if (isCurrent) setIncidentLoadError(error instanceof Error ? error.message : 'Unable to load incident data.')
+      })
+      .finally(() => {
+        if (isCurrent) setIncidentsLoading(false)
+      })
+    return () => {
+      isCurrent = false
     }
-  }, [rows])
+  }, [])
 
-  // Filter rows based on search and parameters
-  const filteredRows = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    return rows.filter((r) => {
-      if (filterType !== 'ALL' && r.type !== filterType) return false
-      if (filterSignal !== 'ALL' && r.signalState !== filterSignal) return false
-      if (!query) return true
-
-      const searchStr = [
-        r.observationId,
-        r.type,
-        r.numberPlate,
-        r.roadName,
-        r.location,
-        r.camera,
-        r.junctionId,
-        r.weather,
-        r.signalState,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-
-      return searchStr.includes(query)
+  const templateById = useMemo(() => new Map(REPORT_TEMPLATES.map((item) => [item.id, item])), [])
+  const incidentReportRows = useMemo(
+    () => normalizeIncidentRows(vehicleIncidents, liveHighwayIncidents),
+    [vehicleIncidents],
+  )
+  const summary = useMemo(() => buildReportMetrics(REPORT_TEMPLATES[0], rows).metrics, [rows])
+  const visibleRecentReports = useMemo(() => {
+    const latestByTemplate = new Map()
+    recentReports.forEach((report) => {
+      const templateId = report.templateId || report.id.split('-')[0]
+      const existing = latestByTemplate.get(templateId)
+      if (!existing || report.generatedAt > existing.generatedAt) {
+        latestByTemplate.set(templateId, report)
+      }
     })
-  }, [rows, searchQuery, filterType, filterSignal])
+    const uniqueReports = [...latestByTemplate.values()]
+    if (recentRange === 'all') return uniqueReports
+    const cutoff = Date.now() - Number(recentRange) * 24 * 60 * 60 * 1000
+    return uniqueReports.filter((report) => report.generatedAt.getTime() >= cutoff)
+  }, [recentReports, recentRange])
 
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
-  const paginatedRows = useMemo(() => {
-    const start = (currentPage - 1) * pageSize
-    return filteredRows.slice(start, start + pageSize)
-  }, [filteredRows, currentPage, pageSize])
+  function openSchedule(reportId = REPORT_TEMPLATES[0].id) {
+    setScheduledReportId(reportId)
+    setScheduleFrequency(schedules[reportId]?.frequency || templateById.get(reportId)?.cadence || 'Weekly · Monday')
+    setScheduleTime(schedules[reportId]?.time || '06:00')
+    setScheduleMessage('')
+  }
 
-  const documentId = useMemo(() => `DOC-TRF-${String(rows.length).padStart(4, '0')}`, [rows.length])
-  const currentDate = useMemo(() => new Date().toLocaleDateString('en-US', { dateStyle: 'long' }), [])
+  function saveSchedule(event) {
+    event.preventDefault()
+    const template = templateById.get(scheduledReportId)
+    if (!template) return
+    setSchedules((current) => ({
+      ...current,
+      [scheduledReportId]: { frequency: scheduleFrequency, time: scheduleTime },
+    }))
+    setScheduleMessage(`Schedule preference saved for this session. Automated delivery is not connected yet.`)
+  }
+
+  function generateReport(template) {
+    const reportData = buildReportMetrics(template, rows, incidentReportRows)
+    const report = {
+      id: template.id,
+      templateId: template.id,
+      generatedAt: new Date(),
+      metrics: reportData.metrics,
+      rows: reportData.rows,
+      fileName: fileNameFor(template.title, new Date()),
+    }
+    report.csv = serializeReport(template, report, rows, projectName, fileName)
+    setRecentReports((current) => [
+      report,
+      ...current.filter((existing) => (existing.templateId || existing.id.split('-')[0]) !== template.id),
+    ].slice(0, 20))
+    window.setTimeout(() => recentReportsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+  }
+
+  function downloadReport(report) {
+    saveCsv(report.csv, report.fileName)
+  }
 
   return (
-    <div className="document-intelligence-page">
-      {/* Top Controls Header (Hidden in Print) */}
-      <div className="document-intelligence-header no-print">
+    <div className="document-intelligence-page reports-dashboard">
+      <header className="reports-page-header">
         <div>
-          <p className="section-kicker">DOCUMENT INTELLIGENCE & TELEMETRY AUDIT</p>
-          <h1>Traffic Telemetry Intelligence Document</h1>
-          <p className="intro-copy">
-            Formal audit report with all 14 vehicle detection & telemetry parameters for <strong>{projectName}</strong>.
-          </p>
+          <p className="section-kicker">CORRIDOR OPERATIONS</p>
+          <h1>Reports</h1>
+          <p className="intro-copy">Generate operational, incident, traffic, revenue and safety reports from VisionIQ workspace data.</p>
         </div>
-        <div className="document-actions">
+        <div className="reports-header-actions">
+          <button className="reports-button reports-button-secondary" onClick={() => openSchedule()} type="button"><CalendarDays size={15} /> Schedule</button>
+          <button className="reports-button reports-button-primary" onClick={() => generateReport(REPORT_TEMPLATES[0])} type="button"><FileText size={15} /> Generate report</button>
+        </div>
+      </header>
+
+      {importError && <div className="csv-import-error" role="alert">{importError}</div>}
+
+      <div className="reports-toolbar">
+        <span><strong>{rows.length.toLocaleString()}</strong> active records · <strong>{projectName}</strong> · {fileName}</span>
+        <div className="reports-toolbar-actions">
           {onImport && (
-            <label className="document-action secondary" style={{ cursor: 'pointer' }} title="Import CSV or Excel spreadsheet with telemetry & images">
-              <Upload size={16} />
-              <span>Import CSV / XLSX</span>
-              <input
-                accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel"
-                onChange={onImport}
-                style={{ display: 'none' }}
-                type="file"
-              />
+            <label className="reports-inline-action" title="Import CSV or Excel data">
+              <Upload size={14} /> Import data
+              <input accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel" onChange={onImport} type="file" />
             </label>
           )}
-          {onLoadSampleData && (
-            <button
-              className="document-action secondary"
-              onClick={onLoadSampleData}
-              title="Load sample Excel feed with extracted vehicle images and video clips"
-              type="button"
-            >
-              <FileSpreadsheet size={16} />
-              <span>Load Sample Excel</span>
-            </button>
+          {onLoadSampleData && <button className="reports-inline-action" onClick={onLoadSampleData} type="button"><FileSpreadsheet size={14} /> Load sample data</button>}
+          <button className="reports-inline-action" onClick={() => window.print()} type="button"><Printer size={14} /> Print summary</button>
+        </div>
+      </div>
+
+      <section aria-label="Available report templates" className="reports-template-grid">
+        {REPORT_TEMPLATES.map((template) => {
+          const Icon = template.icon
+          const schedule = schedules[template.id]
+          return (
+            <article className={`reports-template-card accent-${template.accent}`} key={template.id}>
+              <div className="reports-template-main">
+                <span className="reports-template-icon"><Icon size={17} /></span>
+                <div className="reports-template-copy">
+                  <h2>{template.title}</h2>
+                  <p>{template.description}</p>
+                </div>
+              </div>
+              <div className="reports-template-meta">
+                <span><CalendarDays size={13} />{schedule ? `${schedule.frequency} · ${schedule.time}` : template.cadence}</span>
+                <span><Users size={13} />{template.audience}</span>
+              </div>
+              <div className="reports-template-footer">
+                <span className="reports-source-label">
+                  Source: {template.source}
+                  {template.id === 'incidents' && !incidentsLoading ? ` · ${incidentReportRows.length} records` : ''}
+                </span>
+                <div>
+                  <button className="reports-button reports-button-primary reports-button-small" disabled={template.id === 'incidents' && incidentsLoading} onClick={() => generateReport(template)} type="button"><FileText size={13} /> {template.id === 'incidents' && incidentsLoading ? 'Loading incidents' : 'Generate'}</button>
+                  <button className="reports-button reports-button-secondary reports-button-small" onClick={() => openSchedule(template.id)} type="button"><CalendarDays size={13} /> Schedule</button>
+                </div>
+              </div>
+            </article>
+          )
+        })}
+      </section>
+
+      {incidentLoadError && <p className="reports-incident-error" role="alert">Incident records could not be loaded: {incidentLoadError}</p>}
+
+      <section className="reports-lower-grid">
+        <article className="reports-panel reports-recent-panel" ref={recentReportsRef}>
+          <header className="reports-panel-header">
+            <div><FileText size={16} /><h2>Recent reports</h2></div>
+            <select aria-label="Filter recent reports by age" onChange={(event) => setRecentRange(event.target.value)} value={recentRange}>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="all">All generated</option>
+            </select>
+          </header>
+          {visibleRecentReports.length ? (
+            <div className="reports-table-wrap">
+              <table className="reports-table">
+                <thead><tr><th>Report</th><th>Period</th><th>Generated</th><th>Scope</th><th>Format</th><th aria-label="Actions" /></tr></thead>
+                <tbody>
+                  {visibleRecentReports.map((report) => {
+                    const template = templateById.get(report.templateId || report.id.split('-')[0])
+                    return (
+                      <tr key={report.id}>
+                        <td><FileText size={14} /><strong>{template?.title || 'Workspace report'}</strong></td>
+                        <td>Active dataset</td>
+                        <td>{formatGeneratedAt(report.generatedAt)}</td>
+                        <td>{report.rows.length.toLocaleString()} records</td>
+                        <td><span className="reports-format-pill">CSV</span></td>
+                        <td><button aria-label={`Download ${template?.title || 'report'}`} className="reports-download-button" onClick={() => downloadReport(report)} type="button"><Download size={14} /> Download</button></td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="reports-empty-state">
+              <FileText size={22} />
+              <strong>No reports generated in this period</strong>
+              <span>Choose a report template above to create a downloadable, dataset-backed report.</span>
+            </div>
           )}
-          <button className="document-action secondary" onClick={() => window.print()} type="button">
-            <Printer size={16} />
-            <span>Export PDF / Print</span>
-          </button>
-          <button className="document-action primary" onClick={() => downloadCsv(rows, projectName)} type="button">
-            <Download size={16} />
-            <span>Export 14-Param CSV ({rows.length})</span>
-          </button>
+          <p className="reports-retention-note">Generated reports are available in this session. Download a report to keep a copy.</p>
+        </article>
+
+        <article className="reports-panel reports-summary-panel">
+          <header className="reports-panel-header">
+            <div><Activity size={16} /><h2>Operations summary · draft</h2></div>
+            <span className="reports-draft-badge">Draft</span>
+          </header>
+          <p className="reports-summary-intro">Based on {rows.length.toLocaleString()} records in <strong>{fileName}</strong>. This is a current-dataset summary, not a scheduled 24-hour report.</p>
+          <ul className="reports-summary-list">
+            <li><span className="summary-icon blue"><CarFront size={15} /></span><div><strong>{summary[0]?.value || '0'} vehicle observations</strong><span>{summary[3]?.value || '0'} vehicle classes represented in the active dataset.</span></div></li>
+            <li><span className="summary-icon red"><AlertTriangle size={15} /></span><div><strong>{summary[2]?.value || '0'} speed-limit exceptions</strong><span>Derived from speed and speed-limit fields in available records.</span></div></li>
+            <li><span className="summary-icon orange"><Route size={15} /></span><div><strong>Average observed speed: {summary[1]?.value || 'Not available'}</strong><span>Calculated from rows with a numeric speed measurement.</span></div></li>
+            <li><span className="summary-icon purple"><MapPin size={15} /></span><div><strong>{summary[4]?.value || '0'} locations represented</strong><span>Based on road and location fields; this does not imply route travel time.</span></div></li>
+            <li><span className="summary-icon green"><Camera size={15} /></span><div><strong>{summary[5]?.value || '0'} camera IDs observed</strong><span>Detection coverage only; device health is not available from this dataset.</span></div></li>
+            <li><span className="summary-icon yellow"><IndianRupee size={15} /></span><div><strong>Toll and asset-health data are not connected here</strong><span>Use the Toll & Revenue and Camera Network tabs for those source workflows.</span></div></li>
+          </ul>
+          <div className="reports-summary-footnote"><CheckCircle2 size={14} /> Summary figures are calculated from the selected project’s active records.</div>
+        </article>
+      </section>
+
+      {scheduledReportId && (
+        <div className="reports-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setScheduledReportId('')}>
+          <form aria-label="Schedule report" className="reports-schedule-modal" onSubmit={saveSchedule}>
+            <header><div><CalendarDays size={18} /><h2>Schedule a report</h2></div><button aria-label="Close schedule" onClick={() => setScheduledReportId('')} type="button"><X size={18} /></button></header>
+            <label>Report template<select onChange={(event) => openSchedule(event.target.value)} value={scheduledReportId}>{REPORT_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}</select></label>
+            <label>Frequency<select onChange={(event) => setScheduleFrequency(event.target.value)} value={scheduleFrequency}><option>Daily</option><option>Weekly · Monday</option><option>Weekly · Friday</option><option>Monthly</option><option>Quarterly</option><option>On demand</option></select></label>
+            <label>Preferred time<input onChange={(event) => setScheduleTime(event.target.value)} type="time" value={scheduleTime} /></label>
+            <p className="reports-schedule-note"><Clock3 size={14} /> Schedule preferences are held for this session. Automatic generation and email delivery are not configured.</p>
+            {scheduleMessage && <p className="reports-schedule-success" role="status"><CheckCircle2 size={14} />{scheduleMessage}</p>}
+            <footer><button className="reports-button reports-button-secondary" onClick={() => setScheduledReportId('')} type="button">Cancel</button><button className="reports-button reports-button-primary" type="submit">Save preference</button></footer>
+          </form>
         </div>
-      </div>
-
-      {importError && (
-        <div className="csv-import-error no-print" role="alert" style={{ margin: '0 0 16px 0' }}>
-          {importError}
-        </div>
-      )}
-
-      {/* Official Document Canvas Paper */}
-      <div
-        className="document-paper"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault()
-          const file = e.dataTransfer?.files?.[0]
-          if (file && onImport) {
-            onImport({ target: { files: [file], value: '' } })
-          }
-        }}
-      >
-        {extractedImagesCount > 0 && (
-          <div
-            className="doc-extracted-banner no-print"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(56, 189, 248, 0.12))',
-              border: '1px solid rgba(16, 185, 129, 0.4)',
-              borderRadius: '8px',
-              padding: '10px 16px',
-              marginBottom: '18px',
-              color: '#065f46',
-            }}
-          >
-            <Sparkles color="#10b981" size={18} />
-            <span style={{ fontSize: '13px', fontWeight: '600' }}>
-              ✓ Loaded {extractedImagesCount} real vehicle images from Excel ({fileName}). High-resolution pictures are displayed in the ledger below.
-            </span>
-          </div>
-        )}
-        {/* Document Header Lockup */}
-        <div className="document-paper-heading">
-          <div className="document-title-mark">
-            <ShieldCheck size={24} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div className="document-meta-eyebrow">
-              <span className="document-badge-pill">OFFICIAL TELEMETRY AUDIT</span>
-              <span className="document-ref-id">{documentId}</span>
-            </div>
-            <h2>{projectName} — Traffic Telemetry & Sensor Audit Report</h2>
-            <div className="document-submeta">
-              <span><strong>Source Dataset:</strong> {fileName}</span>
-              <span><strong>Generated Date:</strong> {currentDate}</span>
-              <span><strong>Schema Version:</strong> 20-Parameter Telemetry Standard</span>
-            </div>
-          </div>
-        </div>
-
-        {/* 6 Executive Telemetry Metrics */}
-        <div className="document-metric-grid">
-          <div>
-            <strong>{stats.totalRecords.toLocaleString()}</strong>
-            <span>Total Detections (observation_id)</span>
-          </div>
-          <div>
-            <strong>{stats.uniqueTypes.length} Classes</strong>
-            <span>Vehicle & Object Types (object_type)</span>
-          </div>
-          <div>
-            <strong>{stats.uniquePlates.length} Plates</strong>
-            <span>Identified Plates (number_plate)</span>
-          </div>
-          <div>
-            <strong>{stats.uniqueRoads.length} Corridors</strong>
-            <span>Roads & Junctions (road_name)</span>
-          </div>
-          <div>
-            <strong>{stats.uniqueCameras.length} Sensors</strong>
-            <span>Optical Cameras (camera_id)</span>
-          </div>
-          <div>
-            <strong>{stats.avgConfidence}%</strong>
-            <span>Mean Confidence (detection_confidence)</span>
-          </div>
-        </div>
-
-        {/* Telemetry Parameter Distribution Grid */}
-        <div className="document-params-summary-grid">
-          {/* 1. Vehicle & Object Mix */}
-          <div className="document-param-box">
-            <div className="document-param-box-header">
-              <Car size={15} />
-              <h4>Vehicle Classification Breakdown</h4>
-            </div>
-            <div className="document-breakdown-list">
-              {stats.uniqueTypes.slice(0, 6).map((type) => {
-                const count = stats.typesMap[type] || 0
-                const pct = Math.round((count / (stats.totalRecords || 1)) * 100)
-                return (
-                  <div className="document-breakdown-row" key={type}>
-                    <div className="document-breakdown-left">
-                      <VehicleBadge type={type} />
-                    </div>
-                    <div className="document-breakdown-bar-wrap">
-                      <div className="document-breakdown-bar" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="document-breakdown-num">
-                      <strong>{count}</strong> ({pct}%)
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* 2. Signal States & Compliance */}
-          <div className="document-param-box">
-            <div className="document-param-box-header">
-              <TrafficCone size={15} />
-              <h4>Signal States & Compliance (traffic_signal_state)</h4>
-            </div>
-            <div className="document-signals-summary">
-              {['Green', 'Yellow', 'Red'].map((sig) => {
-                const count = stats.signalsMap[sig] || 0
-                const pct = Math.round((count / (stats.totalRecords || 1)) * 100)
-                return (
-                  <div className={`document-signal-card signal-${sig.toLowerCase()}`} key={sig}>
-                    <div className="document-signal-dot" />
-                    <strong>{count}</strong>
-                    <span>{sig} ({pct}%)</span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* 3. Sensor & Environment Parameters */}
-          <div className="document-param-box">
-            <div className="document-param-box-header">
-              <SunMedium size={15} />
-              <h4>Environmental & Coverage Parameters</h4>
-            </div>
-            <div className="document-env-metrics">
-              <div className="document-env-row">
-                <span>Weather Conditions (weather):</span>
-                <strong>
-                  {Object.entries(stats.weatherMap)
-                    .map(([w, c]) => `${w} (${c})`)
-                    .join(', ') || 'Clear (100%)'}
-                </strong>
-              </div>
-              <div className="document-env-row">
-                <span>Active Camera Headings (camera_direction):</span>
-                <strong>North, South, East, West</strong>
-              </div>
-              <div className="document-env-row">
-                <span>Spatial Positioning Coordinates:</span>
-                <strong>Lat: 17.4485° N · Long: 78.3742° E</strong>
-              </div>
-              <div className="document-env-row">
-                <span>Spatial Bounding Box:</span>
-                <strong>X, Y, Width, Height (bbox_x..h)</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filter Controls (Hidden in Print) */}
-        <div className="document-filter-row no-print">
-          <div className="document-search-input-wrap">
-            <Search size={15} />
-            <input
-              onChange={(e) => {
-                setSearchQuery(e.target.value)
-                setCurrentPage(1)
-              }}
-              placeholder="Search table by plate, road, vehicle, camera, signal..."
-              type="text"
-              value={searchQuery}
-            />
-            {searchQuery && (
-              <button onClick={() => setSearchQuery('')} type="button">
-                <X size={14} />
-              </button>
-            )}
-          </div>
-
-          <div className="document-select-wrap">
-            <label>Object Type:</label>
-            <select
-              onChange={(e) => {
-                setFilterType(e.target.value)
-                setCurrentPage(1)
-              }}
-              value={filterType}
-            >
-              <option value="ALL">All Types ({stats.uniqueTypes.length})</option>
-              {stats.uniqueTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t} ({stats.typesMap[t] || 0})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="document-select-wrap">
-            <label>Signal State:</label>
-            <select
-              onChange={(e) => {
-                setFilterSignal(e.target.value)
-                setCurrentPage(1)
-              }}
-              value={filterSignal}
-            >
-              <option value="ALL">All Signals</option>
-              <option value="Green">Green</option>
-              <option value="Yellow">Yellow</option>
-              <option value="Red">Red</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Section Heading for Source Records Table */}
-        <div className="document-section-heading">
-          <div>
-            <p className="section-kicker">ALL 14 TELEMETRY PARAMETERS</p>
-            <h3>Telemetry Observation Audit Ledger</h3>
-          </div>
-          <span>
-            Showing <strong>{paginatedRows.length ? (currentPage - 1) * pageSize + 1 : 0}</strong>–
-            <strong>{Math.min(currentPage * pageSize, filteredRows.length)}</strong> of{' '}
-            <strong>{filteredRows.length}</strong> audited records
-          </span>
-        </div>
-
-        {/* 14-Parameter Data Table */}
-        <div className="document-table-wrap">
-          <table className="document-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>TIMESTAMP (IST)</th>
-                <th>VEHICLE TYPE</th>
-                <th>NUMBER PLATE</th>
-                <th>PLATE CONFIDENCE</th>
-                <th>SPEED / LIMIT</th>
-                <th>OVER SPEED</th>
-                <th>COORDINATES</th>
-                <th>VEHICLE IMAGE</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedRows.map((row, index) => (
-                <tr key={`${row.id || row.observationId}-${row.timestampIst || row.timestamp}-${index}`}>
-                  <td>
-                    <code className="doc-obs-id">{row.id || row.observationId || `ID-${String(index + 1).padStart(4, '0')}`}</code>
-                  </td>
-                  <td>
-                    <div className="doc-time-cell">
-                      <span>{formatTimestampIst(row)}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <VehicleBadge type={row.vehicleType || row.type} />
-                  </td>
-                  <td>
-                    {row.vehicleNumberPlate || row.numberPlate ? (
-                      <span className="doc-plate-pill">{row.vehicleNumberPlate || row.numberPlate}</span>
-                    ) : (
-                      <span className="doc-na-pill">—</span>
-                    )}
-                  </td>
-                  <td>
-                    <strong className="doc-conf-val">
-                      {Math.round((row.plateConfidence || row.confidence) > 1 ? (row.plateConfidence || row.confidence) : (row.plateConfidence || row.confidence || 0.95) * 100)}%
-                    </strong>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
-                      <strong style={{ color: (row.overSpeed === 'Yes' || row.isOverSpeed) ? '#dc2626' : '#1e293b' }}>
-                        {row.speed || 0}
-                      </strong>
-                      <span style={{ fontSize: '11px', color: '#64748b' }}>
-                        / {row.speedLimit || 60} km/h
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    {(row.overSpeed === 'Yes' || row.isOverSpeed) ? (
-                      <span className="query-signal-pill" style={{ background: '#fef2f2', color: '#dc2626', borderColor: '#fca5a5', fontWeight: 600 }}>
-                        ⚠ Over Speed
-                      </span>
-                    ) : (
-                      <span className="query-signal-pill" style={{ background: '#ecfdf5', color: '#059669', borderColor: '#a7f3d0' }}>
-                        Normal
-                      </span>
-                    )}
-                  </td>
-                  <td>
-                    <span className="doc-coords-cell">
-                      {row.latitude?.toFixed(4) || '17.4485'}°, {row.longitude?.toFixed(4) || '78.3742'}°
-                    </span>
-                  </td>
-                  <td style={{ minWidth: '120px' }}>
-                    <VehicleImageThumbnail
-                      onClick={() => {
-                        setInitialModalTab('vehicle')
-                        setPreviewModalRow(row)
-                      }}
-                      onPlayVideo={() => {
-                        setInitialModalTab('video')
-                        setPreviewModalRow(row)
-                      }}
-                      row={row}
-                      size="table"
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination Controls (Hidden in Print) */}
-        {filteredRows.length > 0 && (
-          <div className="document-pagination-wrap no-print">
-            <div className="doc-pagination-info">
-              <span>
-                Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong>
-              </span>
-              <div className="doc-pagesize-select">
-                <label>Rows per page:</label>
-                <select
-                  onChange={(e) => {
-                    setPageSize(Number(e.target.value))
-                    setCurrentPage(1)
-                  }}
-                  value={pageSize}
-                >
-                  <option value={10}>10</option>
-                  <option value={15}>15</option>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="doc-pagination-buttons">
-              <button
-                className="doc-page-btn"
-                disabled={currentPage <= 1}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                type="button"
-              >
-                <ChevronLeft size={16} />
-                <span>Prev</span>
-              </button>
-              <button
-                className="doc-page-btn"
-                disabled={currentPage >= totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                type="button"
-              >
-                <span>Next</span>
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Official Document Footer & Verification Seal */}
-        <div className="document-footer-seal">
-          <div className="document-seal-left">
-            <CheckCircle2 className="doc-seal-check" size={18} />
-            <div>
-              <strong>VISION IQ Autonomous Telemetry Ledger Verified</strong>
-              <p>Generated according to the 20-parameter intelligent traffic feed standard for {projectName}.</p>
-            </div>
-          </div>
-          <div className="document-seal-right">
-            <span className="doc-operator-tag">Auditor: Alex Morgan · Operator #IQ-9021</span>
-            <span className="doc-timestamp-tag">Timestamp: {new Date().toISOString()}</span>
-          </div>
-        </div>
-      </div>
-
-      {previewModalRow && (
-        <MediaPreviewModal
-          allRows={filteredRows}
-          initialTab={initialModalTab}
-          isOpen={Boolean(previewModalRow)}
-          onClose={() => setPreviewModalRow(null)}
-          onSelectRow={setPreviewModalRow}
-          row={previewModalRow}
-        />
       )}
     </div>
   )

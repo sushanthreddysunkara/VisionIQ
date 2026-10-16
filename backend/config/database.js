@@ -97,7 +97,48 @@ async function initializeDatabase() {
         route VARCHAR(180) NULL,
         length_km DECIMAL(8,2) NULL,
         status VARCHAR(40) NOT NULL DEFAULT 'Active',
+        corridor_order INT NULL,
+        highway VARCHAR(40) NULL,
+        start_location VARCHAR(180) NULL,
+        end_location VARCHAR(180) NULL,
+        key_locations TEXT NULL,
         PRIMARY KEY (corridor_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+
+    const corridorColumns = [
+      ['corridor_order', 'INT NULL'],
+      ['highway', 'VARCHAR(40) NULL'],
+      ['start_location', 'VARCHAR(180) NULL'],
+      ['end_location', 'VARCHAR(180) NULL'],
+      ['key_locations', 'TEXT NULL'],
+    ]
+    const [existingCorridorColumns] = await pool.query('SHOW COLUMNS FROM network_corridors')
+    const existingCorridorColumnNames = new Set(existingCorridorColumns.map((column) => column.Field))
+    for (const [columnName, definition] of corridorColumns) {
+      if (!existingCorridorColumnNames.has(columnName)) {
+        await pool.query(`ALTER TABLE network_corridors ADD COLUMN ${columnName} ${definition}`)
+      }
+    }
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS network_corridor_kpis (
+        corridor_id VARCHAR(64) NOT NULL,
+        start_location VARCHAR(180) NULL,
+        end_location VARCHAR(180) NULL,
+        corridor_name VARCHAR(180) NOT NULL,
+        corridor_order INT NOT NULL,
+        route VARCHAR(180) NULL,
+        vehicle_detections INT UNSIGNED NOT NULL DEFAULT 0,
+        unique_vehicles INT UNSIGNED NOT NULL DEFAULT 0,
+        overspeed_events INT UNSIGNED NOT NULL DEFAULT 0,
+        incident_count INT UNSIGNED NOT NULL DEFAULT 0,
+        high_critical_incidents INT UNSIGNED NOT NULL DEFAULT 0,
+        overspeed_rate_pct DECIMAL(7,3) NULL,
+        incident_rate_per_1000_vehicles DECIMAL(10,3) NULL,
+        demo_risk_band VARCHAR(40) NULL,
+        PRIMARY KEY (corridor_id),
+        CONSTRAINT network_corridor_kpis_corridor_fk FOREIGN KEY (corridor_id) REFERENCES network_corridors (corridor_id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `)
 
@@ -261,6 +302,53 @@ async function initializeDatabase() {
         PRIMARY KEY (graph_edge_id),
         KEY network_graph_source (source_type, source_id),
         KEY network_graph_target (target_type, target_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS network_vehicle_detections (
+        detection_id VARCHAR(64) NOT NULL,
+        corridor_id VARCHAR(64) NOT NULL,
+        corridor_name VARCHAR(180) NULL,
+        corridor_order INT NULL,
+        corridor_start VARCHAR(180) NULL,
+        corridor_end VARCHAR(180) NULL,
+        corridor_route VARCHAR(180) NULL,
+        corridor_stop VARCHAR(180) NULL,
+        source_id BIGINT NULL,
+        timestamp_ist VARCHAR(80) NULL,
+        vehicle_type VARCHAR(80) NULL,
+        plate_number VARCHAR(80) NULL,
+        plate_confidence DECIMAL(6,4) NULL,
+        speed_kmh DECIMAL(10,2) NULL,
+        speed_limit_kmh DECIMAL(10,2) NULL,
+        overspeed VARCHAR(20) NULL,
+        latitude DECIMAL(12,7) NULL,
+        longitude DECIMAL(12,7) NULL,
+        vehicle_image_path TEXT NULL,
+        event VARCHAR(255) NULL,
+        plate_image_path TEXT NULL,
+        zone_id VARCHAR(64) NULL,
+        camera_id VARCHAR(80) NULL,
+        road_segment_id VARCHAR(100) NULL,
+        overspeed_margin_kmh DECIMAL(10,2) NULL,
+        data_source VARCHAR(120) NULL,
+        linked_incident_id VARCHAR(64) NULL,
+        incident_severity VARCHAR(24) NULL,
+        incident_type VARCHAR(160) NULL,
+        risk_score DECIMAL(8,2) NULL,
+        flow_state_at_detection VARCHAR(80) NULL,
+        road_segment VARCHAR(120) NULL,
+        direction VARCHAR(120) NULL,
+        corridor_km_marker DECIMAL(10,3) NULL,
+        source_camera_id VARCHAR(80) NULL,
+        source_zone_id VARCHAR(64) NULL,
+        source_road_segment_id VARCHAR(100) NULL,
+        vehicle_id VARCHAR(64) NULL,
+        PRIMARY KEY (detection_id),
+        KEY network_detection_corridor_time (corridor_id, timestamp_ist),
+        KEY network_detection_plate (plate_number),
+        KEY network_detection_incident (linked_incident_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `)
 

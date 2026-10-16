@@ -5,7 +5,40 @@ const { pool } = require('../config/database')
 
 const STREAM_INTERVAL = Number(process.env.STREAM_INTERVAL || 2500)
 const DATA_DIRECTORY = path.resolve(process.env.DATA_DIRECTORY || path.join(__dirname, '..', 'data'))
-const NH44_FILE_NAME = 'NH44_vehicles_5000_merged_with_images.xlsx'
+const NH44_FILE_NAME = 'VisionIQ_NH44_Corridor_16_Backend_Ready.xlsx'
+const BUILT_IN_VEHICLE_FILES = [
+  NH44_FILE_NAME,
+  'NH44_vehicles_5000_merged_with_images.xlsx',
+]
+const VEHICLE_EVENT_COLUMNS = [
+  'csv_record_id',
+  'timestamp_ist',
+  'vehicle_type',
+  'vehicle_number_plate',
+  'plate_confidence',
+  'vehicle_image',
+  'speed',
+  'speed_limit',
+  'over_speed',
+  'latitude',
+  'longitude',
+  'video_clip_path',
+  'vehicle_image_path',
+  'plate_image_path',
+  'events',
+  'source_file',
+]
+const VEHICLE_EVENT_UPDATE_SQL = `
+  speed = VALUES(speed),
+  speed_limit = VALUES(speed_limit),
+  over_speed = VALUES(over_speed),
+  timestamp_ist = VALUES(timestamp_ist),
+  vehicle_type = VALUES(vehicle_type),
+  vehicle_number_plate = VALUES(vehicle_number_plate),
+  plate_confidence = VALUES(plate_confidence),
+  events = VALUES(events),
+  latitude = VALUES(latitude),
+  longitude = VALUES(longitude)`
 
 let latestStreamStatus = null
 let streamPaused = false
@@ -135,6 +168,40 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+async function upsertVehicleEventRows(rows) {
+  if (!rows.length) return
+
+  const sourceFile = rows[0][VEHICLE_EVENT_COLUMNS.length - 1]
+  const recordIds = rows.map((row) => row[0])
+  const placeholders = recordIds.map(() => '?').join(', ')
+  const [existingRows] = await pool.query(
+    `SELECT id, csv_record_id FROM vehicle_events WHERE source_file = ? AND csv_record_id IN (${placeholders})`,
+    [sourceFile, ...recordIds],
+  )
+  const existingIds = new Map(existingRows.map((row) => [row.csv_record_id, row.id]))
+  const existingValues = []
+  const newValues = []
+
+  rows.forEach((row) => {
+    const existingId = existingIds.get(row[0])
+    if (existingId === undefined) newValues.push(row)
+    else existingValues.push([existingId, ...row])
+  })
+
+  if (existingValues.length) {
+    await pool.query(
+      `INSERT INTO vehicle_events (id, ${VEHICLE_EVENT_COLUMNS.join(', ')}) VALUES ? ON DUPLICATE KEY UPDATE ${VEHICLE_EVENT_UPDATE_SQL}`,
+      [existingValues],
+    )
+  }
+  if (newValues.length) {
+    await pool.query(
+      `INSERT INTO vehicle_events (${VEHICLE_EVENT_COLUMNS.join(', ')}) VALUES ? ON DUPLICATE KEY UPDATE ${VEHICLE_EVENT_UPDATE_SQL}`,
+      [newValues],
+    )
+  }
+}
+
 /**
  * Ensure the 5,000 NH-44 records are stored in MySQL
  */
@@ -188,10 +255,7 @@ async function seedNH44DatabaseIfEmpty() {
         return [id, timestamp, type, plate, conf, null, speed, speedLimit, overSpeed, lat, lon, video, imgPath, null, events, NH44_FILE_NAME]
       })
 
-      await pool.query(
-        'INSERT IGNORE INTO vehicle_events (csv_record_id, timestamp_ist, vehicle_type, vehicle_number_plate, plate_confidence, vehicle_image, speed, speed_limit, over_speed, latitude, longitude, video_clip_path, vehicle_image_path, plate_image_path, events, source_file) VALUES ?',
-        [values]
-      )
+      await upsertVehicleEventRows(values)
     }
     console.log(`[Database] Successfully stored all 5,000 records from ${NH44_FILE_NAME} in MySQL.`)
   } catch (error) {
@@ -336,6 +400,17 @@ async function storeUploadedVehicleRecords(fileName, rows, options = {}) {
 
   const { isAppend = false } = options
   const safeFileName = String(fileName || 'uploaded_dataset.csv').slice(0, 255)
+  if (!isAppend) {
+    const placeholders = BUILT_IN_VEHICLE_FILES.map(() => '?').join(', ')
+    const [result] = await pool.query(
+      `DELETE FROM vehicle_events WHERE source_file NOT IN (${placeholders})`,
+      BUILT_IN_VEHICLE_FILES,
+    )
+    if (result.affectedRows > 0) {
+      console.log(`[Database] Replaced ${result.affectedRows} rows from previous uploaded datasets.`)
+    }
+  }
+
   const CHUNK_SIZE = 250
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
     const chunk = rows.slice(i, i + CHUNK_SIZE)
@@ -359,23 +434,7 @@ async function storeUploadedVehicleRecords(fileName, rows, options = {}) {
       return [id, timestamp, type, plate, conf, null, speed, speedLimit, overSpeed, lat, lon, video, imgPath, plateImgPath, events, safeFileName]
     })
 
-    await pool.query(
-      `INSERT INTO vehicle_events 
-        (csv_record_id, timestamp_ist, vehicle_type, vehicle_number_plate, plate_confidence, vehicle_image, speed, speed_limit, over_speed, latitude, longitude, video_clip_path, vehicle_image_path, plate_image_path, events, source_file) 
-       VALUES ? 
-       ON DUPLICATE KEY UPDATE 
-        speed = VALUES(speed), 
-        speed_limit = VALUES(speed_limit), 
-        over_speed = VALUES(over_speed), 
-        timestamp_ist = VALUES(timestamp_ist), 
-        vehicle_type = VALUES(vehicle_type), 
-        vehicle_number_plate = VALUES(vehicle_number_plate),
-        plate_confidence = VALUES(plate_confidence),
-        events = VALUES(events),
-        latitude = VALUES(latitude),
-        longitude = VALUES(longitude)`,
-      [values]
-    )
+    await upsertVehicleEventRows(values)
   }
 
   const totalInDb = await getTotalDatabaseRecordCount()

@@ -40,7 +40,7 @@ import {
 } from 'recharts'
 import { formatTimestampIst, groupBy, sampleTrafficData, summarizeData } from '../data/dashboardData'
 import { getVehicleMeta } from '../data/vehicleTypes'
-import { cameraFeeds, getCameraFeed } from '../data/cameraFeeds'
+import { CAMERA_LIVE_STREAM_URL, cameraFeeds, getCameraFeed } from '../data/cameraFeeds'
 import VehicleBadge from './VehicleBadge'
 import VehicleImageThumbnail from './VehicleImageThumbnail'
 import MediaPreviewModal from './MediaPreviewModal'
@@ -524,8 +524,8 @@ export default function DashboardDetail({
       id: camera.id || feed.id,
       name: camera.name || feed.name,
       location: camera.location || feed.location,
-      videoUrl: camera.videoUrl || camera.streamUrl || feed.videoUrl,
-      value: matched ? matched.value : 0,
+      streamPageUrl: CAMERA_LIVE_STREAM_URL,
+      value: Math.max(Number(camera.detectionCount) || 0, Number(matched?.value) || 0),
       status: 'ACTIVE',
     }
   })
@@ -543,18 +543,15 @@ export default function DashboardDetail({
   }, [cameraRecords])
 
   const cameraFeedOptions = useMemo(() => {
-    const knownFeeds = cameraFeeds.map((feed) => ({
-      ...feed,
-      ...(cameraRecords.find((camera) => camera.id === feed.id || camera.name === feed.name) || {}),
-    }))
-    const extraCameras = addedCameras
-      .filter((cam) => !cameraFeeds.some((feed) => feed.id === cam.id || feed.name === cam.name))
-      .map((cam) => ({
-        ...cam,
-        videoUrl: cam.videoUrl || cam.streamUrl || cameraFeeds[0].videoUrl,
-      }))
-    return [...knownFeeds, ...extraCameras]
-  }, [cameraRecords, addedCameras])
+    return cameraRecords.map((camera) => {
+      const feed = getCameraFeed(camera)
+      return {
+        ...feed,
+        ...camera,
+        streamPageUrl: CAMERA_LIVE_STREAM_URL,
+      }
+    })
+  }, [cameraRecords])
 
   useEffect(() => {
     if (kind === 'cameras' && !inlineCameraFeed && cameraFeedOptions.length) {
@@ -1538,11 +1535,11 @@ export default function DashboardDetail({
             <div>
               <p className="section-kicker">NETWORK MANAGEMENT</p>
               <h2>NH-44 Checkpoint Feeds</h2>
-              <span>Active optical cameras capturing live highway events</span>
+              <span>One live camera stream is shared across all NH-44 camera entries</span>
             </div>
             <div className="coverage-ring">
-              <strong>{cameraRecords.length}</strong>
-              <span>sources</span>
+              <strong>1</strong>
+              <span>live source</span>
             </div>
             <div className="camera-control-actions">
               <button

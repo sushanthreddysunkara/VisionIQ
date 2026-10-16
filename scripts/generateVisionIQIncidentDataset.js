@@ -1,12 +1,17 @@
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import * as XLSX from 'xlsx'
 
+const requireBackend = createRequire(new URL('../backend/package.json', import.meta.url))
+const { pool } = requireBackend('./config/database.js')
 const corridorId = 'COR-NH44'
 const outputPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'VisionIQ_NH44_Incident_Dataset.xlsx')
 const guide = [
 	{ Item: 'Purpose', Details: 'Synthetic NH-44 traffic, incidents, impact, and knowledge-graph sample for VisionIQ.' },
 	{ Item: 'Synthetic data', Details: 'All events and DEMO-TS09 plate values are fictional examples, not real registration records.' },
+	{ Item: 'Database data', Details: 'Sheets prefixed DB_ contain every row from each MySQL base table; credential and secret columns are omitted.' },
+	{ Item: 'Camera detections', Details: 'Camera_Detections links every demo camera to existing synthetic vehicles; database detections are in DB_network_vehicle_detections.' },
 	{ Item: 'Find accident plates', Details: 'Filter Incidents by incident_id, then match it in Incident_Vehicles to see involved plate numbers.' },
 	{ Item: 'Join keys', Details: 'incident_id, vehicle_id, corridor_id, zone_id, road_segment_id, camera_id, impact_id.' },
 	{ Item: 'Timezone', Details: 'All timestamps are local Asia/Kolkata time (IST).' },
@@ -82,10 +87,30 @@ const trafficFlow = roadSegments.flatMap((segment, index) => [
 	{ observation_id: `FLOW-${String(index * 2 + 2).padStart(3, '0')}`, observed_at_ist: '2026-10-05 08:15:00', road_segment_id: segment.road_segment_id, camera_id: cameras[index].camera_id, vehicles_per_5_min: 61 - index * 3, average_speed_kmh: 46 - index * 2, occupancy_pct: 42 + index * 5, flow_state: index === 3 ? 'Incident impact' : 'Slow' },
 ])
 
+const cameraDetections = cameras.flatMap((camera, cameraIndex) => {
+	const segment = roadSegments.find((row) => row.zone_id === camera.zone_id)
+	return Array.from({ length: 3 }, (_, detectionIndex) => {
+		const vehicle = vehicles[(cameraIndex * 2 + detectionIndex) % vehicles.length]
+		return {
+			detection_id: `DEMO-${camera.camera_id}-${detectionIndex + 1}`,
+			camera_id: camera.camera_id,
+			zone_id: camera.zone_id,
+			road_segment_id: segment.road_segment_id,
+			vehicle_id: vehicle.vehicle_id,
+			plate_number: vehicle.plate_number,
+			vehicle_type: vehicle.vehicle_type,
+			timestamp_ist: '2026-10-05 08:00:00',
+			plate_confidence: 0.93 - detectionIndex * 0.02,
+			data_source: 'SYNTHETIC_DEMO',
+		}
+	})
+})
+
 const graphEdges = [
 	...zones.map((zone) => ({ source_type: 'Corridor', source_id: corridorId, relationship: 'CONTAINS', target_type: 'Zone', target_id: zone.zone_id })),
 	...roadSegments.map((segment) => ({ source_type: 'Zone', source_id: segment.zone_id, relationship: 'CONTAINS', target_type: 'RoadSegment', target_id: segment.road_segment_id })),
 	...cameras.map((camera) => ({ source_type: 'Zone', source_id: camera.zone_id, relationship: 'MONITORED_BY', target_type: 'Camera', target_id: camera.camera_id })),
+	...cameraDetections.map((detection) => ({ source_type: 'Camera', source_id: detection.camera_id, relationship: 'OBSERVED', target_type: 'Vehicle', target_id: detection.vehicle_id })),
 	...incidents.flatMap((incident, index) => [
 		{ source_type: 'Camera', source_id: incident.camera_id, relationship: 'DETECTED', target_type: 'Incident', target_id: incident.incident_id },
 		{ source_type: 'Incident', source_id: incident.incident_id, relationship: 'OCCURRED_ON', target_type: 'RoadSegment', target_id: incident.road_segment_id },
@@ -106,6 +131,8 @@ function validateRelations() {
 	if (roadSegments.some((row) => !zoneIds.has(row.zone_id))) throw new Error('Unknown zone reference in Road_Segments.')
 	if (cameras.some((row) => !zoneIds.has(row.zone_id))) throw new Error('Unknown zone reference in Cameras.')
 	if (incidents.some((row) => !zoneIds.has(row.zone_id) || !segmentIds.has(row.road_segment_id) || !cameraIds.has(row.camera_id))) throw new Error('Unknown network reference in Incidents.')
+	if (cameraDetections.some((row) => !cameraIds.has(row.camera_id) || !zoneIds.has(row.zone_id) || !segmentIds.has(row.road_segment_id) || !vehicleById.has(row.vehicle_id))) throw new Error('Invalid camera detection reference.')
+	if (new Set(cameraDetections.map((row) => row.camera_id)).size !== cameras.length) throw new Error('Every camera must have at least one vehicle detection.')
 	for (const link of incidentVehicles) {
 		if (!incidentIds.has(link.incident_id) || vehicleById.get(link.vehicle_id)?.plate_number !== link.plate_number) throw new Error(`Invalid plate link for ${link.incident_id}/${link.vehicle_id}.`)
 	}
@@ -114,17 +141,88 @@ function validateRelations() {
 }
 
 function addSheet(workbook, name, rows) {
-	const sheet = XLSX.utils.json_to_sheet(rows)
 	const headers = Object.keys(rows[0] || {})
+	addSheetWithHeaders(workbook, name, rows, headers)
+}
+
+function addSheetWithHeaders(workbook, name, rows, headers) {
+	const sheet = rows.length ? XLSX.utils.json_to_sheet(rows) : XLSX.utils.aoa_to_sheet(headers.length ? [headers] : [])
 	sheet['!cols'] = headers.map((header) => ({ wch: Math.min(Math.max(header.length + 3, 14), 42) }))
-	if (rows.length && headers.length) sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: headers.length - 1 } }) }
+	if (headers.length) sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: headers.length - 1 } }) }
 	workbook.Sheets[name] = sheet
 	workbook.SheetNames.push(name)
 }
 
-validateRelations()
-const workbook = XLSX.utils.book_new()
-for (const [name, rows] of Object.entries({ Guide: guide, Corridors: corridors, Zones: zones, Road_Segments: roadSegments, Cameras: cameras, Vehicles: vehicles, Incidents: incidents, Incident_Vehicles: incidentVehicles, Impact_Analysis: impactAnalysis, Traffic_Flow: trafficFlow, Risk_Profiles: riskProfiles, Knowledge_Graph: graphEdges })) addSheet(workbook, name, rows)
-XLSX.writeFile(workbook, outputPath, { compression: true })
-console.log(`Created ${outputPath}`)
-console.log(`${incidents.length} incidents; ${incidentVehicles.length} vehicle links with plates; ${vehicles.length} synthetic vehicles; ${graphEdges.length} graph edges.`)
+const MAX_DATA_ROWS_PER_SHEET = 1_048_575
+const SENSITIVE_COLUMN = /^(password|password_hash|secret|access_token|refresh_token|api_key)$/i
+
+function databaseSheetName(tableName, part, usedNames) {
+	const suffix = part > 1 ? `_${part}` : ''
+	const base = `DB_${tableName}`.replace(/[\\/?*:[\]]/g, '_')
+	let candidate = `${base.slice(0, 31 - suffix.length)}${suffix}`
+	let duplicate = 2
+	while (usedNames.has(candidate.toLowerCase())) {
+		const duplicateSuffix = `_${duplicate++}${suffix}`
+		candidate = `${base.slice(0, 31 - duplicateSuffix.length)}${duplicateSuffix}`
+	}
+	usedNames.add(candidate.toLowerCase())
+	return candidate
+}
+
+async function addDatabaseTables(workbook) {
+	if (!pool) throw new Error('MySQL connection pool is unavailable. Check backend/.env and database dependencies.')
+
+	const [tables] = await pool.query(`
+		SELECT TABLE_NAME AS tableName
+		FROM INFORMATION_SCHEMA.TABLES
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+		ORDER BY TABLE_NAME
+	`)
+	const usedNames = new Set(workbook.SheetNames.map((name) => name.toLowerCase()))
+	const rowCounts = []
+
+	for (const { tableName } of tables) {
+		const safeTableName = tableName.replace(/`/g, '``')
+		const [rows, fields] = await pool.query(`SELECT * FROM \`${safeTableName}\``)
+		const headers = fields.map((field) => field.name).filter((name) => !SENSITIVE_COLUMN.test(name))
+		const safeRows = rows.map((row) => Object.fromEntries(
+			Object.entries(row).filter(([column]) => !SENSITIVE_COLUMN.test(column)),
+		))
+		const sheetCount = Math.max(1, Math.ceil(safeRows.length / MAX_DATA_ROWS_PER_SHEET))
+
+		for (let part = 1; part <= sheetCount; part += 1) {
+			const start = (part - 1) * MAX_DATA_ROWS_PER_SHEET
+			addSheetWithHeaders(
+				workbook,
+				databaseSheetName(tableName, part, usedNames),
+				safeRows.slice(start, start + MAX_DATA_ROWS_PER_SHEET),
+				headers,
+			)
+		}
+
+		rowCounts.push(`${tableName}: ${safeRows.length}`)
+	}
+
+	return rowCounts
+}
+
+async function main() {
+	validateRelations()
+	const workbook = XLSX.utils.book_new()
+	for (const [name, rows] of Object.entries({ Guide: guide, Corridors: corridors, Zones: zones, Road_Segments: roadSegments, Cameras: cameras, Vehicles: vehicles, Camera_Detections: cameraDetections, Incidents: incidents, Incident_Vehicles: incidentVehicles, Impact_Analysis: impactAnalysis, Traffic_Flow: trafficFlow, Risk_Profiles: riskProfiles, Knowledge_Graph: graphEdges })) addSheet(workbook, name, rows)
+
+	try {
+		const databaseRowCounts = await addDatabaseTables(workbook)
+		XLSX.writeFile(workbook, outputPath, { compression: true })
+		console.log(`Created ${outputPath}`)
+		console.log(`${incidents.length} incidents; ${cameraDetections.length} camera detections across ${cameras.length} cameras; ${incidentVehicles.length} incident vehicle links; ${vehicles.length} synthetic vehicles; ${graphEdges.length} graph edges.`)
+		console.log(`Exported ${databaseRowCounts.length} MySQL tables: ${databaseRowCounts.join('; ')}`)
+	} finally {
+		await pool.end()
+	}
+}
+
+main().catch((error) => {
+	console.error('Unable to generate the incident workbook:', error.message)
+	process.exitCode = 1
+})

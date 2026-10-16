@@ -382,9 +382,15 @@ app.get('/api/cameras', async (req, res) => {
     if (!pool || isMockMode()) return res.status(503).json({ success: false, message: 'Camera database is unavailable.' })
     const [rows] = await pool.query(
       `SELECT c.camera_id, c.camera_name, c.latitude, c.longitude, c.status,
-              z.zone_name, z.km_marker
+              z.zone_name, z.km_marker, COALESCE(d.detection_count, 0) AS detection_count,
+              d.latest_detection_at
        FROM network_cameras c
        LEFT JOIN network_zones z ON z.zone_id = c.zone_id
+       LEFT JOIN (
+         SELECT camera_id, COUNT(*) AS detection_count, MAX(timestamp_ist) AS latest_detection_at
+         FROM network_vehicle_detections
+         GROUP BY camera_id
+       ) d ON d.camera_id = c.camera_id
        ORDER BY z.km_marker DESC, c.camera_id`,
     )
     const cams = rows.map((row) => ({
@@ -395,6 +401,8 @@ app.get('/api/cameras', async (req, res) => {
       latitude: row.latitude == null ? null : Number(row.latitude),
       longitude: row.longitude == null ? null : Number(row.longitude),
       status: row.status,
+      detectionCount: Number(row.detection_count || 0),
+      latestDetectionAt: row.latest_detection_at || null,
     }))
     res.json({ success: true, count: cams.length, cameras: cams })
   } catch (error) {

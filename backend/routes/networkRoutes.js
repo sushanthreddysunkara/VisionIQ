@@ -23,7 +23,16 @@ router.get('/overview', async (_req, res) => {
       ['graphEdges', 'network_knowledge_graph_edges'],
     ]
     const records = await Promise.all(tables.map(async ([key, table]) => {
-      const [rows] = await pool.query(`SELECT * FROM ${table}`)
+      const query = key === 'cameras'
+        ? `SELECT c.*, COALESCE(d.detection_count, 0) AS detection_count, d.latest_detection_at
+           FROM network_cameras c
+           LEFT JOIN (
+             SELECT camera_id, COUNT(*) AS detection_count, MAX(timestamp_ist) AS latest_detection_at
+             FROM network_vehicle_detections
+             GROUP BY camera_id
+           ) d ON d.camera_id = c.camera_id`
+        : `SELECT * FROM ${table}`
+      const [rows] = await pool.query(query)
       return [key, rows]
     }))
 
