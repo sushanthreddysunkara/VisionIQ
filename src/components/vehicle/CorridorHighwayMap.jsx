@@ -27,18 +27,29 @@ import {
   Video,
 } from 'lucide-react'
 import 'leaflet/dist/leaflet.css'
+import { CORRIDORS_LIST, getCorridorById } from '../../data/corridorsData'
 
 // 1. Waypoint data with exact GPS coordinates along the NH-44 Hyderabad to Bengaluru corridor
 const CORRIDOR_POINTS = [
   {
     id: 'HYD',
-    name: 'Hyderabad',
+    name: 'Hyderabad (PVNR)',
     km: 0,
-    lat: 17.3850,
-    lng: 78.4867,
+    lat: 17.3950,
+    lng: 78.4480,
     isTerminal: true,
     terminalLabel: '← Hyderabad',
     speed: 85,
+    speedStatus: 'free',
+    hasCamera: true,
+  },
+  {
+    id: 'ATTA',
+    name: 'Attapur',
+    km: 8,
+    lat: 17.3580,
+    lng: 78.4420,
+    speed: 78,
     speedStatus: 'free',
     hasCamera: true,
   },
@@ -50,11 +61,21 @@ const CORRIDOR_POINTS = [
     lng: 78.4415,
     speed: 82,
     speedStatus: 'free',
+    hasCamera: true,
+  },
+  {
+    id: 'GAGAN',
+    name: 'Gaganpahad',
+    km: 20,
+    lat: 17.2750,
+    lng: 78.4310,
+    speed: 82,
+    speedStatus: 'free',
   },
   {
     id: 'SHAM',
     name: 'Shamshabad',
-    km: 24,
+    km: 28,
     lat: 17.2510,
     lng: 78.4285,
     speed: 82,
@@ -592,57 +613,93 @@ function LeafletCustomControls({ onFitRoute, showSpeedLayers, onToggleLayers }) 
   )
 }
 
-export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
+export default function CorridorHighwayMap({
+  onOpenLiveCamera = null,
+  onSelectIncident = null,
+  selectedCorridorId: controlledCorridorId = null,
+  onSelectCorridor = null,
+}) {
   const navigate = useNavigate()
 
-  // Selected incident/waypoint: defaults to the iconic Jadcherla accident
+  // Selected corridor state
+  const [internalCorridor, setInternalCorridor] = useState('NH-44')
+  const activeCorridorId = controlledCorridorId || internalCorridor
+  const currentCorridorData = useMemo(() => getCorridorById(activeCorridorId), [activeCorridorId])
+
+  // Active waypoints and incidents from the current corridor
+  const activeWaypoints = useMemo(() => currentCorridorData.waypoints || CORRIDOR_POINTS, [currentCorridorData])
+  const activeIncidents = useMemo(() => {
+    if (currentCorridorData.incidents && currentCorridorData.incidents.length > 0) {
+      return currentCorridorData.incidents
+    }
+    return RECENT_INCIDENTS
+  }, [currentCorridorData])
+
+  // Selected incident/waypoint: defaults to first incident of the corridor
   const [selectedIncidentId, setSelectedIncidentId] = useState('inc-jadc')
   const [flyTarget, setFlyTarget] = useState(null)
   const [fitTrigger, setFitTrigger] = useState(1)
 
   // Filters & Layer Toggles
   const [showSpeedLayers, setShowSpeedLayers] = useState(true)
-  const [selectedCorridor, setSelectedCorridor] = useState('NH-44')
   const [timeWindow, setTimeWindow] = useState('Last 2 Hours')
   const [incidentFilter, setIncidentFilter] = useState('All Incident Types')
 
+  // When corridor changes, update default selected incident and fly target
+  useEffect(() => {
+    if (activeIncidents.length > 0) {
+      setSelectedIncidentId(activeIncidents[0].id)
+    }
+    if (currentCorridorData.mapCenter) {
+      setFlyTarget(currentCorridorData.mapCenter)
+      setFitTrigger((prev) => prev + 1)
+    }
+  }, [activeCorridorId, activeIncidents, currentCorridorData])
+
   // Find active incident
   const activeIncident = useMemo(() => {
-    return RECENT_INCIDENTS.find((inc) => inc.id === selectedIncidentId) || RECENT_INCIDENTS[1]
-  }, [selectedIncidentId])
+    return activeIncidents.find((inc) => inc.id === selectedIncidentId) || activeIncidents[0] || RECENT_INCIDENTS[0]
+  }, [selectedIncidentId, activeIncidents])
 
   const activePoint = useMemo(() => {
-    if (!activeIncident) return CORRIDOR_POINTS[6] // Jadcherla
-    return CORRIDOR_POINTS.find((pt) => pt.id === activeIncident.pointId) || CORRIDOR_POINTS[6]
-  }, [activeIncident])
+    if (!activeIncident) return activeWaypoints[0] || CORRIDOR_POINTS[6]
+    return (
+      activeWaypoints.find((pt) => pt.id && activeIncident.pointId && pt.id === activeIncident.pointId) ||
+      activeWaypoints.find((pt) => activeIncident.location && pt.name && activeIncident.location.includes(pt.name)) ||
+      activeWaypoints[0]
+    )
+  }, [activeIncident, activeWaypoints])
 
   // All corridor GPS positions for polyline and bounds
   const allPositions = useMemo(() => {
-    return CORRIDOR_POINTS.map((pt) => [pt.lat, pt.lng])
-  }, [])
+    return activeWaypoints.map((pt) => [pt.lat, pt.lng])
+  }, [activeWaypoints])
 
   // Filtered incidents list based on dropdown
   const filteredIncidents = useMemo(() => {
     if (incidentFilter === 'Accidents') {
-      return RECENT_INCIDENTS.filter((inc) => inc.type === 'accident')
+      return activeIncidents.filter((inc) => (inc.type || inc.incidentType) === 'accident' || (inc.type || inc.incidentType) === 'collision')
     }
     if (incidentFilter === 'Vehicle Fire') {
-      return RECENT_INCIDENTS.filter((inc) => inc.type === 'fire')
+      return activeIncidents.filter((inc) => (inc.type || inc.incidentType) === 'fire')
     }
     if (incidentFilter === 'Traffic & Toll') {
-      return RECENT_INCIDENTS.filter((inc) => inc.type === 'toll' || inc.type === 'stalled')
+      return activeIncidents.filter((inc) => (inc.type || inc.incidentType) === 'toll' || (inc.type || inc.incidentType) === 'stalled')
     }
-    return RECENT_INCIDENTS
-  }, [incidentFilter])
+    return activeIncidents
+  }, [incidentFilter, activeIncidents])
 
   // Select incident and fly to it
   const handleSelectIncident = useCallback((inc) => {
     setSelectedIncidentId(inc.id)
-    const targetPt = CORRIDOR_POINTS.find((pt) => pt.id === inc.pointId)
+    const targetPt = activeWaypoints.find((pt) => pt.id === inc.pointId)
     if (targetPt) {
       setFlyTarget([targetPt.lat, targetPt.lng])
     }
-  }, [])
+    if (onSelectIncident) {
+      onSelectIncident(inc)
+    }
+  }, [onSelectIncident, activeWaypoints])
 
   return (
     <div className="corridor-map-grid-container">
@@ -661,14 +718,19 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
               <select
                 aria-label="Select Corridor"
                 className="corridor-select-native"
-                onChange={(e) => setSelectedCorridor(e.target.value)}
-                value={selectedCorridor}
+                onChange={(e) => {
+                  setInternalCorridor(e.target.value)
+                  if (onSelectCorridor) onSelectCorridor(e.target.value)
+                }}
+                value={activeCorridorId}
               >
-                <option value="NH-44">NH-44</option>
-                <option value="NH-65">NH-65</option>
-                <option value="ORR">Hyderabad ORR</option>
+                {CORRIDORS_LIST.map((corr) => (
+                  <option key={corr.id} value={corr.id}>
+                    {corr.code} · {corr.shortName} ({corr.lengthKm} km)
+                  </option>
+                ))}
               </select>
-              <span>{selectedCorridor}</span>
+              <span>{currentCorridorData.code} · {currentCorridorData.shortName}</span>
               <ChevronDown size={14} />
             </label>
 
@@ -745,15 +807,15 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
               positions={allPositions}
             />
 
-            {/* 2. Speed Telemetry Polylines along the NH-44 Corridor */}
+            {/* 2. Speed Telemetry Polylines along the Selected Corridor */}
             {showSpeedLayers &&
-              CORRIDOR_POINTS.map((pt, index) => {
-                if (index === CORRIDOR_POINTS.length - 1) return null
-                const nextPt = CORRIDOR_POINTS[index + 1]
+              activeWaypoints.map((pt, index) => {
+                if (index === activeWaypoints.length - 1) return null
+                const nextPt = activeWaypoints[index + 1]
                 const segColor = getSpeedColor(pt.speed || 80)
                 return (
                   <Polyline
-                    key={`seg-line-${pt.id}-${nextPt.id}`}
+                    key={`seg-line-${pt.id || pt.name}-${nextPt.id || nextPt.name}`}
                     pathOptions={{
                       color: segColor,
                       weight: 5,
@@ -770,28 +832,49 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
               })}
 
             {/* 3. Markers for Waypoints, Incidents, Cameras & Terminals */}
-            {CORRIDOR_POINTS.map((pt) => {
-              const isSelected = activePoint?.id === pt.id
-              const hasIncident = pt.hasIncident && pt.incident
+            {activeWaypoints.map((pt, idx) => {
+              const ptKey = pt.id || pt.name || `wp-${idx}`
+              const isSelected = Boolean(
+                activePoint &&
+                  ((pt.id && activePoint.id === pt.id) ||
+                    (pt.name && activePoint.name === pt.name))
+              )
+              const hasDirectIncident = Boolean(pt.hasIncident && pt.incident)
+              const hasActiveIncidentMatch = Boolean(
+                activeIncident &&
+                  ((activeIncident.pointId && pt.id && activeIncident.pointId === pt.id) ||
+                    (activeIncident.location && pt.name && (
+                      activeIncident.location.toLowerCase().includes(pt.name.toLowerCase()) ||
+                      pt.name.toLowerCase().includes(
+                        (activeIncident.shortLocation || '').replace(/Km\s*[\d.]+\s*\(|\)/gi, '').trim().toLowerCase()
+                      )
+                    )))
+              )
+              const hasIncident = hasDirectIncident || hasActiveIncidentMatch
+              const incObj = pt.incident || (hasIncident ? activeIncident : null)
               const isTerminal = pt.isTerminal
 
               let pinIcon = null
-              if (hasIncident) {
-                pinIcon = getIncidentDivIcon(pt.incident.type, pt.incident.color, isSelected)
+              if (hasIncident && incObj) {
+                pinIcon = getIncidentDivIcon(
+                  incObj.type || incObj.incidentType || 'accident',
+                  incObj.riskColor || incObj.color || '#dc2626',
+                  isSelected
+                )
               } else if (isTerminal) {
-                pinIcon = getTerminalDivIcon(pt.terminalLabel || pt.name, pt.id === 'HYD')
+                pinIcon = getTerminalDivIcon(pt.terminalLabel || pt.name, pt.id === 'HYD' || pt.km === 0)
               } else if (pt.hasCamera) {
                 pinIcon = getCameraDivIcon()
               } else {
-                pinIcon = getCityNodeDivIcon(pt.name, getSpeedColor(pt.speed), pt.isMajorHub)
+                pinIcon = getCityNodeDivIcon(pt.name, getSpeedColor(pt.speed || 75), pt.isMajorHub)
               }
 
               return (
                 <Marker
                   eventHandlers={{
                     click: () => {
-                      if (hasIncident) {
-                        setSelectedIncidentId(pt.incident.id)
+                      if (incObj && incObj.id) {
+                        setSelectedIncidentId(incObj.id)
                       }
                       if (pt.cameraId && onOpenLiveCamera) {
                         onOpenLiveCamera({
@@ -803,19 +886,19 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
                     },
                   }}
                   icon={pinIcon}
-                  key={`pt-marker-${pt.id}`}
+                  key={`pt-marker-${ptKey}`}
                   position={[pt.lat, pt.lng]}
                 >
                   {/* Tooltip on hover */}
                   <Tooltip direction="top" offset={[0, -14]} opacity={0.92}>
                     <div className="corridor-node-tooltip">
                       <strong>{pt.name}</strong> · Km {pt.km}
-                      <small>Speed: {pt.speed} km/h</small>
+                      <small>Speed: {pt.speed || 75} km/h</small>
                     </div>
                   </Tooltip>
 
                   {/* Red Callout Popup matching the screenshot */}
-                  {hasIncident && isSelected && (
+                  {hasIncident && isSelected && incObj && (
                     <Popup
                       autoPan={false}
                       className="corridor-leaflet-callout"
@@ -828,14 +911,14 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
                         <div className="callout-header">
                           <AlertTriangle size={15} strokeWidth={2.4} />
                           <span className="callout-title">
-                            {pt.incident.shortTitle || pt.incident.title}
+                            {incObj.shortTitle || incObj.title || 'Incident Hazard'}
                           </span>
                         </div>
                         <div className="callout-location">
-                          {pt.incident.shortLocation || `Km ${pt.km}`}
+                          {incObj.shortLocation || incObj.location || `Km ${pt.km}`}
                         </div>
                         <div className="callout-status">
-                          {pt.incident.shortDetail || pt.incident.detail}
+                          {incObj.shortDetail || incObj.detail || incObj.description || 'Active traffic alert'}
                         </div>
                       </div>
                     </Popup>
@@ -902,13 +985,14 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
                 {/* Left Icon Badge */}
                 <div
                   className="corridor-incident-icon"
-                  style={{ background: inc.iconBg, color: inc.iconColor }}
+                  style={{ background: inc.iconBg || '#fee2e2', color: inc.iconColor || inc.riskColor || '#dc2626' }}
                 >
-                  {inc.type === 'fire' && <Flame size={17} />}
-                  {inc.type === 'accident' && <AlertTriangle size={17} />}
-                  {inc.type === 'stalled' && <Truck size={17} />}
-                  {inc.type === 'flooding' && <CloudRain size={17} />}
-                  {inc.type === 'toll' && <Radio size={17} />}
+                  {(inc.type === 'fire' || inc.incidentType === 'fire') && <Flame size={17} />}
+                  {(inc.type === 'accident' || inc.incidentType === 'collision' || inc.incidentType === 'accident') && <AlertTriangle size={17} />}
+                  {(inc.type === 'stalled' || inc.incidentType === 'stalled') && <Truck size={17} />}
+                  {(inc.type === 'flooding' || inc.incidentType === 'flooding') && <CloudRain size={17} />}
+                  {(inc.type === 'toll' || inc.incidentType === 'toll') && <Radio size={17} />}
+                  {inc.incidentType === 'debris' && <AlertTriangle size={17} />}
                 </div>
 
                 {/* Main Incident Details */}
@@ -917,14 +1001,14 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
                     <strong className="corridor-incident-title">{inc.title}</strong>
                   </div>
                   <div className="corridor-incident-location">{inc.location}</div>
-                  <div className="corridor-incident-detail">{inc.detail}</div>
+                  <div className="corridor-incident-detail">{inc.detail || inc.subtitle}</div>
                 </div>
 
                 {/* Right Meta: Time & Severity Tag */}
                 <div className="corridor-incident-right">
                   <span className="corridor-incident-time">{inc.time}</span>
                   <span
-                    className={`corridor-incident-badge ${inc.severity.toLowerCase()}`}
+                    className={`corridor-incident-badge ${(inc.severity || 'high').toLowerCase()}`}
                   >
                     {inc.severity}
                   </span>
@@ -937,7 +1021,7 @@ export default function CorridorHighwayMap({ onOpenLiveCamera = null }) {
 
         {/* Footer Summary */}
         <div className="corridor-incidents-footer">
-          <span>12 active on the corridor, 4 high severity, 5 have a response unit moving.</span>
+          <span>{filteredIncidents.length} active incidents on {currentCorridorData.shortName || activeCorridorId}, {currentCorridorData.highRiskIncidents || 1} high severity with response moving.</span>
         </div>
       </div>
     </div>

@@ -146,14 +146,43 @@ export default function KnowledgeGraphPage({
   }, [location.pathname, location.search, location.state, initialTab])
 
   useEffect(() => {
+    if (!containerRef.current) return
+    const ro = new ResizeObserver(() => {
+      if (cyRef.current && typeof cyRef.current.resize === 'function') {
+        try {
+          cyRef.current.resize()
+        } catch {
+          // ignore
+        }
+      }
+    })
+    ro.observe(containerRef.current)
+    const handleWinResize = () => {
+      if (cyRef.current && typeof cyRef.current.resize === 'function') {
+        try {
+          cyRef.current.resize()
+        } catch {
+          // ignore
+        }
+      }
+    }
+    window.addEventListener('resize', handleWinResize)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', handleWinResize)
+    }
+  }, [])
+
+  useEffect(() => {
     if (activeTab === 'graph' && cyRef.current) {
       const timer = setTimeout(() => {
         try {
           cyRef.current?.resize()
+          cyRef.current?.fit(null, 60)
         } catch {
           // ignore
         }
-      }, 60)
+      }, 80)
       return () => clearTimeout(timer)
     }
   }, [activeTab])

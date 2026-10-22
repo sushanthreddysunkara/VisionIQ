@@ -15,12 +15,15 @@ import RulesEventsPage from './components/RulesEventsPage'
 import ProfilePage from './components/ProfilePage'
 import SettingsPage from './components/SettingsPage'
 import VehicleInformation from './components/VehicleInformation'
+import AssetsMaintenancePage from './components/AssetsMaintenancePage'
 import TollRevenuePage from './components/tollRevenue/TollRevenuePage'
 import PlaceholderPage from './components/PlaceholderPage'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import ProjectsPage from './components/projects/ProjectsPage'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
+import LiveViewPage from './components/LiveViewPage'
+import BottomCorridorBar from './components/BottomCorridorBar'
 import LoginPage from './components/auth/LoginPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { useAuth } from './context/AuthContext'
@@ -724,7 +727,7 @@ export default function App() {
             <section className="content-wrap">
               <Routes>
                 {/* HOME */}
-                <Route path="/" element={<Navigate replace to="/home" />} />
+                <Route path="/" element={<Navigate replace to="/live-view" />} />
                 <Route
                   path="/home"
                   element={
@@ -743,6 +746,22 @@ export default function App() {
                         streamPaused={streamPaused}
                       />
                     )
+                  }
+                />
+
+                {/* LIVE VIEW - EXACT TARGET SCREEN */}
+                <Route
+                  path="/live-view"
+                  element={
+                    <LiveViewPage
+                      dbStats={dbStats}
+                      fileName={fileName}
+                      latestBatchInfo={latestBatchInfo}
+                      onToggleStreamPause={handleToggleStreamPause}
+                      rows={trafficData}
+                      streamNotifications={streamNotifications}
+                      streamPaused={streamPaused}
+                    />
                   }
                 />
 
@@ -855,29 +874,16 @@ export default function App() {
                   }
                 />
 
-                {/* DASHBOARDS HUB */}
+                {/* DASHBOARDS HUB - Redirect to Corridors Performance */}
                 <Route
                   path="/dashboards"
-                  element={
-                    !connectedProject ? (
-                      <ProjectConnectionRequired />
-                    ) : (
-                      <DashboardHub
-                        dbStats={dbStats}
-                        fileName={fileName}
-                        hasImportedFile={hasImportedFile}
-                        importError={importError}
-                        latestBatchInfo={latestBatchInfo}
-                        onFetchRandomBatch={handleFetchRandomBatch}
-                        onImport={handleImport}
-                        onLoadSampleData={handleLoadSampleData}
-                        onToggleStreamPause={handleToggleStreamPause}
-                        projectName={connectedProject.name}
-                        rows={trafficData}
-                        streamPaused={streamPaused}
-                      />
-                    )
-                  }
+                  element={<Navigate replace to="/dashboards/corridors" />}
+                />
+
+                {/* Redirect /dashboards/vehicles to unified Traffic Flow & Speeds dashboard */}
+                <Route
+                  path="/dashboards/vehicles"
+                  element={<Navigate replace to="/dashboards/traffic" />}
                 />
 
                 {/* DASHBOARD DETAILS */}
@@ -919,6 +925,18 @@ export default function App() {
                   }
                 />
 
+                {/* ASSETS & MAINTENANCE */}
+                <Route
+                  path="/assets-maintenance"
+                  element={
+                    !connectedProject ? (
+                      <ProjectConnectionRequired />
+                    ) : (
+                      <AssetsMaintenancePage />
+                    )
+                  }
+                />
+
                 {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
                 <Route path="/rules-events" element={<RulesEventsPage />} />
 
@@ -945,19 +963,22 @@ export default function App() {
                       path !== '/query' &&
                       path !== '/document-intelligence' &&
                       path !== '/vehicle-information' &&
+                      path !== '/assets-maintenance' &&
                       path !== '/rules-events' &&
                       path !== '/profile' &&
-                      path !== '/settings'
+                      path !== '/settings' &&
+                      path !== '/live-view'
                   )
                   .map((path) => (
                     <Route element={<PlaceholderPage />} key={path} path={path} />
                   ))}
 
                 {/* UNKNOWN URL */}
-                <Route path="*" element={<Navigate replace to="/home" />} />
+                <Route path="*" element={<Navigate replace to="/live-view" />} />
               </Routes>
             </section>
           </main>
+          <BottomCorridorBar />
         </div>
       </ErrorBoundary>
     </ProtectedRoute>

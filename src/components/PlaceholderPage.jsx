@@ -55,6 +55,23 @@ export default function PlaceholderPage({
   const [previewModalRow, setPreviewModalRow] = useState(null)
   const [cameraFeedOpen, setCameraFeedOpen] = useState(false)
   const [selectedCameraFeed, setSelectedCameraFeed] = useState(null)
+  const [activeCorridorId, setActiveCorridorId] = useState(() => {
+    try {
+      return localStorage.getItem('visioniq-active-corridor') || 'CORRIDOR-01'
+    } catch {
+      return 'CORRIDOR-01'
+    }
+  })
+
+  useEffect(() => {
+    const handleCorridorChange = (e) => {
+      if (e.detail && typeof e.detail === 'string') {
+        setActiveCorridorId(e.detail)
+      }
+    }
+    window.addEventListener('visioniq:set-corridor', handleCorridorChange)
+    return () => window.removeEventListener('visioniq:set-corridor', handleCorridorChange)
+  }, [])
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
@@ -235,7 +252,7 @@ export default function PlaceholderPage({
 
       {/* 3. HERO MAP: Live Highway View (Full Width, Live Feed Removed per request) */}
       <div className="corridor-map-section">
-        <CorridorHighwayMap onOpenLiveCamera={handleOpenLiveFeed} />
+        <CorridorHighwayMap selectedCorridorId={activeCorridorId} onOpenLiveCamera={handleOpenLiveFeed} />
       </div>
 
       {/* 4. REMAINING ANALYTICS & DATA MOVED DOWN: Clean Multi-Grid Layout */}

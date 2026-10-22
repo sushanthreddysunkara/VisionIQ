@@ -280,6 +280,50 @@ app.get('/api/vehicles/incidents', async (req, res) => {
   }
 })
 
+// Multi-Corridor Intelligence endpoint: returns all corridors with KPIs, cameras, incidents, and impact analysis
+app.get('/api/corridors', async (req, res) => {
+  try {
+    if (!pool) return res.json({ success: true, count: 0, corridors: [] })
+    const [corridors] = await pool.query(`
+      SELECT c.*, 
+             k.vehicle_detections, k.unique_vehicles, k.overspeed_events, 
+             k.incident_count, k.high_critical_incidents, k.overspeed_rate_pct, 
+             k.incident_rate_per_1000_vehicles, k.demo_risk_band
+      FROM network_corridors c
+      LEFT JOIN network_corridor_kpis k ON c.corridor_id = k.corridor_id
+      ORDER BY c.corridor_order ASC
+    `)
+
+    const [cams] = await pool.query('SELECT * FROM network_cameras')
+    const [incidents] = await pool.query(`
+      SELECT i.*, 
+             p.risk_score_0_100, p.risk_category, p.recommended_action,
+             m.estimated_delay_min, m.max_queue_km, m.traffic_flow_reduction_pct, 
+             m.affected_lanes, m.diversion_recommended
+      FROM network_incidents i
+      LEFT JOIN network_risk_profiles p ON i.incident_id = p.incident_id
+      LEFT JOIN network_impact_analysis m ON i.incident_id = m.incident_id
+    `)
+
+    const enriched = corridors.map((corridor) => {
+      const cid = corridor.corridor_id
+      const slug = cid.replace(/\s+/g, '-').toUpperCase()
+      const corridorCams = cams.filter((c) => c.zone_id && c.zone_id.toUpperCase().includes(slug))
+      const corridorIncs = incidents.filter((x) => x.corridor_id === cid)
+      return {
+        ...corridor,
+        cameras: corridorCams,
+        incidents: corridorIncs,
+      }
+    })
+
+    res.json({ success: true, count: enriched.length, corridors: enriched })
+  } catch (error) {
+    console.error('Error fetching corridors:', error.message)
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
 // Camera Network endpoint
 app.get('/api/cameras', async (req, res) => {
   try {

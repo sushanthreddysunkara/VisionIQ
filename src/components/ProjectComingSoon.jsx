@@ -9,7 +9,7 @@ export default function ProjectComingSoon({ projectName }) {
       <h1>Dashboards coming soon</h1>
       <p>This project is connected, but its dashboard views have not been built yet.</p>
       <div className="project-coming-soon-status"><Clock3 size={15} /> Dashboard work is planned for a future phase</div>
-      <Link className="back-link" to="/dashboards"><ArrowLeft size={15} /> Return to dashboards</Link>
+      <Link className="back-link" to="/dashboards/corridors"><ArrowLeft size={15} /> Return to dashboards</Link>
     </div>
   )
 }

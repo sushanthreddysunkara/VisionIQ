@@ -395,7 +395,7 @@ export default function ProjectsPage({
                             type="file"
                           />
                         </label>
-                        <Link to="/dashboards" className="proj-feed-open-link">
+                        <Link to="/dashboards/corridors" className="proj-feed-open-link">
                           Open in Dashboards →
                         </Link>
                       </div>

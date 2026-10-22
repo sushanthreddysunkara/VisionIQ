@@ -11,6 +11,7 @@ import {
   Search,
   ShieldCheck,
   UploadCloud,
+  Wrench,
 } from 'lucide-react'
 
 export const navigation = [
@@ -22,6 +23,7 @@ export const navigation = [
   { label: 'Traffic Flow', path: '/dashboards/traffic', icon: Activity },
   { label: 'Camera Network', path: '/dashboards/cameras', icon: Camera },
   { label: 'Incidents', path: '/vehicle-information', icon: AlertTriangle },
+  { label: 'Assets & Maintenance', path: '/assets-maintenance', icon: Wrench },
   { label: 'Reports', path: '/document-intelligence', icon: FileText },
   { label: 'Rules & Events', path: '/rules-events', icon: ShieldCheck },
 ]

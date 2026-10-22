@@ -39,18 +39,8 @@ const recentDetections = [
   },
   {
     time: '08:15:18',
-    camera: 'CAM-HYD-004-W',
-    type: 'Bus',
-    plate: 'TS 07 UA 1190',
-    location: 'Gachibowli Junction',
-  },
-]
-
-function VehicleIcon({ type }) {
-  if (type === 'Buses') return <Bus size={17} />
-  if (type === 'Bikes') return <Bike size={17} />
-  if (type === 'Autos') return <Car size={17} />
-  return <Car size={17} />
+    if(_type === 'Buses') return <Bus size={17} />
+return <Car size={17} />
 }
 
 export default function Dashboard() {
@@ -220,7 +210,7 @@ export default function Dashboard() {
                 <MapPin size={17} />
                 <div>
                   <strong>Jubilee Hills</strong>
-            <h2>Traffic Flow</h2>
+                  <h2>Traffic Flow</h2>
                 </div>
               </div>
 
@@ -239,7 +229,7 @@ export default function Dashboard() {
             </div>
 
             <span className="record-count">
-              Latest {Math.min(10, recentDetections.length)} records
+              300 records
             </span>
           </div>
 
@@ -259,7 +249,7 @@ export default function Dashboard() {
 
               <tbody>
 
-                {recentDetections.slice(0, 10).map((item, index) => (
+                {recentDetections.map((item, index) => (
                   <tr key={index}>
 
                     <td>{item.time}</td>

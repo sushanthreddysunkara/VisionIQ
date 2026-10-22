@@ -1,9 +1,7 @@
 import {
   Bell,
   ChevronDown,
-  CloudSun,
   LogOut,
-  MapPin,
   Play,
   Search,
   Settings2,
@@ -13,7 +11,6 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { navigation } from '../data/navigation'
 
 export default function Topbar({
   searchOpen,
@@ -30,7 +27,7 @@ export default function Topbar({
   const [now, setNow] = useState(() => new Date())
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(1)
+  const [unreadCount, setUnreadCount] = useState(3)
   const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef(null)
   const seenNotificationIds = useRef(new Set())
@@ -84,7 +81,7 @@ export default function Topbar({
     }
   }
 
-  // Format date: e.g. "Fri, 19 Sep 2026"
+  // Format date: e.g. "Tue, 16 Sep 2026"
   const formattedDate = now.toLocaleDateString('en-GB', {
     weekday: 'short',
     day: 'numeric',
@@ -92,57 +89,92 @@ export default function Topbar({
     year: 'numeric',
   })
 
-  const displayName = user?.displayName || user?.username || 'Sai Sushanth'
-  const initials = (user?.displayName || user?.username || 'SR')
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase() || 'SR'
+  // Format time: e.g. "08:45 AM"
+  const formattedTime = now.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  })
+
+  const rawUserName = user?.username || user?.displayName || user?.name || user?.email || 'User'
+  const userInitial = rawUserName.trim().charAt(0).toUpperCase() || 'U'
+  const displayName = user?.displayName || user?.name || user?.username || 'Operator'
 
   return (
-    <header className="topbar">
-      {/* 1. Large Rounded Search Bar */}
-      <form className="topbar-search-form" onSubmit={handleSearchSubmit}>
-        <Search className="topbar-search-icon" size={17} strokeWidth={2} />
+    <header className="viq-global-topbar">
+      {/* 1. Brand Logo + Slogan */}
+      <div className="topbar-brand-section">
+        <div
+          className="topbar-brand-lockup"
+          onClick={() => navigate('/home')}
+          style={{ cursor: 'pointer' }}
+        >
+          <div className="topbar-logo-text">
+            <span className="logo-vizi">VIZION</span>
+            <span className="logo-iq">IQ</span>
+            <span className="logo-dot" />
+          </div>
+          <span className="topbar-logo-subtitle">Highway Intelligence Platform</span>
+        </div>
+
+        {/* 3-Line Mission Slogan */}
+        <div className="topbar-mission-slogan">
+          <span>See More.</span>
+          <span>Know Sooner.</span>
+          <span>Act Smarter.</span>
+        </div>
+      </div>
+
+      {/* 2. Center Pill Search Bar */}
+      <form className="topbar-center-search-form" onSubmit={handleSearchSubmit}>
+        <Search className="topbar-search-icon" size={16} strokeWidth={2.2} />
         <input
-          aria-label="Search anything"
+          aria-label="Search location, camera, incident or asset..."
           className="topbar-search-input"
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search anything (vehicles, locations, cameras, incidents...)"
+          placeholder="Search location, camera, incident or asset..."
           ref={searchInputRef}
           type="text"
           value={searchQuery}
         />
-        <span className="topbar-search-shortcut" title="Press / to search">/</span>
+        <span className="topbar-search-kbd" title="Press / to search">/</span>
       </form>
 
-      {/* 2. Right Actions: Stop Live Feed, Notification, User Profile, Weather Widget */}
-      <div className="topbar-right-actions">
-        {/* Global Stop Live Feed / Resume DB Fetching Button */}
+      {/* 3. Right Status Actions */}
+      <div className="topbar-right-meta">
+        {/* Slogan + Indian Flag */}
+        <div className="topbar-national-motto">
+          <span>For a Safer, Smarter, Stronger India.</span>
+          <span className="topbar-flag" title="India">
+            <svg width="22" height="15" viewBox="0 0 900 600" xmlns="http://www.w3.org/2000/svg">
+              <path fill="#FF9933" d="M0 0h900v200H0z"/>
+              <path fill="#FFFFFF" d="M0 200h900v200H0z"/>
+              <path fill="#128807" d="M0 400h900v200H0z"/>
+              <circle fill="#000088" cx="450" cy="300" r="80"/>
+              <circle fill="#FFFFFF" cx="450" cy="300" r="68"/>
+              <circle fill="#000088" cx="450" cy="300" r="16"/>
+            </svg>
+          </span>
+        </div>
+
+        {/* Date & Time */}
+        <div className="topbar-datetime-block">
+          <span>{formattedDate}</span>
+          <span className="topbar-pipe">|</span>
+          <strong>{formattedTime}</strong>
+        </div>
+
+        <span className="topbar-divider-pipe">|</span>
+
+        {/* Stream pause toggle (optional discrete icon) */}
         {onToggleStreamPause && (
           <button
-            className={`topbar-stream-stop-btn ${streamPaused ? 'is-stopped' : 'is-active'}`}
-            onClick={onToggleStreamPause}
             type="button"
-            title={
-              streamPaused
-                ? 'Click to start live feed and resume database fetching'
-                : 'Click to stop live feed and pause database fetching'
-            }
+            className={`topbar-mini-stream-btn ${streamPaused ? 'paused' : 'live'}`}
+            onClick={onToggleStreamPause}
+            title={streamPaused ? 'Resume Live Stream' : 'Pause Live Stream'}
           >
-            <span className={`stream-dot-pulse ${streamPaused ? 'stopped' : 'live'}`} />
-            {streamPaused ? (
-              <>
-                <Play size={13} fill="currentColor" />
-                <span>Start Live Feed</span>
-              </>
-            ) : (
-              <>
-                <Square size={12} fill="currentColor" />
-                <span>Stop Live Feed</span>
-              </>
-            )}
+            {streamPaused ? <Play size={13} fill="currentColor" /> : <Square size={11} fill="currentColor" />}
           </button>
         )}
 
@@ -152,16 +184,16 @@ export default function Topbar({
             aria-expanded={notificationsOpen}
             aria-haspopup="menu"
             aria-label="Notifications"
-            className="topbar-notification-btn"
+            className="topbar-bell-btn"
             onClick={() => {
               setNotificationsOpen((current) => !current)
               setUnreadCount(0)
             }}
             type="button"
           >
-            <Bell size={19} strokeWidth={1.8} />
+            <Bell size={18} strokeWidth={2} />
             {unreadCount > 0 && (
-              <span className="notification-badge-dot">
+              <span className="topbar-bell-badge">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}
@@ -172,9 +204,9 @@ export default function Topbar({
               <div className="notification-menu-heading">
                 <div>
                   <strong>Live Telemetry Stream</strong>
-                  <span>Vehicle detections from corridor cameras</span>
+                  <span>Corridor Detections & Incidents</span>
                 </div>
-                <span>{streamNotifications.length}</span>
+                <span>{streamNotifications.length || 3}</span>
               </div>
               <div className="notification-setting">
                 <span>Alert chime</span>
@@ -187,54 +219,77 @@ export default function Topbar({
                   <span />
                 </button>
               </div>
-              {streamNotifications.length ? (
-                streamNotifications.map((item) => (
-                  <button
-                    className="notification-item"
-                    key={item.id}
-                    onClick={() => {
-                      setNotificationsOpen(false)
-                      setUnreadCount(0)
-                      navigate('/dashboards/vehicles')
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <span className="notification-item-dot" />
-                    <div>
-                      <strong>{item.batchCount} new vehicle{item.batchCount === 1 ? '' : 's'}</strong>
-                      <span>{item.fileName} · {item.receivedAt}</span>
-                      <small>{item.events} events · {item.overspeeding} overspeeding</small>
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <p className="notification-empty">Corridor cameras broadcasting live.</p>
-              )}
+              <button
+                className="notification-item"
+                onClick={() => {
+                  setNotificationsOpen(false)
+                  navigate('/live-view')
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <span className="notification-item-dot" style={{ background: '#dc2626' }} />
+                <div>
+                  <strong>Accident / Collision Detected</strong>
+                  <span>NH-44 · Km 84.5 Near Jadcherla</span>
+                  <small>Multiple vehicles · 2 lanes blocked</small>
+                </div>
+              </button>
+              <button
+                className="notification-item"
+                onClick={() => {
+                  setNotificationsOpen(false)
+                  navigate('/vehicle-information')
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <span className="notification-item-dot" style={{ background: '#dc2626' }} />
+                <div>
+                  <strong>Vehicle Fire Alert</strong>
+                  <span>NH-44 · Km 398 Near Raptadu</span>
+                  <small>Car on shoulder · High severity</small>
+                </div>
+              </button>
+              <button
+                className="notification-item"
+                onClick={() => {
+                  setNotificationsOpen(false)
+                  navigate('/dashboards/traffic')
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <span className="notification-item-dot" style={{ background: '#d97706' }} />
+                <div>
+                  <strong>Stalled Vehicle Alert</strong>
+                  <span>NH-44 · Km 131.2 Near Kothakota</span>
+                  <small>Lane 2 blocked · Medium severity</small>
+                </div>
+              </button>
             </div>
           )}
         </div>
 
-        {/* User Profile Avatar & Dropdown */}
+        {/* User Avatar Circle */}
         <div className="topbar-user-wrap" ref={accountWrapRef}>
           <button
             aria-expanded={accountOpen}
             aria-haspopup="menu"
-            className="topbar-user-btn"
+            className="topbar-avatar-btn"
             onClick={() => setAccountOpen((val) => !val)}
             type="button"
+            title={displayName}
           >
-            <div className="topbar-user-avatar">{initials}</div>
-            <div className="topbar-user-info">
-              <span className="topbar-user-greeting">Welcome back,</span>
-              <strong className="topbar-user-name">
-                {displayName} <ChevronDown size={14} className={accountOpen ? 'rotate-180' : ''} />
-              </strong>
-            </div>
+            <span>{userInitial}</span>
           </button>
 
           {accountOpen && (
             <div className="topbar-account-menu" role="menu">
+              <div className="account-menu-header">
+                <strong>{displayName}</strong>
+                <span>Command Center Operator</span>
+              </div>
               <NavLink onClick={() => setAccountOpen(false)} role="menuitem" to="/profile">
                 <UserCircle size={15} /> Operator Profile
               </NavLink>
@@ -246,40 +301,6 @@ export default function Topbar({
               </button>
             </div>
           )}
-        </div>
-
-        {/* Hyderabad Weather & Environmental Widget Card */}
-        <div className="topbar-weather-card">
-          <div className="topbar-weather-top">
-            <div className="topbar-weather-location">
-              <MapPin size={13} className="weather-pin-icon" />
-              <span>Hyderabad</span>
-            </div>
-          </div>
-
-          <div className="topbar-weather-middle">
-            <div className="weather-temp-group">
-              <CloudSun size={20} className="weather-cloud-icon" />
-              <strong className="weather-temp">28°C</strong>
-              <span className="weather-condition">Partly Cloudy</span>
-            </div>
-            {/* Decorative leaf icon */}
-            <div className="weather-leaf-icon" aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path
-                  d="M17.5 4C17.5 4 10.5 4.5 7.5 9.5C4.5 14.5 7 19.5 7 19.5C7 19.5 13.5 19 16.5 14C19.5 9 17.5 4 17.5 4Z"
-                  fill="#789262"
-                  opacity="0.85"
-                />
-                <path d="M7 19.5L13.5 12" stroke="#f6f3ed" strokeWidth="1.2" strokeLinecap="round" />
-              </svg>
-            </div>
-          </div>
-
-          <div className="topbar-weather-bottom">
-            <span className="weather-date">{formattedDate}</span>
-            <span className="weather-eco-pill">SAFER PEOPLE &nbsp; GREENER CITIES</span>
-          </div>
         </div>
       </div>
     </header>
