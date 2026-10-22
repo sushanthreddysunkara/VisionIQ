@@ -325,32 +325,34 @@ export default function DashboardDetail({
       </div>
 
       {/* ── TOP HORIZONTAL DASHBOARD SELECTOR TABS ── */}
-      <div className="tr-tab-row" style={{ marginTop: '16px', marginBottom: '22px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-        <Link
-          to="/dashboards/corridors"
-          className={`tr-tab-btn ${kind === 'corridors' ? 'active' : ''}`}
-          style={{ textDecoration: 'none' }}
-        >
-          <Navigation size={15} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }} />
-          Corridors Performance (19 Corridors)
-        </Link>
-        <Link
-          to="/dashboards/traffic"
-          className={`tr-tab-btn ${kind === 'traffic' || kind === 'vehicles' ? 'active' : ''}`}
-          style={{ textDecoration: 'none' }}
-        >
-          <Gauge size={15} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }} />
-          Traffic Flow & Speeds
-        </Link>
-        <Link
-          to="/dashboards/cameras"
-          className={`tr-tab-btn ${kind === 'cameras' ? 'active' : ''}`}
-          style={{ textDecoration: 'none' }}
-        >
-          <Camera size={15} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }} />
-          Camera Network
-        </Link>
-      </div>
+      {kind !== 'cameras' && (
+        <div className="tr-tab-row" style={{ marginTop: '16px', marginBottom: '22px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <Link
+            to="/dashboards/corridors"
+            className={`tr-tab-btn ${kind === 'corridors' ? 'active' : ''}`}
+            style={{ textDecoration: 'none' }}
+          >
+            <Navigation size={15} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }} />
+            Corridors Performance (19 Corridors)
+          </Link>
+          <Link
+            to="/dashboards/traffic"
+            className={`tr-tab-btn ${kind === 'traffic' || kind === 'vehicles' ? 'active' : ''}`}
+            style={{ textDecoration: 'none' }}
+          >
+            <Gauge size={15} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }} />
+            Traffic Flow & Speeds
+          </Link>
+          <Link
+            to="/dashboards/cameras"
+            className={`tr-tab-btn ${kind === 'cameras' ? 'active' : ''}`}
+            style={{ textDecoration: 'none' }}
+          >
+            <Camera size={15} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }} />
+            Camera Network
+          </Link>
+        </div>
+      )}
 
       {kind === 'corridors' ? (
         <div style={{ marginTop: '10px' }}>
