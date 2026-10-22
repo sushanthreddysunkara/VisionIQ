@@ -366,6 +366,31 @@ const transactionLogs = [
   },
 ]
 
+function resolveTollRate(vehicleType, tollRates) {
+  const value = String(vehicleType || '').trim().toLowerCase()
+  const normalizedValue = value.replace(/[^a-z0-9]/g, '')
+  const normalizedRates = tollRates.map((rate) => ({
+    ...rate,
+    normalizedClass: String(rate.vehicleClass || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+  }))
+  const exactMatch = normalizedRates.find((rate) => rate.normalizedClass === normalizedValue)
+  if (exactMatch) return exactMatch
+
+  const aliases = [
+    ['truck', /truck|lorry|multi.?axle|heavy/],
+    ['bus', /bus|coach/],
+    ['lcv', /lcv|light commercial/],
+    ['suv', /suv|jeep/],
+    ['car', /car|sedan|hatchback/],
+    ['auto', /auto|rickshaw/],
+  ]
+  const matchedAlias = aliases.find(([, pattern]) => pattern.test(value))?.[0]
+  const classMatch = matchedAlias && normalizedRates.find(
+    (rate) => rate.normalizedClass === matchedAlias.replace(/[^a-z0-9]/g, ''),
+  )
+  return classMatch || normalizedRates.find((rate) => rate.normalizedClass === 'default') || null
+}
+
 export default function TollRevenuePage({
   rows = [],
   streamPaused = false,
@@ -391,12 +416,36 @@ export default function TollRevenuePage({
   const [totalFeeSum, setTotalFeeSum] = useState(0)
   const [latestLiveIngest, setLatestLiveIngest] = useState(null)
   const [liveTxnList, setLiveTxnList] = useState(transactionLogs)
+  const [tollRates, setTollRates] = useState([])
+  const [tollRateError, setTollRateError] = useState('')
+
+  useEffect(() => {
+    let isCurrent = true
+    fetch('/api/toll-rates')
+      .then(async (response) => {
+        const data = await response.json()
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || 'Unable to load toll rates.')
+        }
+        return data.rates
+      })
+      .then((rates) => {
+        if (!isCurrent) return
+        setTollRates(Array.isArray(rates) ? rates : [])
+        setTollRateError('')
+      })
+      .catch((error) => {
+        if (isCurrent) setTollRateError(error.message || 'Unable to load toll rates from MySQL.')
+      })
+
+    return () => { isCurrent = false }
+  }, [])
 
   // Live Stream Looping Effect (Connected to DB records & Socket stream)
   const isStreamActive = !streamPaused
 
   useEffect(() => {
-    if (!isStreamActive) return
+    if (!isStreamActive || !tollRates.length) return
     const interval = setInterval(() => {
       setStreamTickCount((prev) => prev + 1)
       setLiveStreamIndex((prev) => {
@@ -408,8 +457,9 @@ export default function TollRevenuePage({
           speed: 45 + (prev % 35),
         }
 
-        const fees = { Car: 135, Bus: 280, Truck: 410, Auto: 80, LCV: 210, SUV: 135 }
-        const feeAmt = fees[sampleRow.vehicleType] || 135
+        const rate = resolveTollRate(sampleRow.vehicleType, tollRates)
+        if (!rate) return nextIdx
+        const feeAmt = Number(rate.amount)
         const laneNum = (prev % 6) + 1
 
         setTotalFeeSum((prevFee) => prevFee + feeAmt)
@@ -442,7 +492,7 @@ export default function TollRevenuePage({
     }, 2400)
 
     return () => clearInterval(interval)
-  }, [isStreamActive, rows])
+  }, [isStreamActive, rows, tollRates])
 
   const activeStreamCount = 41290 + streamTickCount
   const rawRevenueNum = 12800000 + totalFeeSum
@@ -542,6 +592,9 @@ export default function TollRevenuePage({
               'AI-driven pattern detection for shift-level revenue leakage anomalies.'}
             {activeTab === 'Database Records' &&
               'Inspect all 7,044 vehicle telemetry events, ANPR confidence scores & FASTag fields stored in MySQL.'}
+          </p>
+          <p role="status" style={{ margin: '6px 0 0', color: tollRateError ? '#b42318' : '#667891', fontSize: '11px' }}>
+            {tollRateError || (tollRates.length ? `Toll rates loaded from MySQL · ${tollRates.length} vehicle classes` : 'Loading toll rates from MySQL…')}
           </p>
         </div>
 

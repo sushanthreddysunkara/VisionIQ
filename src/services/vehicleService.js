@@ -13,8 +13,8 @@ async function getJson(path, fallback) {
   }
 }
 
-export async function getVehicleIncidents() {
-  const result = await getJson('/api/vehicles/incidents', null)
+export async function getVehicleIncidents(limit = 1000) {
+  const result = await getJson(`/api/vehicles/incidents?limit=${encodeURIComponent(limit)}`, null)
   return result?.incidents || vehicleIncidents
 }
 
@@ -80,18 +80,16 @@ export async function getVehicleTracking(vehicleNumber) {
   if (match) return match
 
   // 2. Query backend search endpoint for database records
-  if (apiBaseUrl) {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/vehicles/search?q=${encodeURIComponent(vehicleNumber)}&limit=15`)
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success && Array.isArray(data.vehicles) && data.vehicles.length) {
-          return buildTrackedVehicleFromRecords(vehicleNumber, data.vehicles)
-        }
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/vehicles/search?q=${encodeURIComponent(vehicleNumber)}&limit=15`)
+    if (response.ok) {
+      const data = await response.json()
+      if (data.success && Array.isArray(data.vehicles) && data.vehicles.length) {
+        return buildTrackedVehicleFromRecords(vehicleNumber, data.vehicles)
       }
-    } catch {
-      // ignore network errors and fallback
     }
+  } catch {
+    // ignore network errors and fallback
   }
 
   // 3. Substring match fallback

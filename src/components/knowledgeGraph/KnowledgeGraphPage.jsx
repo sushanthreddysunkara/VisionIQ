@@ -30,8 +30,10 @@ import {
 } from 'lucide-react'
 import { getCanonicalVehicleDomain, getVehicleMeta, isVehicleTypeMatch } from '../../data/vehicleTypes'
 import MediaPreviewModal from '../MediaPreviewModal'
+import { getNetworkOverview } from '../../services/networkApi'
 
 const QueryPage = lazy(() => import('../QueryPage'))
+const MAX_DATABASE_VEHICLES = 250
 
 // Centralized Node Styling Tokens for Light Enterprise UI
 export const NODE_STYLES = {
@@ -117,6 +119,18 @@ export default function KnowledgeGraphPage({
   const location = useLocation()
   const navigate = useNavigate()
   const shouldHideFilters = hideFilters || isQueryEmbedded
+  const [networkData, setNetworkData] = useState(null)
+  const [networkLoadFailed, setNetworkLoadFailed] = useState(false)
+
+  useEffect(() => {
+    let isCurrent = true
+    getNetworkOverview().then((data) => {
+      if (!isCurrent) return
+      setNetworkData(data)
+      setNetworkLoadFailed(!data)
+    })
+    return () => { isCurrent = false }
+  }, [])
 
   const [activeTab, setActiveTab] = useState(() => {
     if (initialTab === 'query') return 'query'
@@ -215,7 +229,34 @@ export default function KnowledgeGraphPage({
   }, [focusedCamera, focusMode])
 
   const renderedObsIdsRef = useRef(new Set())
-  const firstNeighborsRef = useRef(new Set())
+
+  const databaseGraph = useMemo(() => {
+    if (!networkData) return { nodes: [], edges: [] }
+
+    const entities = [
+      ...(networkData.corridors || []).map((row) => ({ id: row.corridor_id, label: row.corridor_name, category: 'Location', isHub: true, properties: { Route: row.route, 'Length (km)': row.length_km, Status: row.status } })),
+      ...(networkData.zones || []).map((row) => ({ id: row.zone_id, label: row.zone_name, category: 'Location', isHub: true, properties: { 'Corridor ID': row.corridor_id, 'Kilometer marker': row.km_marker, Latitude: row.latitude, Longitude: row.longitude } })),
+      ...(networkData.roadSegments || []).map((row) => ({ id: row.road_segment_id, label: row.segment_name, category: 'Location', properties: { 'Zone ID': row.zone_id, 'KM start': row.km_start, 'KM end': row.km_end, Lanes: row.lanes, 'Speed limit': `${row.speed_limit_kmh} km/h` } })),
+      ...(networkData.cameras || []).map((row) => ({ id: `cam-${row.camera_id}`, label: row.camera_name, category: 'Camera', properties: { 'Camera ID': row.camera_id, 'Zone ID': row.zone_id, Status: row.status, 'Vehicle detections': Number(row.detection_count || 0), 'Latest detection': row.latest_detection_at || 'No detections', Latitude: row.latitude, Longitude: row.longitude } })),
+      ...(networkData.vehicles || []).slice(0, MAX_DATABASE_VEHICLES).map((row) => ({ id: row.vehicle_id, label: row.plate_number, category: 'Observation', vehicleType: row.vehicle_type, properties: { 'Vehicle ID': row.vehicle_id, 'Plate number': row.plate_number, 'Synthetic sample plate': row.plate_is_synthetic, 'Vehicle type': row.vehicle_type, Color: row.vehicle_color } })),
+      ...(networkData.incidents || []).map((row) => ({ id: row.incident_id, label: `${row.incident_type} · ${row.severity}`, category: 'Violation', isCenter: true, properties: { 'Incident ID': row.incident_id, Type: row.incident_type, 'Occurred (IST)': row.occurred_at_ist, Severity: row.severity, Status: row.status, Description: row.description } })),
+      ...(networkData.impactAnalysis || []).map((row) => ({ id: row.impact_id, label: `${row.estimated_delay_min} min delay`, category: 'Entity', properties: { 'Impact ID': row.impact_id, 'Incident ID': row.incident_id, 'Delay (min)': row.estimated_delay_min, 'Queue (km)': row.max_queue_km, 'Flow reduction (%)': row.traffic_flow_reduction_pct, 'Diversion recommended': row.diversion_recommended } })),
+      ...(networkData.riskProfiles || []).map((row) => ({ id: row.risk_profile_id, label: `${row.risk_category} risk · ${row.risk_score_0_100}`, category: 'OperationalStatus', properties: { 'Risk profile ID': row.risk_profile_id, 'Incident ID': row.incident_id, 'Risk score': row.risk_score_0_100, Category: row.risk_category, 'Contributing factors': row.contributing_factors, 'Recommended action': row.recommended_action } })),
+    ]
+    const knownNodeIds = new Set(entities.map((entity) => entity.id))
+    const mapEndpointId = (type, id) => (type === 'Camera' ? `cam-${id}` : id)
+    const nodes = entities.map((entity) => ({ ...entity, ...getNodeColorMeta(entity.category, entity.vehicleType) }))
+    const edges = (networkData.graphEdges || [])
+      .map((edge) => ({
+        id: edge.graph_edge_id,
+        source: mapEndpointId(edge.source_type, edge.source_id),
+        target: mapEndpointId(edge.target_type, edge.target_id),
+        label: edge.relationship,
+        color: '#94a3b8',
+      }))
+      .filter((edge) => knownNodeIds.has(edge.source) && knownNodeIds.has(edge.target))
+    return { nodes, edges }
+  }, [networkData])
 
   // Dynamic active rows based on filters
   const activeRows = useMemo(() => {
@@ -474,13 +515,12 @@ export default function KnowledgeGraphPage({
       return { currentNodes: nodes, currentEdges: edges }
     }
 
-    if (!activeRows || !activeRows.length) {
+    if ((!activeRows || !activeRows.length) && !databaseGraph.nodes.length) {
       return { currentNodes: [], currentEdges: [] }
     }
 
-    const standardDomains = ['Car', 'Bike', 'Truck', 'Auto', 'Van', 'Bus']
     const rowDomains = Array.from(new Set(activeRows.map((r) => getCanonicalVehicleDomain(r.vehicleType || r.type)).filter(Boolean)))
-    const domains = Array.from(new Set([...standardDomains, ...rowDomains]))
+    const domains = rowDomains
     const cameras = Array.from(new Set(activeRows.map((r) => r.camera).filter(Boolean)))
     if (focusMode === 'CAMERA' && focusedCamera && !cameras.includes(focusedCamera)) {
       cameras.push(focusedCamera)
@@ -624,17 +664,14 @@ export default function KnowledgeGraphPage({
         })
       }
 
-      // Secondary edge: ~25% connect to vehicle type domain to form classification spokes
-      if (i % 4 === 0) {
-        edges.push({
-          id: `edge-${edgeIndex++}`,
-          source: obsId,
-          target: `type-${domain}`,
-          label: 'OF_TYPE',
-          isInterCluster: false,
-          color: '#cbd5e1',
-        })
-      }
+      edges.push({
+        id: `edge-${edgeIndex++}`,
+        source: obsId,
+        target: `type-${domain}`,
+        label: 'OF_TYPE',
+        isInterCluster: false,
+        color: '#cbd5e1',
+      })
 
       // If overspeed, link to violation hub
       if (isOver) {
@@ -683,8 +720,20 @@ export default function KnowledgeGraphPage({
       }
     })
 
-    return { currentNodes: nodes, currentEdges: edges }
-  }, [activeRows, focusMode, frozenVehicle, focusedCamera, recordLimit])
+    const mergedNodes = new Map()
+    ;[...nodes, ...databaseGraph.nodes].forEach((node) => {
+      const existing = mergedNodes.get(node.id)
+      mergedNodes.set(node.id, existing
+        ? { ...existing, ...node, properties: { ...existing.properties, ...node.properties } }
+        : node)
+    })
+    const mergedEdges = new Map([...edges, ...databaseGraph.edges].map((edge) => [edge.id, edge]))
+
+    return {
+      currentNodes: Array.from(mergedNodes.values()),
+      currentEdges: Array.from(mergedEdges.values()),
+    }
+  }, [activeRows, focusMode, frozenVehicle, focusedCamera, recordLimit, databaseGraph])
 
   const visibleNodes = useMemo(() => {
     if (focusMode === 'VEHICLE') return currentNodes
@@ -766,7 +815,7 @@ export default function KnowledgeGraphPage({
       edgeElasticity: (edge) => (edge.data('isInterCluster') ? 18 : 65),
       nestingFactor: 1.2,
       gravity: 0.22,
-      numIter: 1200,
+      numIter: 250,
       initialTemp: 250,
       coolingFactor: 0.95,
       stop: () => {
@@ -787,6 +836,15 @@ export default function KnowledgeGraphPage({
   // Cytoscape Canvas Initialization
   useEffect(() => {
     if (!containerRef.current) return
+
+    let animationFrameId
+    let lastAnimationTime = 0
+    let animationTick = 0
+    let wavePhase = 0
+    let draggedNode = null
+    let lastDragPosition = null
+    let connectedNodeMap = null
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
     const elements = [
       ...visibleNodes.map((n) => ({
@@ -947,174 +1005,164 @@ export default function KnowledgeGraphPage({
       ],
     })
 
-    // ─── AMBIENT WATER WAVE FLOATING & FLUID DRAG ANIMATION ───────────
-    let animId = null
-    let angle = 0
-    let draggedNode = null
-    let dragStartPos = null
-    let isDragging = false
-    let dragVelocity = { x: 0, y: 0 }
-    let connectedNodeMap = null // Map<nodeId, { node, depth, targetPos: {x,y} }>
+    const captureBasePositions = () => {
+      cy.nodes().forEach((node) => {
+        const position = node.position()
+        node.scratch('_floatBase', {
+          x: position.x,
+          y: position.y,
+          phase: Math.random() * Math.PI * 2,
+        })
+      })
+    }
 
-    function floatNodesLikeWater() {
-      angle += 0.035
-      if (cyRef.current && typeof cyRef.current.batch === 'function') {
-        try {
-          if (!cyRef.current.destroyed || !cyRef.current.destroyed()) {
-            cyRef.current.batch(() => {
-              // 1. FLUID DRAGGING PHYSICS: Lerp connected nodes with liquid inertia lag
-              if (isDragging && connectedNodeMap) {
-                const speed = Math.sqrt(dragVelocity.x * dragVelocity.x + dragVelocity.y * dragVelocity.y)
-                connectedNodeMap.forEach((entry) => {
-                  const { node, depth, targetPos } = entry
-                  const p = node.position()
+    cy.on('layoutstop', captureBasePositions)
+    cy.on('grab', 'node', (event) => {
+      draggedNode = event.target
+      lastDragPosition = draggedNode.position()
+      draggedNode.scratch('_floatPaused', true)
+      connectedNodeMap = new Map()
 
-                  // Lerp factor decreases with depth -> realistic fluid drag inertia / underwater rope lag
-                  const lerpFactor = Math.max(0.12, 0.38 * Math.pow(0.72, depth - 1))
-                  const nextX = p.x + (targetPos.x - p.x) * lerpFactor
-                  const nextY = p.y + (targetPos.y - p.y) * lerpFactor
-
-                  // Dynamic lateral water ripple wake created by moving through liquid
-                  const ripple = Math.sin(angle * 4.2 + depth * 1.4) * Math.min(speed * 0.7, 8)
-                  const rippleY = Math.cos(angle * 3.6 + depth * 1.4) * Math.min(speed * 0.7, 8)
-
-                  node.position({ x: nextX + ripple, y: nextY + rippleY })
-                  node.scratch('_basePos', { x: targetPos.x, y: targetPos.y, phase: node.scratch('_basePos')?.phase || 0 })
-                })
-                // Gradually dampen drag velocity vector
-                dragVelocity.x *= 0.8
-                dragVelocity.y *= 0.8
-              }
-
-              // 2. AMBIENT WATER BOBBING: Floating un-dragged nodes like objects in calm water
-              cyRef.current.nodes().forEach((node) => {
-                if (node === draggedNode) return
-                if (isDragging && connectedNodeMap && connectedNodeMap.has(node.id())) return
-
-                let base = node.scratch('_basePos')
-                if (!base) {
-                  const p = node.position()
-                  base = { x: p.x, y: p.y, phase: Math.random() * Math.PI * 2 }
-                  node.scratch('_basePos', base)
-                }
-                const dx = Math.sin(angle + base.phase) * 3.2
-                const dy = Math.cos(angle * 0.75 + base.phase * 1.3) * 4.0
-                node.position({ x: base.x + dx, y: base.y + dy })
-              })
-
-              // 3. WAVY THREAD LINES: Oscillating silk thread links under water tension
-              const threadAmp = isDragging ? 32 : 16
-              cyRef.current.edges().forEach((edge) => {
-                let phase = edge.scratch('_edgePhase')
-                if (phase === undefined) {
-                  phase = Math.random() * Math.PI * 2
-                  edge.scratch('_edgePhase', phase)
-                }
-                const waveOffset = Math.sin(angle * 1.8 + phase) * threadAmp + Math.cos(angle * 1.1 + phase * 1.4) * (threadAmp * 0.6)
-                edge.style('control-point-distances', [waveOffset])
-              })
-            })
-          }
-        } catch {
-          // ignore batch error if destroyed
+      const queue = [{ node: draggedNode, depth: 0 }]
+      const visited = new Set([draggedNode.id()])
+      for (let index = 0; index < queue.length; index += 1) {
+        const { node, depth } = queue[index]
+        if (depth > 0) {
+          const position = node.position()
+          connectedNodeMap.set(node.id(), {
+            node,
+            depth,
+            origin: { x: position.x, y: position.y },
+          })
         }
+        node.neighborhood('node').forEach((neighbor) => {
+          if (!visited.has(neighbor.id())) {
+            visited.add(neighbor.id())
+            queue.push({ node: neighbor, depth: depth + 1 })
+          }
+        })
       }
-      animId = requestAnimationFrame(floatNodesLikeWater)
+    })
+
+    cy.on('drag', 'node', (event) => {
+      if (event.target !== draggedNode || !lastDragPosition || !connectedNodeMap) return
+
+      const currentPosition = draggedNode.position()
+      const deltaX = currentPosition.x - lastDragPosition.x
+      const deltaY = currentPosition.y - lastDragPosition.y
+      lastDragPosition = { x: currentPosition.x, y: currentPosition.y }
+
+      cy.batch(() => {
+        connectedNodeMap.forEach(({ node, depth, origin }) => {
+          const followWeight = Math.max(0.12, 0.82 * Math.pow(0.72, depth - 1))
+          const position = node.position()
+          const nextPosition = {
+            x: position.x + deltaX * followWeight,
+            y: position.y + deltaY * followWeight,
+          }
+          node.position(nextPosition)
+          origin.x += deltaX * followWeight
+          origin.y += deltaY * followWeight
+        })
+      })
+    })
+
+    cy.on('free', 'node', (event) => {
+      const releasedNode = event.target
+      const position = releasedNode.position()
+      releasedNode.scratch('_floatBase', {
+        x: position.x,
+        y: position.y,
+        phase: Math.random() * Math.PI * 2,
+      })
+      releasedNode.scratch('_floatPaused', false)
+
+      connectedNodeMap?.forEach(({ node }) => {
+        const settledPosition = node.position()
+        node.scratch('_floatBase', {
+          x: settledPosition.x,
+          y: settledPosition.y,
+          phase: node.scratch('_floatBase')?.phase || Math.random() * Math.PI * 2,
+        })
+      })
+      draggedNode = null
+      lastDragPosition = null
+      connectedNodeMap = null
+    })
+
+    function animateGraph(timestamp) {
+      animationFrameId = requestAnimationFrame(animateGraph)
+      if (
+        reducedMotion ||
+        document.hidden ||
+        !containerRef.current?.getClientRects().length ||
+        timestamp - lastAnimationTime < 50 ||
+        cy.destroyed()
+      ) {
+        return
+      }
+
+      lastAnimationTime = timestamp
+      wavePhase += 0.08
+      animationTick += 1
+      cy.batch(() => {
+        connectedNodeMap?.forEach(({ node, depth, origin }) => {
+          const wave = Math.sin(wavePhase * 1.7 + depth * 1.2) * Math.min(5, 1.5 + depth)
+          const target = {
+            x: origin.x + wave,
+            y: origin.y + Math.cos(wavePhase * 1.4 + depth) * Math.min(5, 1.5 + depth),
+          }
+          const position = node.position()
+          const easing = depth === 1 ? 0.38 : 0.25
+          node.position({
+            x: position.x + (target.x - position.x) * easing,
+            y: position.y + (target.y - position.y) * easing,
+          })
+        })
+
+        cy.nodes().forEach((node) => {
+          if (node === draggedNode || connectedNodeMap?.has(node.id())) return
+          if (node.scratch('_floatPaused')) return
+          let base = node.scratch('_floatBase')
+          if (!base) {
+            const position = node.position()
+            base = { x: position.x, y: position.y, phase: Math.random() * Math.PI * 2 }
+            node.scratch('_floatBase', base)
+          }
+          node.position({
+            x: base.x + Math.sin(wavePhase + base.phase) * 2.5,
+            y: base.y + Math.cos(wavePhase * 0.75 + base.phase) * 3.5,
+          })
+        })
+
+        if (animationTick % 2 === 0) {
+          cy.edges().forEach((edge) => {
+            let phase = edge.scratch('_wavePhase')
+            if (phase === undefined) {
+              phase = Math.random() * Math.PI * 2
+              edge.scratch('_wavePhase', phase)
+            }
+            const offset = Math.sin(wavePhase + phase) * 10
+            edge.style('control-point-distances', [offset])
+          })
+        }
+      })
     }
 
     cy.ready(() => {
-      cy.nodes().forEach((n) => {
-        const p = n.position()
-        n.scratch('_basePos', { x: p.x, y: p.y, phase: Math.random() * Math.PI * 2 })
-      })
+      captureBasePositions()
       cy.animate({
         fit: { eles: cy.elements(), padding: 60 },
         duration: 350,
       })
       setZoomPercent(Math.round(cy.zoom() * 100))
-      animId = requestAnimationFrame(floatNodesLikeWater)
+      if (!reducedMotion) animationFrameId = requestAnimationFrame(animateGraph)
     })
 
     cy.on('zoom pan', () => {
       if (cy && typeof cy.zoom === 'function') {
         setZoomPercent(Math.round(cy.zoom() * 100))
       }
-    })
-
-    // ─── SYNCHRONIZED LIQUID DRAGGING: WATER DRAG INERTIA & BFS RIPPLE ───
-    cy.on('grab', 'node', (evt) => {
-      draggedNode = evt.target
-      dragStartPos = { ...draggedNode.position() }
-      isDragging = true
-      dragVelocity = { x: 0, y: 0 }
-
-      // Breadth-First Search to find all connected nodes & initialize target positions
-      connectedNodeMap = new Map()
-      const queue = [{ node: draggedNode, depth: 0 }]
-      const visited = new Set([draggedNode.id()])
-
-      while (queue.length > 0) {
-        const { node, depth } = queue.shift()
-        if (depth > 0) {
-          const p = node.position()
-          connectedNodeMap.set(node.id(), {
-            node,
-            depth,
-            targetPos: { x: p.x, y: p.y },
-          })
-        }
-        const neighbors = node.neighborhood('node')
-        neighbors.forEach((nb) => {
-          if (!visited.has(nb.id())) {
-            visited.add(nb.id())
-            queue.push({ node: nb, depth: depth + 1 })
-          }
-        })
-      }
-
-      firstNeighborsRef.current = visited
-    })
-
-    cy.on('drag', 'node', (evt) => {
-      if (!draggedNode || !dragStartPos || !connectedNodeMap) return
-      const currPos = draggedNode.position()
-      const dx = currPos.x - dragStartPos.x
-      const dy = currPos.y - dragStartPos.y
-      dragStartPos = { ...currPos }
-      dragVelocity = { x: dx, y: dy }
-
-      draggedNode.scratch('_basePos', {
-        x: currPos.x,
-        y: currPos.y,
-        phase: draggedNode.scratch('_basePos')?.phase || 0,
-      })
-
-      // Shift target positions according to water drag attenuation weight
-      connectedNodeMap.forEach((entry) => {
-        const { depth } = entry
-        const weight = Math.max(0.08, 0.85 * Math.pow(0.72, depth - 1))
-        entry.targetPos.x += dx * weight
-        entry.targetPos.y += dy * weight
-      })
-    })
-
-    cy.on('free', 'node', (evt) => {
-      const n = evt.target
-      const p = n.position()
-      n.scratch('_basePos', { x: p.x, y: p.y, phase: n.scratch('_basePos')?.phase || Math.random() * Math.PI * 2 })
-
-      if (connectedNodeMap) {
-        connectedNodeMap.forEach(({ node, targetPos }) => {
-          node.scratch('_basePos', { x: targetPos.x, y: targetPos.y, phase: node.scratch('_basePos')?.phase || Math.random() * Math.PI * 2 })
-        })
-      }
-
-      isDragging = false
-      dragVelocity = { x: 0, y: 0 }
-      draggedNode = null
-      dragStartPos = null
-      connectedNodeMap = null
-      firstNeighborsRef.current = new Set()
     })
 
     // ─── HOVERED NODE — 4× EDGE THICKNESS ─────────────────────────────
@@ -1188,7 +1236,7 @@ export default function KnowledgeGraphPage({
     cyRef.current = cy
 
     return () => {
-      if (animId) cancelAnimationFrame(animId)
+      if (animationFrameId) cancelAnimationFrame(animationFrameId)
       try {
         if (cy && typeof cy.destroyed === 'function' && !cy.destroyed()) {
           cy.destroy()
@@ -1641,6 +1689,15 @@ export default function KnowledgeGraphPage({
           <span className="kg-status-item">
             Edges: <strong>{visibleEdges.length}</strong>
           </span>
+          {networkData?.vehicles?.length > MAX_DATABASE_VEHICLES && (
+            <>
+              <span className="kg-status-divider" />
+              <span className="kg-status-item" title="The graph preview is capped to keep the page responsive.">
+                Preview: first <strong>{MAX_DATABASE_VEHICLES}</strong> of{' '}
+                <strong>{networkData.vehicles.length}</strong> database vehicles
+              </span>
+            </>
+          )}
         </div>
 
         <div className="kg-status-right">

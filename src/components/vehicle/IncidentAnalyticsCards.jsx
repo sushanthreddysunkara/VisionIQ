@@ -23,9 +23,33 @@ import {
   YAxis,
 } from 'recharts'
 
-export default function IncidentAnalyticsCards({ vehicles = [] }) {
+export default function IncidentAnalyticsCards({ vehicles = [], incident = null }) {
   // Dynamically calculate counts by type from active vehicle records
   const typesData = useMemo(() => {
+    if (incident) {
+      const impactFactors = incident.impactBreakdown?.length
+        ? incident.impactBreakdown
+        : (incident.categories || []).map((label, index, categories) => ({
+          name: label,
+          value: Math.round(100 / categories.length),
+        }))
+      const iconForFactor = (label) => {
+        if (/fire/i.test(label)) return Flame
+        if (/weather|rain/i.test(label)) return CloudRain
+        if (/road|lane/i.test(label)) return Wrench
+        if (/vehicle|merge/i.test(label)) return Truck
+        if (/speed/i.test(label)) return Zap
+        return AlertTriangle
+      }
+      const colors = ['#dc2626', '#ea580c', '#2563eb', '#f59e0b', '#0284c7']
+      return impactFactors.map((factor, index) => ({
+        label: factor.name,
+        count: factor.value,
+        icon: iconForFactor(factor.name),
+        color: colors[index % colors.length],
+      }))
+    }
+
     let accidentCount = 0
     let fireCount = 0
     let stalledCount = 0
@@ -64,7 +88,7 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
       { label: 'Weather / Rain', count: weatherCount, icon: CloudRain, color: '#0284c7' },
       { label: 'Other Hazards', count: othersCount, icon: MoreHorizontal, color: '#94a3b8' },
     ]
-  }, [vehicles])
+  }, [vehicles, incident])
 
   const maxTypeCount = useMemo(() => {
     return Math.max(...typesData.map((t) => t.count), 6)
@@ -72,6 +96,16 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
 
   // Dynamically calculate severity distribution from active vehicle records
   const severityData = useMemo(() => {
+    if (incident) {
+      const severity = (incident.severity || 'low').toLowerCase()
+      return [
+        { name: 'High', value: severity === 'high' || severity === 'critical' ? 1 : 0, percentage: severity === 'high' || severity === 'critical' ? '100%' : '0%', color: '#ef4444' },
+        { name: 'Medium', value: severity === 'medium' ? 1 : 0, percentage: severity === 'medium' ? '100%' : '0%', color: '#f59e0b' },
+        { name: 'Low', value: severity === 'low' ? 1 : 0, percentage: severity === 'low' ? '100%' : '0%', color: '#10b981' },
+        { name: 'Info', value: 0, percentage: '0%', color: '#94a3b8' },
+      ]
+    }
+
     let high = 0
     let medium = 0
     let low = 0
@@ -104,7 +138,7 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
       { name: 'Low', value: low, percentage: `${Math.round((low / total) * 100)}%`, color: '#10b981' },
       { name: 'Info', value: info, percentage: `${Math.round((info / total) * 100)}%`, color: '#94a3b8' },
     ]
-  }, [vehicles])
+  }, [vehicles, incident])
 
   const totalSeverity = useMemo(() => {
     return severityData.reduce((acc, curr) => acc + curr.value, 0)
@@ -112,6 +146,14 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
 
   // Dynamically calculate trend over time intervals with active record count
   const trendData = useMemo(() => {
+    if (incident?.queueTrend?.length) {
+      return incident.queueTrend.map((point) => ({
+        time: point.time,
+        speed: point.speed,
+        queue: point.queue,
+      }))
+    }
+
     const vCount = Math.max(vehicles.length, 3)
     return [
       { time: '03:00', total: 2, high: 1, medium: 1, low: 0 },
@@ -120,7 +162,7 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
       { time: '09:00', total: 10, high: 4, medium: 4, low: 2 },
       { time: '11:00', total: 10 + vCount, high: 4 + Math.round(vCount * 0.5), medium: 3 + Math.round(vCount * 0.3), low: 3 + Math.round(vCount * 0.2) },
     ]
-  }, [vehicles])
+  }, [vehicles, incident])
 
   return (
     <div className="incident-analytics-row">
@@ -128,8 +170,8 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
       <section className="analytics-card type-card" aria-label="Incidents by Type">
         <header className="analytics-card-header">
           <div className="card-header-titles">
-            <h3>Incidents by Type</h3>
-            <span className="live-stat-caption">Auto-updating · {vehicles.length} Active Targets</span>
+            <h3>{incident ? 'Incident Impact Drivers' : 'Incidents by Type'}</h3>
+            <span className="live-stat-caption">{incident ? `${incident.id} · ${incident.location}` : `Auto-updating · ${vehicles.length} Active Targets`}</span>
           </div>
         </header>
 
@@ -149,7 +191,7 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
                     style={{ width: `${pct}%`, backgroundColor: item.color }}
                   />
                 </div>
-                <strong className="incident-count-val">{item.count}</strong>
+                <strong className="incident-count-val">{incident ? `${item.count}%` : item.count}</strong>
               </div>
             )
           })}
@@ -160,8 +202,8 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
       <section className="analytics-card severity-card" aria-label="Incidents by Severity">
         <header className="analytics-card-header">
           <div className="card-header-titles">
-            <h3>Incidents by Severity</h3>
-            <span className="live-stat-caption">Live Breakdown</span>
+            <h3>{incident ? 'Selected Incident Severity' : 'Incidents by Severity'}</h3>
+            <span className="live-stat-caption">{incident ? `${incident.id} severity classification` : 'Live Breakdown'}</span>
           </div>
         </header>
 
@@ -197,7 +239,7 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
             </ResponsiveContainer>
             <div className="donut-center-badge">
               <span className="donut-number">{totalSeverity}</span>
-              <span className="donut-label">Total Recorded</span>
+              <span className="donut-label">{incident ? 'Selected' : 'Total Recorded'}</span>
             </div>
           </div>
 
@@ -218,20 +260,29 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
       <section className="analytics-card trend-card" aria-label="Incident Trend">
         <header className="analytics-card-header">
           <div className="trend-title-wrap">
-            <h3>Incident Trend</h3>
-            <span className="trend-sub-caption">Cumulative Timeline</span>
+            <h3>{incident ? 'Speed & Queue Trend' : 'Incident Trend'}</h3>
+            <span className="trend-sub-caption">{incident ? `${incident.location} · incident profile` : 'Cumulative Timeline'}</span>
           </div>
           <div className="trend-legend-pills">
-            <span className="trend-pill pill-total"><i /> Total</span>
-            <span className="trend-pill pill-high"><i /> High</span>
-            <span className="trend-pill pill-medium"><i /> Med</span>
-            <span className="trend-pill pill-low"><i /> Low</span>
+            {incident ? (
+              <>
+                <span className="trend-pill pill-total"><i /> Speed</span>
+                <span className="trend-pill pill-high"><i /> Queue</span>
+              </>
+            ) : (
+              <>
+                <span className="trend-pill pill-total"><i /> Total</span>
+                <span className="trend-pill pill-high"><i /> High</span>
+                <span className="trend-pill pill-medium"><i /> Med</span>
+                <span className="trend-pill pill-low"><i /> Low</span>
+              </>
+            )}
           </div>
         </header>
 
         <div className="trend-chart-container">
           <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={trendData} margin={{ top: 10, right: 12, left: -24, bottom: 0 }}>
+              <LineChart data={trendData} margin={{ top: 10, right: 12, left: -24, bottom: 0 }}>
               <XAxis
                 dataKey="time"
                 tick={{ fontSize: 9, fill: '#64748b' }}
@@ -253,35 +304,19 @@ export default function IncidentAnalyticsCards({ vehicles = [] }) {
                   fontSize: '11px',
                 }}
               />
-              <Line
-                type="monotone"
-                dataKey="total"
-                stroke="#2563eb"
-                strokeWidth={2.2}
-                dot={{ r: 3, fill: '#2563eb' }}
-                activeDot={{ r: 5 }}
-              />
-              <Line
-                type="monotone"
-                dataKey="high"
-                stroke="#ef4444"
-                strokeWidth={1.8}
-                dot={{ r: 2.5, fill: '#ef4444' }}
-              />
-              <Line
-                type="monotone"
-                dataKey="medium"
-                stroke="#f59e0b"
-                strokeWidth={1.8}
-                dot={{ r: 2.5, fill: '#f59e0b' }}
-              />
-              <Line
-                type="monotone"
-                dataKey="low"
-                stroke="#10b981"
-                strokeWidth={1.8}
-                dot={{ r: 2.5, fill: '#10b981' }}
-              />
+              {incident ? (
+                <>
+                  <Line type="monotone" dataKey="speed" stroke="#2563eb" strokeWidth={2.2} dot={{ r: 3, fill: '#2563eb' }} activeDot={{ r: 5 }} name="Speed (km/h)" />
+                  <Line type="monotone" dataKey="queue" stroke="#ef4444" strokeWidth={2} dot={{ r: 3, fill: '#ef4444' }} name="Queue (km)" />
+                </>
+              ) : (
+                <>
+                  <Line type="monotone" dataKey="total" stroke="#2563eb" strokeWidth={2.2} dot={{ r: 3, fill: '#2563eb' }} activeDot={{ r: 5 }} />
+                  <Line type="monotone" dataKey="high" stroke="#ef4444" strokeWidth={1.8} dot={{ r: 2.5, fill: '#ef4444' }} />
+                  <Line type="monotone" dataKey="medium" stroke="#f59e0b" strokeWidth={1.8} dot={{ r: 2.5, fill: '#f59e0b' }} />
+                  <Line type="monotone" dataKey="low" stroke="#10b981" strokeWidth={1.8} dot={{ r: 2.5, fill: '#10b981' }} />
+                </>
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>
