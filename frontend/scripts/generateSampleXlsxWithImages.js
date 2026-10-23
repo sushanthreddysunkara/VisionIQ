@@ -1,7 +1,11 @@
 import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import zlib from 'zlib'
 import * as XLSX from 'xlsx'
 import JSZip from 'jszip'
+
+const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 function createTrafficPng({
   width = 320,
@@ -155,7 +159,9 @@ function createTrafficPng({
 }
 
 async function main() {
-  const csvText = fs.readFileSync('public/sample_traffic_feed.csv', 'utf8')
+  const csvPath = path.join(frontendDir, 'public', 'sample_traffic_feed.csv')
+  const xlsxPath = path.join(frontendDir, 'public', 'sample_traffic_feed.xlsx')
+  const csvText = fs.readFileSync(csvPath, 'utf8')
   const wb = XLSX.read(csvText, { type: 'string' })
   const xlsxBuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
 
@@ -276,8 +282,8 @@ async function main() {
   zip.file('xl/worksheets/sheet1.xml', sheet1Xml)
 
   const finalBuf = await zip.generateAsync({ type: 'nodebuffer' })
-  fs.writeFileSync('public/sample_traffic_feed.xlsx', finalBuf)
-  console.log('Generated public/sample_traffic_feed.xlsx with', rows.length, 'embedded images! Size:', finalBuf.length)
+  fs.writeFileSync(xlsxPath, finalBuf)
+  console.log('Generated frontend/public/sample_traffic_feed.xlsx with', rows.length, 'embedded images! Size:', finalBuf.length)
 
   // Validate reading with XLSX
   const testWb = XLSX.read(finalBuf, { type: 'buffer' })
