@@ -9,7 +9,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('error', (err, _req, res) => {
@@ -21,7 +21,7 @@ export default defineConfig({
         },
       },
       '/socket.io': {
-        target: 'http://127.0.0.1:5000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         ws: true,
         configure: (proxy) => {
@@ -31,11 +31,11 @@ export default defineConfig({
         },
       },
       '/evidence': {
-        target: 'http://127.0.0.1:5000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/images': {
-        target: 'http://127.0.0.1:5000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },
