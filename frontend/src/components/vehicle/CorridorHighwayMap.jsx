@@ -559,13 +559,13 @@ function MapViewportFly({ targetCoords, zoom }) {
   return null
 }
 
-function MapAutoBoundsFit({ allPositions, triggerFit }) {
+function MapAutoBoundsFit({ allPositions, triggerFit, maxZoom = 11 }) {
   const map = useMap()
   useEffect(() => {
     if (allPositions && allPositions.length > 1) {
-      map.fitBounds(allPositions, { padding: [40, 40], maxZoom: 9, animate: true })
+      map.fitBounds(allPositions, { padding: [35, 35], maxZoom: maxZoom || 11, animate: true })
     }
-  }, [map, triggerFit])
+  }, [map, triggerFit, maxZoom])
   return null
 }
 
@@ -670,10 +670,19 @@ export default function CorridorHighwayMap({
     )
   }, [activeIncident, activeWaypoints])
 
+  const isRing = Boolean(currentCorridorData.isRingRoad || activeCorridorId === 'ORR-HYD')
+
   // All corridor GPS positions for polyline and bounds
   const allPositions = useMemo(() => {
-    return activeWaypoints.map((pt) => [pt.lat, pt.lng])
-  }, [activeWaypoints])
+    if (currentCorridorData.pathCoordinates && currentCorridorData.pathCoordinates.length > 0) {
+      return currentCorridorData.pathCoordinates
+    }
+    const pts = activeWaypoints.map((pt) => [pt.lat, pt.lng])
+    if (isRing && pts.length > 2) {
+      return [...pts, pts[0]]
+    }
+    return pts
+  }, [currentCorridorData, activeWaypoints, isRing])
 
   // Filtered incidents list based on dropdown
   const filteredIncidents = useMemo(() => {
@@ -771,11 +780,11 @@ export default function CorridorHighwayMap({
         {/* Real Leaflet Map Viewport */}
         <div className="corridor-real-map-viewport">
           <MapContainer
-            center={[15.2, 77.9]}
+            center={currentCorridorData.mapCenter || (isRing ? [17.4062, 78.4665] : [15.2, 77.9])}
             className="corridor-real-leaflet-map"
             scrollWheelZoom={false}
             style={{ width: '100%', height: '100%', minHeight: '480px' }}
-            zoom={7}
+            zoom={currentCorridorData.defaultZoom || (isRing ? 10 : 7)}
             zoomControl={false}
           >
             {/* Tile Layer: OpenStreetMap Standard Tiles (same as Vehicle Info page) */}
@@ -785,8 +794,12 @@ export default function CorridorHighwayMap({
             />
 
             {/* Auto fit & fly handlers */}
-            <MapAutoBoundsFit allPositions={allPositions} triggerFit={fitTrigger} />
-            {flyTarget && <MapViewportFly targetCoords={flyTarget} zoom={11} />}
+            <MapAutoBoundsFit
+              allPositions={allPositions}
+              maxZoom={currentCorridorData.defaultZoom || (isRing ? 11 : 9)}
+              triggerFit={fitTrigger}
+            />
+            {flyTarget && <MapViewportFly targetCoords={flyTarget} zoom={currentCorridorData.defaultZoom || 11} />}
 
             {/* Custom Control Buttons in Top-Right */}
             <LeafletCustomControls
@@ -807,11 +820,24 @@ export default function CorridorHighwayMap({
               positions={allPositions}
             />
 
+            {/* 1B. Inner Highway Road Line (Vibrant Highway Blue Accent) */}
+            <Polyline
+              pathOptions={{
+                color: '#1d4ed8',
+                weight: 4,
+                opacity: 0.9,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+              positions={allPositions}
+            />
+
             {/* 2. Speed Telemetry Polylines along the Selected Corridor */}
             {showSpeedLayers &&
               activeWaypoints.map((pt, index) => {
-                if (index === activeWaypoints.length - 1) return null
-                const nextPt = activeWaypoints[index + 1]
+                const isLast = index === activeWaypoints.length - 1
+                if (isLast && !isRing) return null
+                const nextPt = isLast ? activeWaypoints[0] : activeWaypoints[index + 1]
                 const segColor = getSpeedColor(pt.speed || 80)
                 return (
                   <Polyline
@@ -852,7 +878,7 @@ export default function CorridorHighwayMap({
               )
               const hasIncident = hasDirectIncident || hasActiveIncidentMatch
               const incObj = pt.incident || (hasIncident ? activeIncident : null)
-              const isTerminal = pt.isTerminal
+              const isTerminal = pt.isTerminal && !isRing
 
               let pinIcon = null
               if (hasIncident && incObj) {
@@ -866,7 +892,7 @@ export default function CorridorHighwayMap({
               } else if (pt.hasCamera) {
                 pinIcon = getCameraDivIcon()
               } else {
-                pinIcon = getCityNodeDivIcon(pt.name, getSpeedColor(pt.speed || 75), pt.isMajorHub)
+                pinIcon = getCityNodeDivIcon(pt.shortName || pt.name, getSpeedColor(pt.speed || 75), pt.isMajorHub)
               }
 
               return (
@@ -880,7 +906,7 @@ export default function CorridorHighwayMap({
                         onOpenLiveCamera({
                           id: pt.cameraId,
                           name: pt.name,
-                          location: `NH-44 · ${pt.name}`,
+                          location: `${currentCorridorData.shortName || 'Highway'} · ${pt.name}`,
                         })
                       }
                     },
@@ -892,7 +918,7 @@ export default function CorridorHighwayMap({
                   {/* Tooltip on hover */}
                   <Tooltip direction="top" offset={[0, -14]} opacity={0.92}>
                     <div className="corridor-node-tooltip">
-                      <strong>{pt.name}</strong> · Km {pt.km}
+                      <strong>{pt.name}</strong> · {pt.km ? (String(pt.km).startsWith('Km') ? pt.km : `Km ${pt.km}`) : ''}
                       <small>Speed: {pt.speed || 75} km/h</small>
                     </div>
                   </Tooltip>

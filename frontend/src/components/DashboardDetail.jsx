@@ -13,16 +13,13 @@ import {
   Gauge,
   MapPin,
   Navigation,
-  Pause,
   Play,
   Radio,
-  RefreshCw,
   ShieldCheck,
   Trash2,
   TrendingUp,
   Upload,
   Users,
-  Zap,
 } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import {
@@ -125,7 +122,6 @@ export default function DashboardDetail({
   const [cameraFeedOpen, setCameraFeedOpen] = useState(false)
   const [selectedCameraFeed, setSelectedCameraFeed] = useState(null)
   const [inlineCameraFeed, setInlineCameraFeed] = useState(() => cameraFeeds[0] || null)
-  const [isFetchingBatch, setIsFetchingBatch] = useState(false)
   const [cameraForm, setCameraForm] = useState({ name: '', location: '', streamUrl: '' })
 
   const { kind } = useParams()
@@ -240,16 +236,6 @@ export default function DashboardDetail({
     setCameraDialogOpen(false)
   }
 
-  const handleManualBatchClick = async () => {
-    if (!onFetchRandomBatch || isFetchingBatch) return
-    setIsFetchingBatch(true)
-    try {
-      await onFetchRandomBatch()
-    } finally {
-      setTimeout(() => setIsFetchingBatch(false), 500)
-    }
-  }
-
   // Strictly select the latest 12 records for display at the bottom of the dashboard
   const latestTenRows = useMemo(() => {
     if (!safeRows.length) return []
@@ -360,72 +346,6 @@ export default function DashboardDetail({
         </div>
       ) : (
         <>
-      {/* LIVE HIGHWAY TELEMETRY CONTROL BAR */}
-      <div className="nh44-stream-console">
-        <div className="stream-console-status">
-          <div className={`radar-indicator ${streamPaused ? 'paused' : 'active'}`}>
-            <span className="radar-ring" />
-            <span className="radar-dot" />
-          </div>
-          <div className="stream-status-text">
-            <div className="stream-status-title">
-              <strong>{streamPaused ? 'Stream Paused' : 'Live Highway Telemetry Streaming'}</strong>
-              <span className="stream-source-tag">Source: {fileName || 'NH44_vehicles_5000_merged_with_images.xlsx'}</span>
-            </div>
-            <div className="stream-status-meta">
-              {latestBatchInfo?.batchCount ? (
-                <span className="batch-flash-pill">
-                  <Zap size={13} />
-                  +<strong>{latestBatchInfo.batchCount}</strong> records ingested in this batch (Random range 1–20)
-                  <span className="batch-total-growth">
-                    • Cumulative Total: <strong>{safeRows.length}</strong> records (Increasing ▲)
-                  </span>
-                  {latestBatchInfo.overspeedCount > 0 && (
-                    <span className="batch-overspeed-tag">
-                      ({latestBatchInfo.overspeedCount} speeding alerts)
-                    </span>
-                  )}
-                </span>
-              ) : (
-                <span>Receiving random batches (1–20 rows) from MySQL database... Total: <strong>{safeRows.length}</strong> records</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="stream-console-actions">
-          <button
-            className={`nh44-control-btn nh44-trigger-btn ${isFetchingBatch ? 'is-loading' : ''}`}
-            onClick={handleManualBatchClick}
-            type="button"
-            title="Fetch a random batch of 1 to 20 records instantly"
-          >
-            <RefreshCw size={15} className={isFetchingBatch ? 'spin-icon' : ''} />
-            <span>Fetch Random Batch (1–20)</span>
-          </button>
-
-          {onToggleStreamPause && (
-            <button
-              className={`nh44-control-btn nh44-pause-btn ${streamPaused ? 'resume' : ''}`}
-              onClick={onToggleStreamPause}
-              type="button"
-            >
-              {streamPaused ? (
-                <>
-                  <Play size={15} />
-                  <span>Resume Stream</span>
-                </>
-              ) : (
-                <>
-                  <Pause size={15} />
-                  <span>Pause Stream</span>
-                </>
-              )}
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* KPI METRIC CARDS */}
       <div className="nh44-kpi-grid">
         <div className="nh44-kpi-card">

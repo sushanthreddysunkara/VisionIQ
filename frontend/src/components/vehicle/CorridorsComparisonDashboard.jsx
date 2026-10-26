@@ -373,7 +373,7 @@ export default function CorridorsComparisonDashboard({
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
             gap: '14px',
           }}
         >
@@ -652,7 +652,7 @@ export default function CorridorsComparisonDashboard({
             </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <button
               type="button"
               onClick={() => navigate(`/live-view?tab=map&corridor=${encodeURIComponent(activeCorridorId)}`)}
@@ -730,8 +730,8 @@ export default function CorridorsComparisonDashboard({
           </span>
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <table style={{ width: '100%', minWidth: '850px', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0', color: '#475569' }}>
                 <th style={{ padding: '10px 12px', fontWeight: 700 }}>Corridor Code</th>

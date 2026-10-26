@@ -199,12 +199,12 @@ export default function BottomCorridorBar() {
 
       {/* Right Page Controls & Slider */}
       <div className="bottom-bar-controls">
-        <span className="bottom-page-counter">
+        <span className="bottom-page-counter bottom-desktop-only">
           Corridor {safeIndex + 1} / {CORRIDORS_LIST.length}
         </span>
 
         {/* Mini progress slider */}
-        <div className="bottom-slider-track">
+        <div className="bottom-slider-track bottom-desktop-only">
           <div
             className="bottom-slider-fill"
             style={{ width: `${Math.round(((safeIndex + 1) / CORRIDORS_LIST.length) * 100)}%` }}
@@ -214,7 +214,7 @@ export default function BottomCorridorBar() {
         {/* Live View quick jump */}
         <button
           type="button"
-          className={`bottom-nav-btn ${pathname === '/live-view' ? 'bottom-nav-btn-primary' : ''}`}
+          className={`bottom-nav-btn bottom-desktop-only ${pathname === '/live-view' ? 'bottom-nav-btn-primary' : ''}`}
           onClick={() => navigate('/live-view')}
           title="Switch to Live View"
         >
@@ -224,7 +224,7 @@ export default function BottomCorridorBar() {
         {/* Incidents quick jump */}
         <button
           type="button"
-          className="bottom-nav-btn"
+          className="bottom-nav-btn bottom-desktop-only"
           onClick={() => navigate('/vehicle-information')}
           title="Corridor Incident Deep Dive"
         >
