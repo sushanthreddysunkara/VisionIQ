@@ -14,9 +14,12 @@ import {
   Search,
   X,
   Play,
+  Radio,
+  Sparkles,
   Square,
   Upload,
   Video,
+  Image,
 } from 'lucide-react'
 import {
   Bar,
@@ -34,6 +37,7 @@ import {
   YAxis,
 } from 'recharts'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { cameraFeeds } from '../data/cameraFeeds'
 import '../styles/live-detection.css'
 
 const apiBaseUrl = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/$/, '')
@@ -102,8 +106,7 @@ async function parseApiResponse(response) {
       throw new Error('The live-data API endpoint was not found. Restart the Django backend and try again.')
     }
     throw new Error(
-      `The backend returned a non-JSON response (HTTP ${response.status}). ${
-        responseBody.includes('<!doctype') ? 'Check that the API URL points to Django.' : 'Check the backend server.'
+      `The backend returned a non-JSON response (HTTP ${response.status}). ${responseBody.includes('<!doctype') ? 'Check that the API URL points to Django.' : 'Check the backend server.'
       }`,
     )
   }
@@ -117,6 +120,26 @@ async function parseApiResponse(response) {
     throw new Error(result.message || `Frame analysis failed (${response.status}).`)
   }
   return result
+}
+
+function getDetectionColor(label = '', violationType = null) {
+  const norm = String(label).toLowerCase()
+  if (violationType || /accident|fire|pothole|construction|hazard/i.test(norm)) {
+    return { border: '#ef4444', bg: '#dc2626', text: '#ffffff' } // Red (Incident / Danger)
+  }
+  if (/license_plate|number_plate|plate/i.test(norm)) {
+    return { border: '#10b981', bg: '#059669', text: '#ffffff' } // Emerald (Plates)
+  }
+  if (/truck|bus/i.test(norm)) {
+    return { border: '#8b5cf6', bg: '#7c3aed', text: '#ffffff' } // Purple (Heavy vehicle)
+  }
+  if (/motorcycle|bike|bicycle|auto/i.test(norm)) {
+    return { border: '#f59e0b', bg: '#d97706', text: '#ffffff' } // Amber (2/3 Wheelers)
+  }
+  if (/person|pedestrian/i.test(norm)) {
+    return { border: '#06b6d4', bg: '#0891b2', text: '#ffffff' } // Cyan (Pedestrian)
+  }
+  return { border: '#3b82f6', bg: '#2563eb', text: '#ffffff' } // Blue (Car/Traffic)
 }
 
 export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
@@ -152,6 +175,25 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
   const [vehicleImageUrls, setVehicleImageUrls] = useState({})
   const [newRecordsWhileBrowsing, setNewRecordsWhileBrowsing] = useState(0)
   const knownObjectIdsRef = useRef(new Set())
+  const [selectedPresetId, setSelectedPresetId] = useState('CAM-NH44-06-TOLLPLAZA')
+  const [isWebcamActive, setIsWebcamActive] = useState(false)
+  const webcamStreamRef = useRef(null)
+  const hasAttemptedBlobFallbackRef = useRef(false)
+
+  // Auto-load default camera preset if no video is loaded on initial render
+  useEffect(() => {
+    if (!videoFile && cameraFeeds && cameraFeeds.length > 0) {
+      const defaultFeed = cameraFeeds.find((f) => f.id === 'CAM-NH44-06-TOLLPLAZA') || cameraFeeds[0]
+      setSelectedPresetId(defaultFeed.id)
+      setVideoFile({
+        name: `${defaultFeed.name} (${defaultFeed.location})`,
+        url: defaultFeed.videoUrl,
+        isPreset: true,
+        size: 24 * 1024 * 1024,
+      })
+      setStatus(`Corridor feed ${defaultFeed.name} (${defaultFeed.location}) loaded. Click "Play & Analyze" to start AI detection.`)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -175,35 +217,100 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
 
   useEffect(() => {
     if (!videoFile) {
-      setVideoUrl('')
+      if (!isWebcamActive) setVideoUrl('')
       return undefined
     }
-    const objectUrl = URL.createObjectURL(videoFile)
-    setVideoUrl(objectUrl)
-    return () => URL.revokeObjectURL(objectUrl)
-  }, [videoFile])
+    if (videoFile instanceof Blob) {
+      const objectUrl = URL.createObjectURL(videoFile)
+      setVideoUrl(objectUrl)
+      return () => URL.revokeObjectURL(objectUrl)
+    }
+    if (videoFile.url) {
+      setVideoUrl(videoFile.url)
+    }
+  }, [videoFile, isWebcamActive])
 
   useEffect(() => () => {
     for (const objectUrl of vehicleImageUrlsRef.current.values()) {
       URL.revokeObjectURL(objectUrl)
     }
     vehicleImageUrlsRef.current.clear()
+    if (webcamStreamRef.current) {
+      webcamStreamRef.current.getTracks().forEach((track) => track.stop())
+    }
   }, [])
 
   const currentDetections = useMemo(() => {
     const frames = analysis?.frames || []
     if (!frames.length) return []
-    let closest = frames[0]
-    for (const frame of frames) {
-      if (Math.abs(frame.timeSeconds - currentTime) < Math.abs(closest.timeSeconds - currentTime)) {
-        closest = frame
+    if (isWebcamActive) {
+      return frames[frames.length - 1]?.detections || []
+    }
+
+    const sampleInterval = analysis?.video?.sampleIntervalSeconds || LIVE_FRAME_INTERVAL_SECONDS || 0.5
+    const maxStaleness = sampleInterval * 2.2
+
+    // Find bounding frames around currentTime for smooth position interpolation
+    let prevFrame = null
+    let nextFrame = null
+
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i]
+      if (f.timeSeconds <= currentTime) {
+        if (!prevFrame || f.timeSeconds > prevFrame.timeSeconds) {
+          prevFrame = f
+        }
+      }
+      if (f.timeSeconds >= currentTime) {
+        if (!nextFrame || f.timeSeconds < nextFrame.timeSeconds) {
+          nextFrame = f
+        }
       }
     }
-    const tolerance = (analysis?.video?.sampleIntervalSeconds || 0.5) * 1.25
-    return Math.abs(closest.timeSeconds - currentTime) <= tolerance
-      ? closest.detections
-      : []
-  }, [analysis, currentTime])
+
+    // Both frames available: interpolate smoothly between prev and next
+    if (prevFrame && nextFrame && prevFrame !== nextFrame) {
+      const dt = nextFrame.timeSeconds - prevFrame.timeSeconds
+      if (dt > 0 && dt <= maxStaleness * 1.5) {
+        const factor = Math.max(0, Math.min(1, (currentTime - prevFrame.timeSeconds) / dt))
+        const nextMap = new Map((nextFrame.detections || []).map((d) => [d.trackId || d.label, d]))
+
+        return (prevFrame.detections || [])
+          .map((prevDet) => {
+            const key = prevDet.trackId || prevDet.label
+            const nextDet = nextMap.get(key)
+            if (!nextDet) {
+              // Object left frame before nextFrame: disappear once factor > 0.6
+              if (factor > 0.6) return null
+              return prevDet
+            }
+            const bA = prevDet.box || [0, 0, 0, 0]
+            const bB = nextDet.box || [0, 0, 0, 0]
+            const interpolatedBox = [
+              bA[0] + (bB[0] - bA[0]) * factor,
+              bA[1] + (bB[1] - bA[1]) * factor,
+              bA[2] + (bB[2] - bA[2]) * factor,
+              bA[3] + (bB[3] - bA[3]) * factor,
+            ]
+            return {
+              ...nextDet,
+              confidence: Math.max(prevDet.confidence, nextDet.confidence),
+              box: interpolatedBox,
+            }
+          })
+          .filter(Boolean)
+      }
+    }
+
+    // Only one frame is near currentTime
+    const nearFrame = prevFrame || nextFrame
+    if (nearFrame && Math.abs(nearFrame.timeSeconds - currentTime) <= maxStaleness) {
+      return nearFrame.detections || []
+    }
+
+    // Vehicle moved away or no recent detections: return empty array so box disappears!
+    return []
+  }, [analysis, currentTime, isWebcamActive])
 
   const summary = analysis?.summary
   const vehicleRows = analysis?.vehicles || []
@@ -220,20 +327,91 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
       plateByVehicleId.set(plate.vehicleId, plate)
     }
   }
-  const vehicleTypes = [...new Set(trackedVehicles.map((vehicle) => vehicle.label))].sort()
+
+  // 1. Deduplicate tracked vehicles: no duplicate rows in vehicles table
+  const uniqueTrackedVehicles = useMemo(() => {
+    const list = []
+    const seenPlates = new Set()
+    const seenIds = new Set()
+    const seenTimeSlots = new Set()
+
+    for (const v of trackedVehicles) {
+      if (!v || !v.objectId) continue
+      const plate = plateByVehicleId.get(v.objectId)?.plateNumber || v.plateNumber
+      if (plate) {
+        const cleanPlate = plate.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+        if (cleanPlate.length >= 4) {
+          if (seenPlates.has(cleanPlate)) continue
+          seenPlates.add(cleanPlate)
+        }
+      }
+      if (seenIds.has(v.objectId)) continue
+      seenIds.add(v.objectId)
+
+      const timeSlot = `${v.label}-${Math.floor((v.firstSeenSeconds || v.lastSeenSeconds || 0) / 2)}`
+      if (seenTimeSlots.has(timeSlot)) continue
+      seenTimeSlots.add(timeSlot)
+
+      list.push(v)
+    }
+    return list
+  }, [trackedVehicles, plateByVehicleId])
+
+  // 2. Deduplicate plate rows: no duplicate rows in license plate table
+  const uniquePlateRows = useMemo(() => {
+    const list = []
+    const seenPlates = new Set()
+    const seenVehicles = new Set()
+    const seenIds = new Set()
+
+    for (const p of plateRows) {
+      if (!p || !p.objectId) continue
+      if (p.plateNumber) {
+        const clean = p.plateNumber.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+        if (clean.length >= 4) {
+          if (seenPlates.has(clean)) continue
+          seenPlates.add(clean)
+        }
+      }
+      if (p.vehicleId) {
+        if (seenVehicles.has(p.vehicleId)) continue
+        seenVehicles.add(p.vehicleId)
+      }
+      if (seenIds.has(p.objectId)) continue
+      seenIds.add(p.objectId)
+      list.push(p)
+    }
+    return list
+  }, [plateRows])
+
+  // 3. Deduplicate violation events: no duplicate rows in violation events table
+  const uniqueViolationEvents = useMemo(() => {
+    const list = []
+    const seen = new Set()
+    for (const ev of analysis?.violationEvents || []) {
+      const timeBucket = Math.floor((ev.timeSeconds || 0) / 2)
+      const key = `${ev.type}-${ev.object}-${ev.trackId || timeBucket}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      list.push(ev)
+    }
+    return list
+  }, [analysis?.violationEvents])
+
+  const vehicleTypes = [...new Set(uniqueTrackedVehicles.map((vehicle) => vehicle.label))].sort()
   const sourceOptions = [...new Set(trackedObjects.map((object) => object.sourceId).filter(Boolean))].sort()
   const matchesClipTime = (object) => (
     (fromSeconds === '' || object.lastSeenSeconds >= Number(fromSeconds))
     && (toSeconds === '' || object.lastSeenSeconds <= Number(toSeconds))
   )
-  const filteredVehicles = trackedVehicles.filter((vehicle) => (
+  const filteredVehicles = uniqueTrackedVehicles.filter((vehicle) => (
     (!vehicleTypeFilter || vehicle.label === vehicleTypeFilter)
     && (!sourceFilter || vehicle.sourceId === sourceFilter)
     && matchesClipTime(vehicle)
     && `${vehicle.label} ${vehicle.objectId} ${vehicle.sourceId || ''} ${plateByVehicleId.get(vehicle.objectId)?.plateNumber || ''}`
       .toLowerCase().includes(vehicleSearch.trim().toLowerCase())
   ))
-  const filteredPlates = plateRows.filter((plate) => (
+  const filteredPlates = uniquePlateRows.filter((plate) => (
     (!plateStatusFilter || plate.plateStatus === plateStatusFilter)
     && (!sourceFilter || plate.sourceId === sourceFilter)
     && matchesClipTime(plate)
@@ -242,14 +420,14 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
   ))
   const pagedVehicles = pageSlice(filteredVehicles, vehiclePage)
   const pagedPlates = pageSlice(filteredPlates, platePage)
-  const latestObject = trackedObjects[0]
-  const recognizedPlateCount = plateRows.filter((plate) => plate.plateNumber).length
-  const unreadablePlateCount = plateRows.filter((plate) => plate.plateStatus === 'Unreadable').length
-  const unrecognizedPlateCount = plateRows.length - recognizedPlateCount
+  const latestObject = uniqueTrackedVehicles[0] || trackedObjects[0]
+  const recognizedPlateCount = uniquePlateRows.filter((plate) => plate.plateNumber).length
+  const unreadablePlateCount = uniquePlateRows.filter((plate) => plate.plateStatus === 'Unreadable').length
+  const unrecognizedPlateCount = uniquePlateRows.length - recognizedPlateCount
   const selectedVehicleImage = selectedRecord
     ? vehicleImageUrls[selectedRecord.objectId]
-      || vehicleImageUrls[selectedRecord.vehicleId]
-      || null
+    || vehicleImageUrls[selectedRecord.vehicleId]
+    || null
     : null
   const violationRows = vehicleRows.filter((vehicle) => vehicle.violation)
   const vehicleChartData = summary?.vehicleCategories?.length
@@ -378,7 +556,7 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
 
   useEffect(() => {
     const video = videoRef.current
-    if (!isAnalyzing || !video || !videoUrl) return undefined
+    if (!isAnalyzing || !video || (!videoUrl && !isWebcamActive)) return undefined
 
     let cancelled = false
     let requestInFlight = false
@@ -401,20 +579,36 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
       if (requestInFlight || cancelled) return
       requestInFlight = true
       try {
-        const scale = Math.min(1, 960 / video.videoWidth)
+        const vw = video.videoWidth || 960
+        const vh = video.videoHeight || 540
+        const scale = Math.min(1, 960 / vw)
         const canvas = document.createElement('canvas')
-        canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
-        canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
+        canvas.width = Math.max(1, Math.round(vw * scale))
+        canvas.height = Math.max(1, Math.round(vh * scale))
         const context = canvas.getContext('2d')
         if (!context) throw new Error('Browser could not prepare a frame for live analysis.')
         context.drawImage(video, 0, 0, canvas.width, canvas.height)
-        const frame = await new Promise((resolve, reject) => {
-          canvas.toBlob(
-            (blob) => (blob ? resolve(blob) : reject(new Error('Could not capture the current video frame.'))),
-            'image/jpeg',
-            0.78,
-          )
-        })
+        let frame
+        try {
+          frame = await new Promise((resolve, reject) => {
+            canvas.toBlob(
+              (blob) => (blob ? resolve(blob) : reject(new Error('Could not capture the current video frame.'))),
+              'image/jpeg',
+              0.78,
+            )
+          })
+        } catch (taintError) {
+          if (!hasAttemptedBlobFallbackRef.current && videoFile?.url) {
+            hasAttemptedBlobFallbackRef.current = true
+            setStatus('Buffering corridor stream for local analysis...')
+            const res = await fetch(videoFile.url)
+            const blob = await res.blob()
+            const localUrl = URL.createObjectURL(blob)
+            setVideoUrl(localUrl)
+            return
+          }
+          throw taintError
+        }
         if (cancelled) return
 
         const body = new FormData()
@@ -445,10 +639,10 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
           ...current,
           ...result,
           video: { ...current.video, ...result.video },
-          frames: [...current.frames, result.frame].slice(-MAX_DISPLAYED_FRAMES),
+          frames: [...(current?.frames || []), result.frame].slice(-MAX_DISPLAYED_FRAMES),
         }))
         setStatus(
-          `Live analysis · ${result.video.sampledFrames} frames · ${result.summary.vehicleCount} vehicle(s) detected`,
+          `Live analysis · ${result.video.sampledFrames} frames · ${result.summary.vehicleCount} vehicle(s) · ${result.summary.violationCount} incident(s)`,
         )
       } catch (requestError) {
         if (!cancelled) {
@@ -462,23 +656,29 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
     }
 
     function scheduleNextFrame() {
-      if (cancelled || video.paused || video.ended) return
+      if (cancelled || (video.paused && !isWebcamActive) || video.ended) return
       if (video.requestVideoFrameCallback) {
         videoFrameCallback = video.requestVideoFrameCallback(onVideoFrame)
       } else {
-        fallbackTimer = window.setTimeout(() => onVideoFrame(0, { mediaTime: video.currentTime }), 250)
+        fallbackTimer = window.setTimeout(
+          () => onVideoFrame(0, { mediaTime: isWebcamActive ? (Date.now() / 1000) : video.currentTime }),
+          250,
+        )
       }
     }
 
     async function onVideoFrame(_now, metadata) {
       videoFrameCallback = null
       fallbackTimer = null
-      if (cancelled || video.paused || video.ended) return
-      const timeSeconds = metadata?.mediaTime ?? video.currentTime
+      if (cancelled || (video.paused && !isWebcamActive)) return
+      const timeSeconds = metadata?.mediaTime ?? (isWebcamActive ? (Date.now() / 1000) : video.currentTime)
+      if (timeSeconds < lastAnalyzedTime - 0.2) {
+        lastAnalyzedTime = timeSeconds - LIVE_FRAME_INTERVAL_SECONDS
+      }
       if (
         !requestInFlight
-        && timeSeconds - lastAnalyzedTime >= LIVE_FRAME_INTERVAL_SECONDS
-        && video.videoWidth > 0
+        && (timeSeconds - lastAnalyzedTime >= LIVE_FRAME_INTERVAL_SECONDS || isWebcamActive)
+        && (video.videoWidth > 0 || isWebcamActive)
       ) {
         lastAnalyzedTime = timeSeconds
         await analyzeFrameAt(timeSeconds)
@@ -496,6 +696,11 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
     }
 
     function finishAnalysis() {
+      if (video.loop) {
+        video.currentTime = 0
+        video.play().catch(() => {})
+        return
+      }
       setIsAnalyzing(false)
       setStatus((current) => current.startsWith('Live analysis')
         ? current.replace('Live analysis', 'Analysis complete')
@@ -510,7 +715,7 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
     video.addEventListener('pause', pauseFrameLoop)
     video.addEventListener('ended', finishAnalysis)
     video.addEventListener('seeking', resetSeekSampling)
-    if (!video.paused) startFrameLoop()
+    if (!video.paused || isWebcamActive) startFrameLoop()
 
     return () => {
       cancelled = true
@@ -520,7 +725,7 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
       video.removeEventListener('ended', finishAnalysis)
       video.removeEventListener('seeking', resetSeekSampling)
     }
-  }, [isAnalyzing, videoUrl, videoFile])
+  }, [isAnalyzing, videoUrl, videoFile, isWebcamActive])
 
   function clearVehicleImages() {
     vehicleImageGenerationRef.current += 1
@@ -533,7 +738,115 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
     setSelectedRecord(null)
   }
 
+  function handleSelectPreset(feed) {
+    if (isWebcamActive) stopWebcam()
+    if (isAnalyzing) stopAnalysis()
+    clearVehicleImages()
+    setAnalysis(null)
+    setVehiclePage(1)
+    setPlatePage(1)
+    setError('')
+    setSelectedPresetId(feed.id)
+    setVideoFile({
+      name: `${feed.name} (${feed.location})`,
+      url: feed.videoUrl,
+      isPreset: true,
+      size: 24 * 1024 * 1024,
+    })
+    setStatus(`Corridor feed ${feed.name} (${feed.location}) loaded. Click "Play & Analyze" to start AI detection.`)
+  }
+
+  async function handleToggleWebcam() {
+    if (isWebcamActive) {
+      stopWebcam()
+      return
+    }
+    try {
+      if (isAnalyzing) stopAnalysis()
+      clearVehicleImages()
+      setAnalysis(null)
+      setError('')
+      setSelectedPresetId('webcam')
+      setStatus('Connecting to local device camera...')
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      })
+      webcamStreamRef.current = stream
+      setIsWebcamActive(true)
+      setVideoFile({ name: 'Live Device Camera Feed', isWebcam: true, size: 0 })
+      setVideoReady(true)
+      setVideoUrl('')
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
+      setStatus('Live camera active! Click "Play & Analyze" to run real-time YOLOv8 detection on your stream.')
+    } catch (err) {
+      setError(`Camera access failed: ${err.message}`)
+      setIsWebcamActive(false)
+    }
+  }
+
+  function stopWebcam() {
+    if (webcamStreamRef.current) {
+      webcamStreamRef.current.getTracks().forEach((track) => track.stop())
+      webcamStreamRef.current = null
+    }
+    if (videoRef.current && videoRef.current.srcObject) {
+      videoRef.current.srcObject = null
+    }
+    setIsWebcamActive(false)
+    if (isAnalyzing) stopAnalysis()
+    setStatus('Webcam stopped.')
+  }
+
+  async function handleImageFileChange(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose an image file (JPEG, PNG, WebP).')
+      return
+    }
+    if (isWebcamActive) stopWebcam()
+    if (isAnalyzing) stopAnalysis()
+    clearVehicleImages()
+    setError('')
+    setStatus(`Analyzing snapshot ${file.name} with NH5 AI models...`)
+    try {
+      const body = new FormData()
+      body.append('image', file, file.name)
+      body.append('sourceId', file.name)
+      const res = await fetch(`${apiBaseUrl}/api/live-feed/analyze-image`, {
+        method: 'POST',
+        body,
+      })
+      const result = await parseApiResponse(res)
+      const objectUrl = URL.createObjectURL(file)
+      setVideoUrl(objectUrl)
+      setVideoFile(file)
+      setVideoReady(true)
+      setSelectedPresetId('snapshot')
+      setAnalysis({
+        ...result,
+        video: {
+          width: 960,
+          height: 540,
+          durationSeconds: 0,
+          sampleIntervalSeconds: 0,
+          sampledFrames: 1,
+        },
+        frames: [result.frame],
+      })
+      setStatus(`Snapshot analyzed! Detected ${result.summary.vehicleCount} vehicle(s), ${result.summary.violationCount} incident(s).`)
+    } catch (err) {
+      setError(err.message || 'Image analysis failed.')
+    }
+  }
+
   function handleFileChange(event) {
+    if (isWebcamActive) stopWebcam()
+    setSelectedPresetId('custom')
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
@@ -573,8 +886,8 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
     sessionIdRef.current = crypto.randomUUID()
     setAnalysis({
       video: {
-        width: video.videoWidth,
-        height: video.videoHeight,
+        width: video.videoWidth || 960,
+        height: video.videoHeight || 540,
         durationSeconds: video.duration || 0,
         sampleIntervalSeconds: LIVE_FRAME_INTERVAL_SECONDS,
         sampledFrames: 0,
@@ -599,10 +912,12 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
     })
     setCurrentTime(0)
     setIsAnalyzing(true)
-    setStatus('Starting live analysis. The video plays locally; sampled frames are sent for detection.')
+    setStatus('AI Detection active · Live frames sampled & analyzed by NH5 YOLOv8 & Plate OCR models.')
     try {
-      video.currentTime = 0
-      await video.play()
+      if (!isWebcamActive && video.paused) {
+        video.currentTime = 0
+        await video.play()
+      }
     } catch (requestError) {
       setIsAnalyzing(false)
       setError(requestError.message || 'Could not start video playback.')
@@ -689,589 +1004,640 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
 
       {activePage === 'overview' && (
         <>
-      <section className="live-ai-source-card">
-        <div className="live-ai-source-copy">
-          <div className="live-ai-source-icon"><Video size={22} /></div>
-          <div>
-            <h2>Upload a traffic video</h2>
-            <p>Choose a browser-playable traffic video. Detection runs on sampled frames as the video plays.</p>
-          </div>
-        </div>
-        <div className="live-ai-upload-actions">
-          <label className="live-ai-upload-button">
-            <Upload size={17} />
-            Choose video
-            <input
-              type="file"
-              accept="video/*,.mkv,.avi"
-              onChange={handleFileChange}
-              disabled={isAnalyzing}
-            />
-          </label>
-          <button
-            className="live-ai-start-button"
-            type="button"
-            onClick={isAnalyzing ? stopAnalysis : startAnalysis}
-            disabled={!videoFile || !videoReady}
-          >
-            {isAnalyzing ? <Square size={16} /> : <Play size={17} />}
-            {isAnalyzing ? 'Stop Analysis' : 'Play & Analyze'}
-          </button>
-        </div>
-        <div className="live-ai-file-status">
-          <span>{videoFile ? `${videoFile.name} · ${(videoFile.size / (1024 * 1024)).toFixed(1)} MB` : status}</span>
-          {videoFile && <span>{status}</span>}
-        </div>
-        <div className="live-ai-model-note live-ai-source-model-status" role="status">
-          <Activity size={15} />
-          {modelStatus
-            ? modelStatus.ready
-              ? `NH5 model ready · ${modelStatus.models?.[0]?.name || 'Configured model'} · CPU/GPU auto-selection`
-              : `NH5 model unavailable · ${modelStatus.message}`
-            : 'Checking NH5 model readiness…'}
-        </div>
-        {error && <p className="live-ai-error" role="alert">{error}</p>}
-      </section>
-
-      <section className="live-ai-summary-grid" aria-label="Live feed summary">
-        <article className="live-ai-summary-card">
-          <span className="live-ai-summary-icon blue"><Car size={18} /></span>
-          <div><small>VEHICLES DETECTED</small><strong>{trackedVehicles.length}</strong><span>Unique tracked vehicles · current clip</span></div>
-        </article>
-        <article className="live-ai-summary-card">
-          <span className="live-ai-summary-icon amber"><Camera size={18} /></span>
-          <div><small>NUMBER PLATES</small><strong>{plateRows.length}</strong><span>{recognizedPlateCount} confirmed · {unreadablePlateCount} unreadable</span></div>
-        </article>
-        <article className="live-ai-summary-card">
-          <span className="live-ai-summary-icon red"><Activity size={18} /></span>
-          <div><small>VIOLATION EVENTS</small><strong>{analysis?.violationEvents?.length || 0}</strong><span>Model-labeled events in this clip</span></div>
-        </article>
-        <article className="live-ai-summary-card">
-          <span className="live-ai-summary-icon purple"><Clock3 size={18} /></span>
-          <div><small>SAMPLED FRAMES</small><strong>{analysis?.video?.sampledFrames || 0}</strong><span>Frames processed by the model</span></div>
-        </article>
-        <article className="live-ai-summary-card">
-          <span className="live-ai-summary-icon green"><Activity size={18} /></span>
-          <div><small>LATEST DETECTION</small><strong>{latestObject?.label || '—'}</strong><span>{latestObject ? formatTimestamp(latestObject.lastSeenSeconds) : 'Waiting for model output'}</span></div>
-        </article>
-        <article className="live-ai-summary-card">
-          <span className={`live-ai-summary-icon ${modelStatus?.ready ? 'green' : 'slate'}`}><Video size={18} /></span>
-          <div><small>MODEL STATUS</small><strong className="live-ai-source-value">{modelStatus ? modelStatus.ready ? 'Model ready' : 'Unavailable' : 'Checking…'}</strong><span>{isAnalyzing ? 'Video analysis in progress' : videoReady ? 'Uploaded video · Ready' : 'Choose a video source'}</span></div>
-        </article>
-      </section>
-
-      <section className="live-ai-main-grid">
-        <article className="live-ai-card live-ai-video-card">
-          <div className="live-ai-card-heading">
-            <div>
-              <h2>Live Video View</h2>
-              <p>{videoFile?.name || 'Upload a traffic video to view detections'}</p>
+          <section className="live-ai-source-card">
+            <div className="live-ai-source-copy">
+              <div className="live-ai-source-icon"><Video size={22} /></div>
+              <div>
+                <h2>Highway Surveillance & AI Stream Analysis</h2>
+                <p>Select a corridor live camera, connect your local webcam, or upload custom footage. NH5 YOLOv8 & Plate OCR models analyze frames in real-time.</p>
+              </div>
             </div>
-            <span className={`live-ai-status ${isAnalyzing ? 'processing' : analysis ? 'complete' : 'idle'}`}>
-              <span />
-              {isAnalyzing ? 'PROCESSING' : analysis ? 'ANALYZED' : 'READY'}
-            </span>
-          </div>
-          <div className="live-ai-video-stage">
-            {videoUrl ? (
-              <div
-                className="live-ai-video-frame"
-                style={{
-                  aspectRatio: analysis?.video?.width && analysis?.video?.height
-                    ? `${analysis.video.width} / ${analysis.video.height}`
-                    : videoAspectRatio,
-                }}
-              >
-                <video
-                  ref={videoRef}
-                  src={videoUrl}
-                  controls
-                  playsInline
-                  onLoadedMetadata={(event) => {
-                    const { videoWidth, videoHeight } = event.currentTarget
-                    setVideoReady(Boolean(videoWidth && videoHeight))
-                    if (videoWidth && videoHeight) {
-                      setVideoAspectRatio(`${videoWidth} / ${videoHeight}`)
-                    }
-                  }}
-                  onError={() => {
-                    setVideoReady(false)
-                    setError('This video format or codec cannot be played by the browser. Try MP4 with H.264 video.')
-                  }}
-                  onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-                  onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
+            <div className="live-ai-upload-actions">
+              <label className="live-ai-upload-button live-ai-snapshot-button" title="Upload a photo to run instant AI detection">
+                <Image size={17} />
+                Analyze Photo
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleImageFileChange}
+                  disabled={isAnalyzing}
                 />
-                {analysis && currentDetections.map((detection, index) => {
-                  const [x, y, width, height] = detection.box
-                  return (
-                    <div
-                      className={`live-ai-box ${detection.violationType ? 'violation' : ''}`}
-                      key={`${detection.model}-${detection.trackId || index}-${index}`}
-                      style={{
-                        left: `${x * 100}%`,
-                        top: `${y * 100}%`,
-                        width: `${width * 100}%`,
-                        height: `${height * 100}%`,
-                      }}
-                    >
-                      <span>{detection.label} · {(detection.confidence * 100).toFixed(0)}%{detection.trackId ? ` · ${detection.trackId}` : ''}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="live-ai-empty-video">
-                <Video size={42} />
-                <strong>Video preview will appear here</strong>
-                <span>No sample video or synthetic detections are used.</span>
-              </div>
-            )}
-          </div>
-          <div className="live-ai-model-note">
-            <Activity size={15} />
-            {analysis
-              ? `Models used: ${analysis.models.join(', ')} · Sampling every ~${analysis.video.sampleIntervalSeconds}s`
-              : 'Real model results appear here after the backend processes your uploaded video.'}
-          </div>
-          {analysis?.modelWarnings?.map((warning) => (
-            <p className="live-ai-model-warning" key={warning}>{warning}</p>
-          ))}
-          {analysis && (
-            <>
-              <p className="live-ai-speed-note">
-                Speed values are not shown: this video/model setup has no calibrated real-world speed measurement.
-              </p>
-              <p className="live-ai-speed-note">
-                The driver-distraction ResNet checkpoint is not executed because its matching architecture and class mapping are not available in the project.
-              </p>
-              {!analysis.vehicleDetectionAvailable && (
-                <p className="live-ai-model-warning">
-                  No configured model currently detects vehicles. Check the backend model warning or configure AI_VEHICLE_MODEL_PATH with weights whose labels include vehicle classes.
-                </p>
-              )}
-            </>
-          )}
-        </article>
-
-        <aside className="live-ai-card live-ai-alerts-panel">
-          <div className="live-ai-card-heading">
-            <div><h2>Recent Detections</h2><p>Latest objects detected in this clip</p></div>
-            <button className="live-ai-view-all" onClick={() => navigateLivePage('events')} type="button">View all</button>
-          </div>
-          <div className="live-ai-alert-list">
-            {trackedObjects.slice(0, 5).map((object) => (
+              </label>
+              <label className="live-ai-upload-button" title="Upload custom video file">
+                <Upload size={17} />
+                Choose video
+                <input
+                  type="file"
+                  accept="video/*,.mkv,.avi"
+                  onChange={handleFileChange}
+                  disabled={isAnalyzing}
+                />
+              </label>
               <button
-                className="live-ai-alert-item"
-                key={object.objectId}
-                onClick={() => setSelectedRecord(object)}
+                className="live-ai-start-button"
                 type="button"
+                onClick={isAnalyzing ? stopAnalysis : startAnalysis}
+                disabled={(!videoFile && !isWebcamActive) || !videoReady}
               >
-                <span className={`live-ai-alert-mark ${object.plateStatus ? 'amber' : object.violation ? 'red' : 'green'}`} />
-                <span className="live-ai-alert-copy">
-                  <strong>{object.plateNumber || object.label}</strong>
-                  <small>{object.sourceId || 'Uploaded video'} · {formatTimestamp(object.lastSeenSeconds)}</small>
-                </span>
-                <span className="live-ai-alert-confidence">{(object.confidence * 100).toFixed(0)}%</span>
+                {isAnalyzing ? <Square size={16} /> : <Play size={17} />}
+                {isAnalyzing ? 'Stop Analysis' : 'Play & Analyze'}
               </button>
-            ))}
-            {!trackedObjects.length && (
-              <div className="live-ai-alert-empty">
-                <Activity size={20} />
-                <span>{analysis ? 'No tracked objects in this clip yet.' : 'Start video analysis to view activity.'}</span>
-              </div>
-            )}
-          </div>
-          <div className="live-ai-plate-insight">
-            <div className="live-ai-plate-insight-heading">
-              <span><Camera size={14} /> Plate recognition</span>
-              <button onClick={() => navigateLivePage('events')} type="button">View table</button>
             </div>
-            <div className="live-ai-plate-insight-counts">
-              <span><CircleCheck size={13} /> {recognizedPlateCount} recognized</span>
-              <span><CircleHelp size={13} /> {unrecognizedPlateCount} not recognized</span>
+
+            <div className="live-ai-preset-toolbar">
+              <span className="live-ai-preset-label">Corridor Feeds:</span>
+              {cameraFeeds.map((feed) => (
+                <button
+                  key={feed.id}
+                  type="button"
+                  className={`live-ai-preset-chip ${selectedPresetId === feed.id ? 'active' : ''}`}
+                  onClick={() => handleSelectPreset(feed)}
+                  title={`Switch to ${feed.name} (${feed.location})`}
+                >
+                  <Radio size={12} className={selectedPresetId === feed.id ? 'pulse-live' : ''} />
+                  <span>{feed.location}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`live-ai-preset-chip live-ai-webcam-chip ${isWebcamActive ? 'active' : ''}`}
+                onClick={handleToggleWebcam}
+                title="Open device camera for real-time live detection"
+              >
+                <Camera size={13} />
+                <span>{isWebcamActive ? 'Stop Webcam' : 'Live Webcam'}</span>
+              </button>
             </div>
-            {plateRows.length > 0 && (
-              <div className="live-ai-plate-insight-latest">
-                <PlateNumber value={plateRows[0].plateNumber} compact />
-                <span>{formatTimestamp(plateRows[0].lastSeenSeconds)}</span>
+
+            <div className="live-ai-file-status">
+              <span>{videoFile ? `${videoFile.name} · ${videoFile.isPreset ? 'Corridor CCTV Feed' : videoFile.isWebcam ? 'Device Camera' : `${(videoFile.size / (1024 * 1024)).toFixed(1)} MB`}` : status}</span>
+              {videoFile && <span>{status}</span>}
+            </div>
+            <div className="live-ai-model-note live-ai-source-model-status" role="status">
+              <Activity size={15} />
+              {modelStatus
+                ? modelStatus.ready
+                  ? `NH5 model ready · ${modelStatus.models?.[0]?.name || 'nh5_yolov8n_960.pt'} · 12 Traffic Classes · RapidOCR License Plate Engine`
+                  : `NH5 model unavailable · ${modelStatus.message}`
+                : 'Checking NH5 model readiness…'}
+            </div>
+            {error && <p className="live-ai-error" role="alert">{error}</p>}
+          </section>
+
+          <section className="live-ai-summary-grid" aria-label="Live feed summary">
+            <article className="live-ai-summary-card">
+              <span className="live-ai-summary-icon blue"><Car size={18} /></span>
+              <div><small>VEHICLES DETECTED</small><strong>{uniqueTrackedVehicles.length}</strong><span>Unique tracked vehicles · current clip</span></div>
+            </article>
+            <article className="live-ai-summary-card">
+              <span className="live-ai-summary-icon amber"><Camera size={18} /></span>
+              <div><small>NUMBER PLATES</small><strong>{uniquePlateRows.length}</strong><span>{recognizedPlateCount} confirmed · {unreadablePlateCount} unreadable</span></div>
+            </article>
+            <article className="live-ai-summary-card">
+              <span className="live-ai-summary-icon red"><Activity size={18} /></span>
+              <div><small>VIOLATION EVENTS</small><strong>{uniqueViolationEvents.length}</strong><span>Model-labeled events in this clip</span></div>
+            </article>
+            <article className="live-ai-summary-card">
+              <span className="live-ai-summary-icon purple"><Clock3 size={18} /></span>
+              <div><small>SAMPLED FRAMES</small><strong>{analysis?.video?.sampledFrames || 0}</strong><span>Frames processed by the model</span></div>
+            </article>
+            <article className="live-ai-summary-card">
+              <span className="live-ai-summary-icon green"><Activity size={18} /></span>
+              <div><small>LATEST DETECTION</small><strong>{latestObject?.label || '—'}</strong><span>{latestObject ? formatTimestamp(latestObject.lastSeenSeconds) : 'Waiting for model output'}</span></div>
+            </article>
+            <article className="live-ai-summary-card">
+              <span className={`live-ai-summary-icon ${modelStatus?.ready ? 'green' : 'slate'}`}><Video size={18} /></span>
+              <div><small>MODEL STATUS</small><strong className="live-ai-source-value">{modelStatus ? modelStatus.ready ? 'Model ready' : 'Unavailable' : 'Checking…'}</strong><span>{isAnalyzing ? 'Video analysis in progress' : videoReady ? 'Corridor feed ready' : 'Choose a video source'}</span></div>
+            </article>
+          </section>
+
+          <section className="live-ai-main-grid">
+            <article className="live-ai-card live-ai-video-card">
+              <div className="live-ai-card-heading">
+                <div>
+                  <h2>Live Video View</h2>
+                  <p>{videoFile?.name || 'Corridor camera feed'}</p>
+                </div>
+                <span className={`live-ai-status ${isAnalyzing ? 'processing' : analysis ? 'complete' : 'idle'}`}>
+                  <span />
+                  {isAnalyzing ? 'PROCESSING' : analysis ? 'ANALYZED' : 'READY'}
+                </span>
               </div>
-            )}
-            {!plateRows.length && (
-              <p className="live-ai-plate-insight-empty">
-                {analysis ? 'No number-plate tracks detected in this clip.' : 'Plate readings will appear after video analysis.'}
-              </p>
-            )}
-          </div>
-          <div className="live-ai-alert-footer">
-            <span><i className="green" /> {trackedVehicles.length} vehicles</span>
-            <span><i className="amber" /> {plateRows.length} plate tracks</span>
-          </div>
-        </aside>
-      </section>
+              <div className="live-ai-video-stage">
+                {videoUrl || isWebcamActive ? (
+                  <div
+                    className="live-ai-video-frame"
+                    style={{
+                      aspectRatio: analysis?.video?.width && analysis?.video?.height
+                        ? `${analysis.video.width} / ${analysis.video.height}`
+                        : videoAspectRatio,
+                    }}
+                  >
+                    <video
+                      ref={videoRef}
+                      src={videoUrl || undefined}
+                      crossOrigin="anonymous"
+                      controls
+                      playsInline
+                      autoPlay={isWebcamActive}
+                      muted
+                      loop
+                      onLoadedMetadata={(event) => {
+                        const { videoWidth, videoHeight } = event.currentTarget
+                        setVideoReady(Boolean(videoWidth && videoHeight))
+                        if (videoWidth && videoHeight) {
+                          setVideoAspectRatio(`${videoWidth} / ${videoHeight}`)
+                        }
+                      }}
+                      onError={() => {
+                        if (isWebcamActive) return
+                        setVideoReady(false)
+                        setError('This video format or codec cannot be played by the browser. Try MP4 with H.264 video.')
+                      }}
+                      onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                      onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                    />
+                    {analysis && currentDetections.map((detection, index) => {
+                      const [x, y, width, height] = detection.box || [0, 0, 0, 0]
+                      const color = getDetectionColor(detection.label, detection.violationType)
+                      const isPlate = /plate/i.test(detection.label)
+                      const matchingPlate = isPlate ? plateRows.find((p) => p.objectId === `${detection.model}:${detection.trackId}`) : null
+                      const plateDisplay = matchingPlate?.plateNumber ? `PLATE: ${matchingPlate.plateNumber}` : detection.label
+                      return (
+                        <div
+                          className={`live-ai-box ${detection.violationType ? 'violation' : ''}`}
+                          key={`${detection.model}-${detection.trackId || index}-${index}`}
+                          style={{
+                            left: `${x * 100}%`,
+                            top: `${y * 100}%`,
+                            width: `${width * 100}%`,
+                            height: `${height * 100}%`,
+                            borderColor: color.border,
+                          }}
+                        >
+                          <span style={{ backgroundColor: color.bg, color: color.text }}>
+                            {plateDisplay} · {(detection.confidence * 100).toFixed(0)}%
+                            {detection.trackId ? ` · #${detection.trackId}` : ''}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="live-ai-empty-video">
+                    <Video size={42} />
+                    <strong>Video preview will appear here</strong>
+                    <span>Select a corridor feed above or upload custom video to start AI detection.</span>
+                  </div>
+                )}
+              </div>
+              <div className="live-ai-model-note">
+                <Activity size={15} />
+                {analysis
+                  ? `Models used: ${analysis.models.join(', ')} · Sampling every ~${analysis.video.sampleIntervalSeconds}s`
+                  : 'Real model results appear here after the backend processes your uploaded video.'}
+              </div>
+              {analysis?.modelWarnings?.map((warning) => (
+                <p className="live-ai-model-warning" key={warning}>{warning}</p>
+              ))}
+              {analysis && (
+                <>
+                  <p className="live-ai-speed-note">
+                    Speed values are not shown: this video/model setup has no calibrated real-world speed measurement.
+                  </p>
+                  <p className="live-ai-speed-note">
+                    The driver-distraction ResNet checkpoint is not executed because its matching architecture and class mapping are not available in the project.
+                  </p>
+                  {!analysis.vehicleDetectionAvailable && (
+                    <p className="live-ai-model-warning">
+                      No configured model currently detects vehicles. Check the backend model warning or configure AI_VEHICLE_MODEL_PATH with weights whose labels include vehicle classes.
+                    </p>
+                  )}
+                </>
+              )}
+            </article>
+
+            <aside className="live-ai-card live-ai-alerts-panel">
+              <div className="live-ai-card-heading">
+                <div><h2>Recent Detections</h2><p>Latest objects detected in this clip</p></div>
+                <button className="live-ai-view-all" onClick={() => navigateLivePage('events')} type="button">View all</button>
+              </div>
+              <div className="live-ai-alert-list">
+                {trackedObjects.slice(0, 5).map((object) => (
+                  <button
+                    className="live-ai-alert-item"
+                    key={object.objectId}
+                    onClick={() => setSelectedRecord(object)}
+                    type="button"
+                  >
+                    <span className={`live-ai-alert-mark ${object.plateStatus ? 'amber' : object.violation ? 'red' : 'green'}`} />
+                    <span className="live-ai-alert-copy">
+                      <strong>{object.plateNumber || object.label}</strong>
+                      <small>{object.sourceId || 'Uploaded video'} · {formatTimestamp(object.lastSeenSeconds)}</small>
+                    </span>
+                    <span className="live-ai-alert-confidence">{(object.confidence * 100).toFixed(0)}%</span>
+                  </button>
+                ))}
+                {!trackedObjects.length && (
+                  <div className="live-ai-alert-empty">
+                    <Activity size={20} />
+                    <span>{analysis ? 'No tracked objects in this clip yet.' : 'Start video analysis to view activity.'}</span>
+                  </div>
+                )}
+              </div>
+              <div className="live-ai-plate-insight">
+                <div className="live-ai-plate-insight-heading">
+                  <span><Camera size={14} /> Plate recognition</span>
+                  <button onClick={() => navigateLivePage('events')} type="button">View table</button>
+                </div>
+                <div className="live-ai-plate-insight-counts">
+                  <span><CircleCheck size={13} /> {recognizedPlateCount} recognized</span>
+                  <span><CircleHelp size={13} /> {unrecognizedPlateCount} not recognized</span>
+                </div>
+                {plateRows.length > 0 && (
+                  <div className="live-ai-plate-insight-latest">
+                    <PlateNumber value={plateRows[0].plateNumber} compact />
+                    <span>{formatTimestamp(plateRows[0].lastSeenSeconds)}</span>
+                  </div>
+                )}
+                {!plateRows.length && (
+                  <p className="live-ai-plate-insight-empty">
+                    {analysis ? 'No number-plate tracks detected in this clip.' : 'Plate readings will appear after video analysis.'}
+                  </p>
+                )}
+              </div>
+              <div className="live-ai-alert-footer">
+                <span><i className="green" /> {trackedVehicles.length} vehicles</span>
+                <span><i className="amber" /> {plateRows.length} plate tracks</span>
+              </div>
+            </aside>
+          </section>
         </>
       )}
 
       {activePage === 'analytics' && (
         <section className="live-ai-analytics-page">
-      <div className="live-ai-analytics-intro">
-        <div><p className="live-ai-eyebrow">VIDEO ANALYSIS</p><h2>Traffic analytics</h2><p>Charts are calculated from detections in the current uploaded clip.</p></div>
-        <span>{analysis ? `${analysis.video.sampledFrames} sampled frames` : 'No analyzed clip yet'}</span>
-      </div>
-      <section className="live-ai-chart-grid">
-        <article className="live-ai-card live-ai-chart-card">
-          <div className="live-ai-card-heading">
-            <div><h2>Detected model classes</h2><p>From this video analysis only</p></div>
+          <div className="live-ai-analytics-intro">
+            <div><p className="live-ai-eyebrow">VIDEO ANALYSIS</p><h2>Traffic analytics</h2><p>Charts are calculated from detections in the current uploaded clip.</p></div>
+            <span>{analysis ? `${analysis.video.sampledFrames} sampled frames` : 'No analyzed clip yet'}</span>
           </div>
-          {vehicleChartData.length ? (
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={vehicleChartData} margin={{ top: 8, right: 12, left: -14, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#344253" />
-                <XAxis dataKey="name" tick={{ fill: '#afbdcb', fontSize: 10 }} axisLine={{ stroke: '#526174' }} tickLine={{ stroke: '#526174' }} />
-                <YAxis allowDecimals={false} tick={{ fill: '#afbdcb', fontSize: 10 }} axisLine={{ stroke: '#526174' }} tickLine={{ stroke: '#526174' }} />
-                <Tooltip contentStyle={{ color: '#e6edf5', background: '#172231', border: '1px solid #39495b', borderRadius: 7 }} />
-                <Bar dataKey="count" name="Detections" fill="#2563eb" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <div className="live-ai-chart-empty">Vehicle chart will populate after video analysis.</div>}
-        </article>
+          <section className="live-ai-chart-grid">
+            <article className="live-ai-card live-ai-chart-card">
+              <div className="live-ai-card-heading">
+                <div><h2>Detected model classes</h2><p>From this video analysis only</p></div>
+              </div>
+              {vehicleChartData.length ? (
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={vehicleChartData} margin={{ top: 8, right: 12, left: -14, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#344253" />
+                    <XAxis dataKey="name" tick={{ fill: '#afbdcb', fontSize: 10 }} axisLine={{ stroke: '#526174' }} tickLine={{ stroke: '#526174' }} />
+                    <YAxis allowDecimals={false} tick={{ fill: '#afbdcb', fontSize: 10 }} axisLine={{ stroke: '#526174' }} tickLine={{ stroke: '#526174' }} />
+                    <Tooltip contentStyle={{ color: '#e6edf5', background: '#172231', border: '1px solid #39495b', borderRadius: 7 }} />
+                    <Bar dataKey="count" name="Detections" fill="#2563eb" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : <div className="live-ai-chart-empty">Vehicle chart will populate after video analysis.</div>}
+            </article>
 
-        <article className="live-ai-card live-ai-chart-card">
-          <div className="live-ai-card-heading">
-            <div><h2>Violation events</h2><p>Only classes explicitly recognized as violations</p></div>
-          </div>
-          {violationChartData.length ? (
-            <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie data={violationChartData} dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={82} label>
-                  {violationChartData.map((entry, index) => (
-                    <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ color: '#e6edf5', background: '#172231', border: '1px solid #39495b', borderRadius: 7 }} />
-                <Legend wrapperStyle={{ color: '#bdc9d6', fontSize: 10 }} />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : <div className="live-ai-chart-empty">No violation chart until an analyzed video provides a supported violation class.</div>}
-        </article>
-      </section>
-      <section className="live-ai-card live-ai-chart-card live-ai-trend-card">
-        <div className="live-ai-card-heading">
-          <div><h2>Detection volume over clip time</h2><p>Detections grouped into 10-second clip intervals; this is not a real-time traffic count.</p></div>
-        </div>
-        {frameTrendData.length ? (
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={frameTrendData} margin={{ top: 8, right: 16, left: -14, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#344253" />
-              <XAxis dataKey="second" tickFormatter={(second) => formatTime(second)} tick={{ fill: '#afbdcb', fontSize: 10 }} axisLine={{ stroke: '#526174' }} tickLine={{ stroke: '#526174' }} />
-              <YAxis allowDecimals={false} tick={{ fill: '#afbdcb', fontSize: 10 }} axisLine={{ stroke: '#526174' }} tickLine={{ stroke: '#526174' }} />
-              <Tooltip
-                labelFormatter={(second) => `${formatTime(Number(second))}–${formatTime(Number(second) + 10)}`}
-                contentStyle={{ color: '#e6edf5', background: '#172231', border: '1px solid #39495b', borderRadius: 7 }}
-              />
-              <Line dataKey="detections" name="Detections" type="monotone" stroke="#44c384" strokeWidth={2.5} dot={{ r: 3, fill: '#44c384' }} activeDot={{ r: 5 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        ) : <div className="live-ai-chart-empty">Detection timeline will appear after video analysis.</div>}
-      </section>
+            <article className="live-ai-card live-ai-chart-card">
+              <div className="live-ai-card-heading">
+                <div><h2>Violation events</h2><p>Only classes explicitly recognized as violations</p></div>
+              </div>
+              {violationChartData.length ? (
+                <ResponsiveContainer width="100%" height={250}>
+                  <PieChart>
+                    <Pie data={violationChartData} dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={82} label>
+                      {violationChartData.map((entry, index) => (
+                        <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ color: '#e6edf5', background: '#172231', border: '1px solid #39495b', borderRadius: 7 }} />
+                    <Legend wrapperStyle={{ color: '#bdc9d6', fontSize: 10 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : <div className="live-ai-chart-empty">No violation chart until an analyzed video provides a supported violation class.</div>}
+            </article>
+          </section>
+          <section className="live-ai-card live-ai-chart-card live-ai-trend-card">
+            <div className="live-ai-card-heading">
+              <div><h2>Detection volume over clip time</h2><p>Detections grouped into 10-second clip intervals; this is not a real-time traffic count.</p></div>
+            </div>
+            {frameTrendData.length ? (
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={frameTrendData} margin={{ top: 8, right: 16, left: -14, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#344253" />
+                  <XAxis dataKey="second" tickFormatter={(second) => formatTime(second)} tick={{ fill: '#afbdcb', fontSize: 10 }} axisLine={{ stroke: '#526174' }} tickLine={{ stroke: '#526174' }} />
+                  <YAxis allowDecimals={false} tick={{ fill: '#afbdcb', fontSize: 10 }} axisLine={{ stroke: '#526174' }} tickLine={{ stroke: '#526174' }} />
+                  <Tooltip
+                    labelFormatter={(second) => `${formatTime(Number(second))}–${formatTime(Number(second) + 10)}`}
+                    contentStyle={{ color: '#e6edf5', background: '#172231', border: '1px solid #39495b', borderRadius: 7 }}
+                  />
+                  <Line dataKey="detections" name="Detections" type="monotone" stroke="#44c384" strokeWidth={2.5} dot={{ r: 3, fill: '#44c384' }} activeDot={{ r: 5 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : <div className="live-ai-chart-empty">Detection timeline will appear after video analysis.</div>}
+          </section>
         </section>
       )}
 
       {activePage === 'events' && (
         <>
-      <section className="live-ai-card live-ai-table-card">
-        <div className="live-ai-card-heading">
-          <div>
-            <h2>Recently Detected Number Plates</h2>
-            <p>Unique tracked plate objects · repeated, valid OCR readings only · no official registration verification.</p>
-          </div>
-          <span className="live-ai-result-count">{filteredPlates.length} plate tracks</span>
-        </div>
-        <div className="live-ai-table-filters">
-          <label className="live-ai-search">
-            <Search size={15} />
-            <input
-              aria-label="Search plate, track ID, or source"
-              onChange={(event) => resetPlateFilters(event.target.value)}
-              placeholder="Search plate, track ID, source"
-              value={plateSearch}
-            />
-          </label>
-          <select
-            aria-label="Filter plate recognition status"
-            onChange={(event) => resetPlateFilters(plateSearch, event.target.value)}
-            value={plateStatusFilter}
-          >
-            <option value="">All recognition statuses</option>
-            <option value="Confirmed">Confirmed</option>
-            <option value="Pending verification">Pending verification</option>
-            <option value="Unreadable">Unreadable</option>
-          </select>
-          <select aria-label="Filter by source" onChange={(event) => setLiveFilters({ source: event.target.value })} value={sourceFilter}>
-            <option value="">All sources</option>
-            {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
-          </select>
-          <input
-            aria-label="Filter from clip time in seconds"
-            className="live-ai-time-filter"
-            min="0"
-            onChange={(event) => setLiveFilters({ from: event.target.value })}
-            placeholder="From (sec)"
-            type="number"
-            value={fromSeconds}
-          />
-          <input
-            aria-label="Filter to clip time in seconds"
-            className="live-ai-time-filter"
-            min="0"
-            onChange={(event) => setLiveFilters({ to: event.target.value })}
-            placeholder="To (sec)"
-            type="number"
-            value={toSeconds}
-          />
-        </div>
-        <div className="live-ai-table-wrap">
-          <table className="live-ai-table">
-            <thead>
-              <tr>
-                <th>S. No.</th>
-                <th>Plate image</th>
-                <th>Plate number</th>
-                <th>OCR confidence</th>
-                <th>Associated vehicle</th>
-                <th>Detection confidence</th>
-                <th>Source</th>
-                <th>Detected at</th>
-                <th>Status / action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagedPlates.map((plate, index) => {
-                const associatedVehicle = vehicleById.get(plate.vehicleId)
-                return (
-                <tr
-                  aria-label={`Show details for ${plate.plateNumber || plate.plateStatus || 'unreadable plate'}`}
-                  key={plate.objectId}
-                  onClick={() => setSelectedRecord(plate)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      setSelectedRecord(plate)
-                    }
-                  }}
-                  tabIndex={0}
-                >
-                  <td>{(platePage - 1) * PAGE_SIZE + index + 1}</td>
-                  <td><span className="live-ai-plate-thumb">{plate.evidenceUrl ? <img alt="Plate crop" src={plate.evidenceUrl} /> : 'No crop'}</span></td>
-                  <td><PlateNumber value={plate.plateNumber} /></td>
-                  <td>{Number.isFinite(plate.ocrConfidence) ? `${(plate.ocrConfidence * 100).toFixed(1)}%` : '—'}</td>
-                  <td>{associatedVehicle ? `${associatedVehicle.label} · ${associatedVehicle.objectId}` : 'Unassociated'}</td>
-                  <td>{(plate.confidence * 100).toFixed(1)}%</td>
-                  <td>{plate.sourceId || '—'}</td>
-                  <td>{formatTimestamp(plate.lastSeenSeconds)}</td>
-                  <td className="live-ai-row-actions">
-                    <span className={`live-ai-state-pill ${plate.plateStatus === 'Confirmed' ? 'confirmed' : plate.plateStatus === 'Unreadable' ? 'unreadable' : 'pending'}`}>{plate.plateStatus || 'Unreadable'}</span>
-                    <button type="button" onClick={() => setSelectedRecord(plate)}>Details</button>
-                  </td>
-                </tr>
-              )})}
-              {!pagedPlates.length && (
-                <tr>
-                  <td className="live-ai-table-empty" colSpan="9">
-                    {analysis ? 'No license-plate records match these filters.' : 'Plate readings appear after video analysis.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <Pagination page={platePage} total={filteredPlates.length} onChange={setPlatePage} />
-      </section>
-
-      <section className="live-ai-card live-ai-table-card">
-        <div className="live-ai-card-heading">
-          <div>
-            <h2>Recently Detected Vehicles</h2>
-            <p>One row per tracked vehicle · temporary video crops stay in this browser and are cleared when analysis restarts.</p>
-          </div>
-          <span className="live-ai-result-count">{filteredVehicles.length} unique tracks</span>
-        </div>
-        <div className="live-ai-table-filters">
-          <label className="live-ai-search">
-            <Search size={15} />
-            <input
-              aria-label="Search vehicle, plate, or source"
-              onChange={(event) => resetVehicleFilters(event.target.value)}
-              placeholder="Search vehicle, track ID, plate, source"
-              value={vehicleSearch}
-            />
-          </label>
-          <select
-            aria-label="Filter vehicle type"
-            onChange={(event) => resetVehicleFilters(vehicleSearch, event.target.value)}
-            value={vehicleTypeFilter}
-          >
-            <option value="">All vehicle types</option>
-            {vehicleTypes.map((type) => <option key={type} value={type}>{type}</option>)}
-          </select>
-          <select aria-label="Filter by source" onChange={(event) => setLiveFilters({ source: event.target.value })} value={sourceFilter}>
-            <option value="">All sources</option>
-            {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
-          </select>
-          <input
-            aria-label="Filter from clip time in seconds"
-            className="live-ai-time-filter"
-            min="0"
-            onChange={(event) => setLiveFilters({ from: event.target.value })}
-            placeholder="From (sec)"
-            type="number"
-            value={fromSeconds}
-          />
-          <input
-            aria-label="Filter to clip time in seconds"
-            className="live-ai-time-filter"
-            min="0"
-            onChange={(event) => setLiveFilters({ to: event.target.value })}
-            placeholder="To (sec)"
-            type="number"
-            value={toSeconds}
-          />
-        </div>
-        {newRecordsWhileBrowsing > 0 && vehiclePage > 1 && (
-          <button
-            className="live-ai-new-records"
-            onClick={() => setNewRecordsWhileBrowsing(0)}
-            type="button"
-          >
-            {newRecordsWhileBrowsing} new tracked vehicle{newRecordsWhileBrowsing === 1 ? '' : 's'} detected. You are viewing older results.
-          </button>
-        )}
-        <div className="live-ai-table-wrap">
-          <table className="live-ai-table">
-            <thead>
-              <tr>
-                <th>S. No.</th>
-                <th>Vehicle image</th>
-                <th>Vehicle type</th>
-                <th>Tracking ID</th>
-                <th>Confidence</th>
-                <th>Plate number</th>
-                <th>Plate confidence</th>
-                <th>Camera / source</th>
-                <th>Detected at</th>
-                <th>Status / action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagedVehicles.map((vehicle, index) => {
-                const plate = plateByVehicleId.get(vehicle.objectId)
-                return (
-                <tr
-                  aria-label={`Show details for ${vehicle.label} ${vehicle.objectId}`}
-                  key={vehicle.objectId}
-                  onClick={() => setSelectedRecord(vehicle)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      setSelectedRecord(vehicle)
-                    }
-                  }}
-                  tabIndex={0}
-                >
-                  <td>{(vehiclePage - 1) * PAGE_SIZE + index + 1}</td>
-                  <td>
-                    {vehicleImageUrls[vehicle.objectId]
-                      ? <img className="live-ai-vehicle-thumb" src={vehicleImageUrls[vehicle.objectId]} alt={`Temporary crop of ${vehicle.label} ${vehicle.objectId}`} />
-                      : <span className="live-ai-vehicle-thumb-empty">Not captured</span>}
-                  </td>
-                  <td>{vehicle.label}</td>
-                  <td>{vehicle.objectId}</td>
-                  <td>{(vehicle.confidence * 100).toFixed(1)}%</td>
-                  <td><PlateNumber value={plate?.plateNumber} /></td>
-                  <td>{Number.isFinite(plate?.ocrConfidence) ? `${(plate.ocrConfidence * 100).toFixed(1)}%` : '—'}</td>
-                  <td>{vehicle.sourceId || '—'}</td>
-                  <td>{formatTimestamp(vehicle.lastSeenSeconds)}</td>
-                  <td className="live-ai-row-actions">
-                    <span className="live-ai-state-pill">Detected</span>
-                    <button type="button" onClick={() => setSelectedRecord(vehicle)}>Details</button>
-                  </td>
-                </tr>
-              )})}
-              {!pagedVehicles.length && (
-                <tr><td className="live-ai-table-empty" colSpan="10">{analysis ? 'No vehicle records match these filters.' : 'No video analysis results yet.'}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <Pagination page={vehiclePage} total={filteredVehicles.length} onChange={(page) => { setVehiclePage(page); setNewRecordsWhileBrowsing(0) }} />
-      </section>
-
-      <section className="live-ai-card live-ai-table-card">
-        <div className="live-ai-card-heading">
-          <div>
-            <h2>Violation event history</h2>
-            <p>Events are listed only when a model class explicitly indicates a violation.</p>
-          </div>
-          {analysis && <span className="live-ai-result-count">{analysis.violationEvents.length} events</span>}
-        </div>
-        <div className="live-ai-table-wrap">
-          <table className="live-ai-table">
-            <thead>
-              <tr>
-                <th>Video time</th>
-                <th>Violation</th>
-                <th>Detected object</th>
-                <th>Track ID</th>
-                <th>Confidence</th>
-                <th>Model</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(analysis?.violationEvents || []).map((event, index) => (
-                <tr
-                  aria-label={`Show details for ${event.type}`}
-                  key={`${event.model}-${event.timeSeconds}-${index}`}
-                  onClick={() => setSelectedRecord({
-                    objectId: event.trackId,
-                    label: event.object,
-                    model: event.model,
-                    confidence: event.confidence,
-                    lastSeenSeconds: event.timeSeconds,
-                    violationType: event.type,
+          <section className="live-ai-card live-ai-table-card">
+            <div className="live-ai-card-heading">
+              <div>
+                <h2>Recently Detected Number Plates</h2>
+                <p>Unique tracked plate objects · repeated, valid OCR readings only · no official registration verification.</p>
+              </div>
+              <span className="live-ai-result-count">{filteredPlates.length} plate tracks</span>
+            </div>
+            <div className="live-ai-table-filters">
+              <label className="live-ai-search">
+                <Search size={15} />
+                <input
+                  aria-label="Search plate, track ID, or source"
+                  onChange={(event) => resetPlateFilters(event.target.value)}
+                  placeholder="Search plate, track ID, source"
+                  value={plateSearch}
+                />
+              </label>
+              <select
+                aria-label="Filter plate recognition status"
+                onChange={(event) => resetPlateFilters(plateSearch, event.target.value)}
+                value={plateStatusFilter}
+              >
+                <option value="">All recognition statuses</option>
+                <option value="Confirmed">Confirmed</option>
+                <option value="Pending verification">Pending verification</option>
+                <option value="Unreadable">Unreadable</option>
+              </select>
+              <select aria-label="Filter by source" onChange={(event) => setLiveFilters({ source: event.target.value })} value={sourceFilter}>
+                <option value="">All sources</option>
+                {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
+              </select>
+              <input
+                aria-label="Filter from clip time in seconds"
+                className="live-ai-time-filter"
+                min="0"
+                onChange={(event) => setLiveFilters({ from: event.target.value })}
+                placeholder="From (sec)"
+                type="number"
+                value={fromSeconds}
+              />
+              <input
+                aria-label="Filter to clip time in seconds"
+                className="live-ai-time-filter"
+                min="0"
+                onChange={(event) => setLiveFilters({ to: event.target.value })}
+                placeholder="To (sec)"
+                type="number"
+                value={toSeconds}
+              />
+            </div>
+            <div className="live-ai-table-wrap">
+              <table className="live-ai-table">
+                <thead>
+                  <tr>
+                    <th>S. No.</th>
+                    <th>Plate image</th>
+                    <th>Plate number</th>
+                    <th>OCR confidence</th>
+                    <th>Associated vehicle</th>
+                    <th>Detection confidence</th>
+                    <th>Source</th>
+                    <th>Detected at</th>
+                    <th>Status / action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedPlates.map((plate, index) => {
+                    const associatedVehicle = vehicleById.get(plate.vehicleId)
+                    return (
+                      <tr
+                        aria-label={`Show details for ${plate.plateNumber || plate.plateStatus || 'unreadable plate'}`}
+                        key={plate.objectId}
+                        onClick={() => setSelectedRecord(plate)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setSelectedRecord(plate)
+                          }
+                        }}
+                        tabIndex={0}
+                      >
+                        <td>{(platePage - 1) * PAGE_SIZE + index + 1}</td>
+                        <td><span className="live-ai-plate-thumb">{plate.evidenceUrl ? <img alt="Plate crop" src={plate.evidenceUrl} /> : 'No crop'}</span></td>
+                        <td><PlateNumber value={plate.plateNumber} /></td>
+                        <td>{Number.isFinite(plate.ocrConfidence) ? `${(plate.ocrConfidence * 100).toFixed(1)}%` : '—'}</td>
+                        <td>{associatedVehicle ? `${associatedVehicle.label} · ${associatedVehicle.objectId}` : 'Unassociated'}</td>
+                        <td>{(plate.confidence * 100).toFixed(1)}%</td>
+                        <td>{plate.sourceId || '—'}</td>
+                        <td>{formatTimestamp(plate.lastSeenSeconds)}</td>
+                        <td className="live-ai-row-actions">
+                          <span className={`live-ai-state-pill ${plate.plateStatus === 'Confirmed' ? 'confirmed' : plate.plateStatus === 'Unreadable' ? 'unreadable' : 'pending'}`}>{plate.plateStatus || 'Unreadable'}</span>
+                          <button type="button" onClick={() => setSelectedRecord(plate)}>Details</button>
+                        </td>
+                      </tr>
+                    )
                   })}
-                  onKeyDown={(keyEvent) => {
-                    if (keyEvent.key === 'Enter' || keyEvent.key === ' ') {
-                      keyEvent.preventDefault()
-                      setSelectedRecord({
+                  {!pagedPlates.length && (
+                    <tr>
+                      <td className="live-ai-table-empty" colSpan="9">
+                        {analysis ? 'No license-plate records match these filters.' : 'Plate readings appear after video analysis.'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={platePage} total={filteredPlates.length} onChange={setPlatePage} />
+          </section>
+
+          <section className="live-ai-card live-ai-table-card">
+            <div className="live-ai-card-heading">
+              <div>
+                <h2>Recently Detected Vehicles</h2>
+                <p>One row per tracked vehicle · temporary video crops stay in this browser and are cleared when analysis restarts.</p>
+              </div>
+              <span className="live-ai-result-count">{filteredVehicles.length} unique tracks</span>
+            </div>
+            <div className="live-ai-table-filters">
+              <label className="live-ai-search">
+                <Search size={15} />
+                <input
+                  aria-label="Search vehicle, plate, or source"
+                  onChange={(event) => resetVehicleFilters(event.target.value)}
+                  placeholder="Search vehicle, track ID, plate, source"
+                  value={vehicleSearch}
+                />
+              </label>
+              <select
+                aria-label="Filter vehicle type"
+                onChange={(event) => resetVehicleFilters(vehicleSearch, event.target.value)}
+                value={vehicleTypeFilter}
+              >
+                <option value="">All vehicle types</option>
+                {vehicleTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+              <select aria-label="Filter by source" onChange={(event) => setLiveFilters({ source: event.target.value })} value={sourceFilter}>
+                <option value="">All sources</option>
+                {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
+              </select>
+              <input
+                aria-label="Filter from clip time in seconds"
+                className="live-ai-time-filter"
+                min="0"
+                onChange={(event) => setLiveFilters({ from: event.target.value })}
+                placeholder="From (sec)"
+                type="number"
+                value={fromSeconds}
+              />
+              <input
+                aria-label="Filter to clip time in seconds"
+                className="live-ai-time-filter"
+                min="0"
+                onChange={(event) => setLiveFilters({ to: event.target.value })}
+                placeholder="To (sec)"
+                type="number"
+                value={toSeconds}
+              />
+            </div>
+            {newRecordsWhileBrowsing > 0 && vehiclePage > 1 && (
+              <button
+                className="live-ai-new-records"
+                onClick={() => setNewRecordsWhileBrowsing(0)}
+                type="button"
+              >
+                {newRecordsWhileBrowsing} new tracked vehicle{newRecordsWhileBrowsing === 1 ? '' : 's'} detected. You are viewing older results.
+              </button>
+            )}
+            <div className="live-ai-table-wrap">
+              <table className="live-ai-table">
+                <thead>
+                  <tr>
+                    <th>S. No.</th>
+                    <th>Vehicle image</th>
+                    <th>Vehicle type</th>
+                    <th>Tracking ID</th>
+                    <th>Confidence</th>
+                    <th>Plate number</th>
+                    <th>Plate confidence</th>
+                    <th>Camera / source</th>
+                    <th>Detected at</th>
+                    <th>Status / action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedVehicles.map((vehicle, index) => {
+                    const plate = plateByVehicleId.get(vehicle.objectId)
+                    return (
+                      <tr
+                        aria-label={`Show details for ${vehicle.label} ${vehicle.objectId}`}
+                        key={vehicle.objectId}
+                        onClick={() => setSelectedRecord(vehicle)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setSelectedRecord(vehicle)
+                          }
+                        }}
+                        tabIndex={0}
+                      >
+                        <td>{(vehiclePage - 1) * PAGE_SIZE + index + 1}</td>
+                        <td>
+                          {vehicleImageUrls[vehicle.objectId]
+                            ? <img className="live-ai-vehicle-thumb" src={vehicleImageUrls[vehicle.objectId]} alt={`Temporary crop of ${vehicle.label} ${vehicle.objectId}`} />
+                            : <span className="live-ai-vehicle-thumb-empty">Not captured</span>}
+                        </td>
+                        <td>{vehicle.label}</td>
+                        <td>{vehicle.objectId}</td>
+                        <td>{(vehicle.confidence * 100).toFixed(1)}%</td>
+                        <td><PlateNumber value={plate?.plateNumber} /></td>
+                        <td>{Number.isFinite(plate?.ocrConfidence) ? `${(plate.ocrConfidence * 100).toFixed(1)}%` : '—'}</td>
+                        <td>{vehicle.sourceId || '—'}</td>
+                        <td>{formatTimestamp(vehicle.lastSeenSeconds)}</td>
+                        <td className="live-ai-row-actions">
+                          <span className="live-ai-state-pill">Detected</span>
+                          <button type="button" onClick={() => setSelectedRecord(vehicle)}>Details</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {!pagedVehicles.length && (
+                    <tr><td className="live-ai-table-empty" colSpan="10">{analysis ? 'No vehicle records match these filters.' : 'No video analysis results yet.'}</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={vehiclePage} total={filteredVehicles.length} onChange={(page) => { setVehiclePage(page); setNewRecordsWhileBrowsing(0) }} />
+          </section>
+
+          <section className="live-ai-card live-ai-table-card">
+            <div className="live-ai-card-heading">
+              <div>
+                <h2>Violation event history</h2>
+                <p>Events are listed only when a model class explicitly indicates a violation.</p>
+              </div>
+              {analysis && <span className="live-ai-result-count">{uniqueViolationEvents.length} events</span>}
+            </div>
+            <div className="live-ai-table-wrap">
+              <table className="live-ai-table">
+                <thead>
+                  <tr>
+                    <th>Video time</th>
+                    <th>Violation</th>
+                    <th>Detected object</th>
+                    <th>Track ID</th>
+                    <th>Confidence</th>
+                    <th>Model</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {uniqueViolationEvents.map((event, index) => (
+                    <tr
+                      aria-label={`Show details for ${event.type}`}
+                      key={`${event.model}-${event.trackId || event.timeSeconds}-${index}`}
+                      onClick={() => setSelectedRecord({
                         objectId: event.trackId,
                         label: event.object,
                         model: event.model,
                         confidence: event.confidence,
                         lastSeenSeconds: event.timeSeconds,
                         violationType: event.type,
-                      })
-                    }
-                  }}
-                  tabIndex={0}
-                >
-                  <td>{formatTimestamp(event.timeSeconds)}</td>
-                  <td>{event.type}</td>
-                  <td>{event.object}</td>
-                  <td>{event.trackId || 'Not supplied by model'}</td>
-                  <td>{(event.confidence * 100).toFixed(1)}%</td>
-                  <td>{event.model}</td>
-                </tr>
-              ))}
-              {(!analysis || !analysis.violationEvents.length) && (
-                <tr>
-                  <td className="live-ai-table-empty" colSpan="6">
-                    {analysis ? 'No supported violation classes were detected.' : 'No video analysis results yet.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                      })}
+                      onKeyDown={(keyEvent) => {
+                        if (keyEvent.key === 'Enter' || keyEvent.key === ' ') {
+                          keyEvent.preventDefault()
+                          setSelectedRecord({
+                            objectId: event.trackId,
+                            label: event.object,
+                            model: event.model,
+                            confidence: event.confidence,
+                            lastSeenSeconds: event.timeSeconds,
+                            violationType: event.type,
+                          })
+                        }
+                      }}
+                      tabIndex={0}
+                    >
+                      <td>{formatTimestamp(event.timeSeconds)}</td>
+                      <td>{event.type}</td>
+                      <td>{event.object}</td>
+                      <td>{event.trackId || 'Not supplied by model'}</td>
+                      <td>{(event.confidence * 100).toFixed(1)}%</td>
+                      <td>{event.model}</td>
+                    </tr>
+                  ))}
+                  {!uniqueViolationEvents.length && (
+                    <tr>
+                      <td className="live-ai-table-empty" colSpan="6">
+                        {analysis ? 'No supported violation classes were detected.' : 'No video analysis results yet.'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </>
       )}
       {selectedRecord && (

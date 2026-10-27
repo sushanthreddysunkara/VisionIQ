@@ -3,26 +3,30 @@ import { ArrowLeft, Video } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { navigation } from '../data/navigation'
 
-export default function Sidebar({ liveMode = false, onSwitchToExcelData }) {
+export default function Sidebar({
+  liveMode = false,
+  onSwitchToExcelData,
+  sidebarOpen = false,
+  setSidebarOpen = null,
+  isSidebarPinned = false,
+  isSidebarHovered = false,
+  handleSidebarMouseEnter = null,
+  handleSidebarMouseLeave = null,
+}) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
-  return (
-    <aside className="viq-dark-sidebar">
-      {/* ── 1. Top Brand Lockup (VIZIONIQ) ── */}
-      <div
-        className="viq-sidebar-brand"
-        onClick={() => navigate(liveMode ? '/live-view' : '/home')}
-        title="VisionIQ Home"
-      >
-        <div className="viq-sidebar-logo-lockup">
-          <span className="viq-brand-vizion">VIZION</span>
-          <span className="viq-brand-iq">IQ</span>
-        </div>
-        <div className="viq-sidebar-subtext">Highway Intelligence Platform</div>
-      </div>
+  const handleNavClick = () => {
+    if (setSidebarOpen) {
+      setSidebarOpen(false)
+    }
+    if (!isSidebarPinned && handleSidebarMouseLeave) {
+      handleSidebarMouseLeave()
+    }
+  }
 
   const isExpanded = isSidebarPinned || isSidebarHovered || sidebarOpen
+  const isLiveView = pathname === '/live-view'
 
   return (
     <aside
@@ -34,15 +38,20 @@ export default function Sidebar({ liveMode = false, onSwitchToExcelData }) {
     >
       {/* ── Primary Navigation List ── */}
       <nav aria-label="Primary navigation" className="viq-nav-list">
-        {liveMode ? (
+        {isLiveView ? (
           <>
-            <NavLink className="viq-nav-item active" to="/live-view">
+            <NavLink
+              className="viq-nav-item active"
+              onClick={handleNavClick}
+              to="/live-view"
+            >
               <Video className="viq-nav-icon" size={18} strokeWidth={2} />
               <span className="viq-nav-label">Live Feed</span>
             </NavLink>
             <button
               className="viq-nav-item"
               onClick={() => {
+                handleNavClick()
                 onSwitchToExcelData?.()
                 navigate('/home')
               }}
@@ -52,27 +61,29 @@ export default function Sidebar({ liveMode = false, onSwitchToExcelData }) {
               <span className="viq-nav-label">Back to Excel Data</span>
             </button>
           </>
-        ) : navigation.map(({ label, path, icon: Icon, exact }) => {
-          const isActive = pathname === path || (path === '/live-view' && pathname === '/')
+        ) : (
+          navigation.map(({ label, path, icon: Icon, exact }) => {
+            const isActive = pathname === path
 
-          return (
-            <NavLink
-              className={`viq-nav-item ${isActive ? 'active' : ''}`}
-              end={exact}
-              key={path}
-              onClick={handleNavClick}
-              title={label}
-              to={path}
-            >
-              {Icon === 'rupee' ? (
-                <span className="viq-nav-rupee-icon" aria-hidden="true">₹</span>
-              ) : (
-                <Icon className="viq-nav-icon" size={18} strokeWidth={2} />
-              )}
-              <span className="viq-nav-label">{label}</span>
-            </NavLink>
-          )
-        })}
+            return (
+              <NavLink
+                className={`viq-nav-item ${isActive ? 'active' : ''}`}
+                end={exact}
+                key={path}
+                onClick={handleNavClick}
+                title={label}
+                to={path}
+              >
+                {Icon === 'rupee' ? (
+                  <span className="viq-nav-rupee-icon" aria-hidden="true">₹</span>
+                ) : (
+                  <Icon className="viq-nav-icon" size={18} strokeWidth={2} />
+                )}
+                <span className="viq-nav-label">{label}</span>
+              </NavLink>
+            )
+          })
+        )}
       </nav>
 
       {/* ── Bottom Highway Graphic with "Smarter Highways Brighter India" ── */}

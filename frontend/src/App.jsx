@@ -86,7 +86,97 @@ export default function App() {
       return pathname === '/live-view'
     }
   })
-  const isLiveFeed = liveMode || pathname === '/live-view'
+  const isLiveFeed = pathname === '/live-view'
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [isSidebarPinned, setIsSidebarPinned] = useState(() => {
+    try {
+      const saved = localStorage.getItem('visioniq-sidebar-pinned')
+      return saved === 'true'
+    } catch {
+      return false
+    }
+  })
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false)
+
+  const hoverTimeoutRef = useRef(null)
+  const justUnpinnedRef = useRef(false)
+
+  const handleSidebarMouseEnter = () => {
+    if (justUnpinnedRef.current) return
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+      hoverTimeoutRef.current = null
+    }
+    setIsSidebarHovered(true)
+  }
+
+  const handleSidebarMouseLeave = () => {
+    justUnpinnedRef.current = false
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+    }
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsSidebarHovered(false)
+    }, 220)
+  }
+
+  const toggleSidebarPin = () => {
+    if (window.innerWidth <= 1024) {
+      setSidebarOpen((prev) => !prev)
+      return
+    }
+
+    setIsSidebarPinned((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('visioniq-sidebar-pinned', JSON.stringify(next))
+      } catch {}
+      if (!next) {
+        setIsSidebarHovered(false)
+        justUnpinnedRef.current = true
+        setTimeout(() => {
+          justUnpinnedRef.current = false
+        }, 400)
+      } else {
+        setIsSidebarHovered(true)
+      }
+      return next
+    })
+  }
+
+  // Automatically close sidebar drawer whenever route changes
+  useEffect(() => {
+    setSidebarOpen(false)
+    setIsSidebarHovered(false)
+  }, [pathname])
+
+  // Escape key closes/unpins sidebar immediately
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsSidebarHovered(false)
+        setSidebarOpen(false)
+        if (isSidebarPinned) {
+          setIsSidebarPinned(false)
+          try {
+            localStorage.setItem('visioniq-sidebar-pinned', 'false')
+          } catch {}
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isSidebarPinned])
+
+  const handleMainContentClick = () => {
+    if (sidebarOpen) {
+      setSidebarOpen(false)
+    }
+    if (!isSidebarPinned && isSidebarHovered) {
+      setIsSidebarHovered(false)
+    }
+  }
+
   const [searchOpen, setSearchOpen] = useState(false)
   const [projectList, setProjectList] = useState(() => {
     try {
@@ -202,10 +292,12 @@ export default function App() {
   }, [liveMode])
 
   useEffect(() => {
-    if (pathname === '/live-view' && !liveMode) {
-      setLiveMode(true)
+    if (pathname === '/live-view') {
+      if (!liveMode) setLiveMode(true)
+    } else {
+      if (liveMode) setLiveMode(false)
     }
-  }, [liveMode, pathname])
+  }, [pathname, liveMode])
 
   const [latestBatchInfo, setLatestBatchInfo] = useState({
     batchCount: 0,
@@ -772,11 +864,15 @@ export default function App() {
 
           <main className="main-content" onClick={handleMainContentClick}>
             <Topbar
+              handleSidebarMouseEnter={handleSidebarMouseEnter}
+              handleSidebarMouseLeave={handleSidebarMouseLeave}
+              isSidebarPinned={isSidebarPinned}
               liveMode={isLiveFeed}
               notificationSoundEnabled={notificationSoundEnabled}
-              onToggleStreamPause={handleToggleStreamPause}
               onToggleLiveMode={setLiveMode}
+              onToggleStreamPause={handleToggleStreamPause}
               searchOpen={searchOpen}
+              setIsSidebarHovered={setIsSidebarHovered}
               setNotificationSoundEnabled={setNotificationSoundEnabled}
               setSearchOpen={setSearchOpen}
               setSidebarOpen={setSidebarOpen}
@@ -787,17 +883,13 @@ export default function App() {
             />
 
             <section className="content-wrap">
-              {isLiveFeed && !['/live-view', '/home', '/'].includes(pathname) ? (
-                <Navigate replace to="/live-view" />
-              ) : <Routes>
+              <Routes>
                 {/* HOME */}
-                <Route path="/" element={<Navigate replace to={isLiveFeed ? '/live-view' : '/home'} />} />
+                <Route path="/" element={<Navigate replace to="/home" />} />
                 <Route
                   path="/home"
                   element={
-                    isLiveFeed ? (
-                      <LiveDetectionDashboard onSwitchToExcelData={() => setLiveMode(false)} />
-                    ) : !connectedProject ? (
+                    !connectedProject ? (
                       <ProjectConnectionRequired />
                     ) : (
                       <PlaceholderPage
@@ -819,16 +911,11 @@ export default function App() {
                 <Route
                   path="/live-view"
                   element={
-                    isLiveFeed ? (
-                      <LiveDetectionDashboard onSwitchToExcelData={() => setLiveMode(false)} />
-                    ) : <LiveViewPage
-                      dbStats={dbStats}
-                      fileName={fileName}
-                      latestBatchInfo={latestBatchInfo}
-                      onToggleStreamPause={handleToggleStreamPause}
-                      rows={trafficData}
-                      streamNotifications={streamNotifications}
-                      streamPaused={streamPaused}
+                    <LiveDetectionDashboard
+                      onSwitchToExcelData={() => {
+                        setLiveMode(false)
+                        navigate('/home')
+                      }}
                     />
                   }
                 />
@@ -1042,8 +1129,8 @@ export default function App() {
                   ))}
 
                 {/* UNKNOWN URL */}
-                <Route path="*" element={<Navigate replace to="/live-view" />} />
-              </Routes>}
+                <Route path="*" element={<Navigate replace to="/home" />} />
+              </Routes>
             </section>
           </main>
           {!isLiveFeed && <BottomCorridorBar />}

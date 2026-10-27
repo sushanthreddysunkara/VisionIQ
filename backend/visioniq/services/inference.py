@@ -55,8 +55,13 @@ VEHICLE_LABELS = {
 PLATE_LABELS = {"license plate", "license_plate", "number plate", "number_plate"}
 VIOLATION_LABELS = {
     "helmet": ("Helmet violation", ("no helmet", "without helmet", "helmetless")),
+    "helmet_detected": ("Helmet detected", ("with helmet",)),
     "overspeed": ("Overspeed", ("overspeed", "over speed", "speeding")),
     "distraction": ("Driver distraction", ("distract", "phone", "drows")),
+    "accident": ("Accident / Collision", ("accident", "accident_scene", "crash", "collision")),
+    "fire": ("Fire Incident", ("fire", "fire_accident", "flame")),
+    "pothole": ("Road Hazard (Pothole)", ("pothole", "hazard")),
+    "construction": ("Road Construction", ("construction", "road_construction", "road work")),
 }
 
 
@@ -165,7 +170,8 @@ def _load_plate_ocr(model_directory):
         except Exception:
             sys.modules.pop(package_name, None)
             raise
-        ocr = (reader, package.read_plate_crop_with_confidence, package.PlateVoter)
+        read_fn = getattr(package, "read_plate_crop_with_confidence", getattr(package, "read_plate_crop", None))
+        ocr = (reader, read_fn, package.PlateVoter)
         _PLATE_OCR_CACHE[key] = ocr
         return ocr
 
@@ -248,9 +254,14 @@ def _load_darknet_model(weights_path, config_path, names_path):
     with _MODEL_CACHE_LOCK:
         model = _MODEL_CACHE.get(key)
         if model is None:
-            model = cv2.dnn_DetectionModel(str(weights_path), str(config_path))
-            model.setInputParams(size=(416, 416), scale=1 / 255, swapRB=True)
-            _MODEL_CACHE[key] = model
+            try:
+                model = cv2.dnn_DetectionModel(str(weights_path), str(config_path))
+                model.setInputParams(size=(416, 416), scale=1 / 255, swapRB=True)
+                _MODEL_CACHE[key] = model
+            except Exception as error:
+                raise InferenceUnavailable(
+                    "Darknet .weights importer is not supported in OpenCV 5.x; YOLOv8 model will handle highway traffic detection."
+                ) from error
     with names_path.open(encoding="utf-8") as labels_file:
         labels = [line.strip() for line in labels_file if line.strip()]
     if not labels:
@@ -338,8 +349,8 @@ class _VideoObjectTracker:
             if (
                 track["model"] != model_name
                 or track["label"] != label
-                or elapsed <= 0
-                or elapsed > FRAME_SAMPLE_SECONDS * 2.5
+                or elapsed < -0.5
+                or elapsed > 4.0
             ):
                 continue
             previous_box = track["box"]
@@ -354,7 +365,7 @@ class _VideoObjectTracker:
                 (box[0] + box[2] / 2 - previous_box[0] - previous_box[2] / 2) ** 2
                 + (box[1] + box[3] / 2 - previous_box[1] - previous_box[3] / 2) ** 2
             ) ** 0.5
-            if overlap >= 0.1 or center_distance <= 0.08:
+            if overlap >= 0.08 or center_distance <= 0.20:
                 candidates.append((overlap, -center_distance, track_id))
 
         if candidates:
@@ -369,6 +380,42 @@ class _VideoObjectTracker:
             "timestamp": timestamp,
         }
         return track_id
+
+
+def _filter_and_nms_detections(detections, iou_threshold=0.45, min_confidence=0.35):
+    if not detections:
+        return []
+    filtered = [
+        d for d in detections
+        if d["confidence"] >= min_confidence or _is_plate_label(d["label"])
+    ]
+    if not filtered:
+        return []
+    sorted_dets = sorted(filtered, key=lambda d: d["confidence"], reverse=True)
+    kept = []
+    for det in sorted_dets:
+        box_a = det["box"]
+        suppressed = False
+        for k in kept:
+            if _is_plate_label(det["label"]) != _is_plate_label(k["label"]):
+                continue
+            box_b = k["box"]
+            xA = max(box_a[0], box_b[0])
+            yA = max(box_a[1], box_b[1])
+            xB = min(box_a[0] + box_a[2], box_b[0] + box_b[2])
+            yB = min(box_a[1] + box_a[3], box_b[1] + box_b[3])
+            interArea = max(0, xB - xA) * max(0, yB - yA)
+            boxAArea = max(box_a[2] * box_a[3], 1e-6)
+            boxBArea = max(box_b[2] * box_b[3], 1e-6)
+            unionArea = boxAArea + boxBArea - interArea
+            iou = interArea / unionArea if unionArea > 0 else 0
+            overlap_ratio = interArea / min(boxAArea, boxBArea)
+            if iou > iou_threshold or overlap_ratio > 0.65:
+                suppressed = True
+                break
+        if not suppressed:
+            kept.append(det)
+    return kept
 
 
 class VideoDetectionService:
@@ -423,8 +470,9 @@ class VideoDetectionService:
                     _is_vehicle_label(label) for label in labels
                 )
             except Exception as error:
-                logger.exception("Unable to initialize Darknet model %s.", weights_path.name)
-                model_warnings.append(f"{weights_path.name}: {error}")
+                logger.info("Optional Darknet model %s not loaded: %s", weights_path.name, error)
+                if not loaded_models:
+                    model_warnings.append(f"{weights_path.name}: {error}")
 
         if not loaded_models:
             details = "; ".join(model_warnings) or "No supported local vehicle or helmet model was found."
@@ -490,8 +538,14 @@ class VideoDetectionService:
             raise VideoValidationError("The video frame could not be decoded.")
 
         session = self._live_frame_session(session_id)
+        last_ts = session.get("last_timestamp", 0)
+        if timestamp < last_ts - 1.0:
+            session["tracker"]._tracks.clear()
+            session["tracker"]._next_id = 1
+        session["last_timestamp"] = timestamp
         height, width = image.shape[:2]
         detections = []
+        all_raw_detections = []
         with session["lock"], _VIDEO_MODEL_INFERENCE_LOCK:
             session["lastActivity"] = time.monotonic()
             for model_path, model in session["models"]:
@@ -499,13 +553,13 @@ class VideoDetectionService:
                     darknet_model, labels = model
                     class_ids, confidences, boxes = darknet_model.detect(
                         image,
-                        confThreshold=0.25,
+                        confThreshold=0.35,
                         nmsThreshold=0.45,
                     )
                     if class_ids is None:
                         continue
-                    model_detections = [
-                        {
+                    for class_id, confidence, box in zip(class_ids, confidences, boxes):
+                        all_raw_detections.append({
                             "label": labels[int(class_id)] if int(class_id) < len(labels) else str(int(class_id)),
                             "confidence": float(confidence),
                             "box": [
@@ -514,13 +568,13 @@ class VideoDetectionService:
                                 float(box[2]) / max(width, 1),
                                 float(box[3]) / max(height, 1),
                             ],
-                        }
-                        for class_id, confidence, box in zip(class_ids, confidences, boxes)
-                    ]
+                            "model_path": model_path,
+                        })
                 else:
                     predict_options = {
                         "source": image,
-                        "conf": 0.25,
+                        "conf": 0.35,
+                        "iou": 0.45,
                         "verbose": False,
                     }
                     if model_path.resolve() == self.vehicle_model_path.resolve():
@@ -531,7 +585,6 @@ class VideoDetectionService:
                     result = result_batch[0]
                     names = getattr(result, "names", None) or getattr(model, "names", {})
                     boxes = result.boxes
-                    model_detections = []
                     for box, confidence, class_id in zip(
                         boxes.xyxyn.cpu().tolist(),
                         boxes.conf.cpu().tolist(),
@@ -543,97 +596,102 @@ class VideoDetectionService:
                             if isinstance(names, dict)
                             else class_index
                         )
-                        model_detections.append({
+                        all_raw_detections.append({
                             "label": label,
                             "confidence": float(confidence),
                             "box": _normalized_xyxy_to_xywh(box),
+                            "model_path": model_path,
                         })
 
-                for model_detection in model_detections:
-                    model_detection["trackId"] = session["tracker"].assign(
-                        model_path.name,
-                        model_detection["label"],
-                        model_detection["box"],
-                        timestamp,
-                    )
+            model_detections = _filter_and_nms_detections(all_raw_detections, iou_threshold=0.45, min_confidence=0.35)
 
-                for model_detection in model_detections:
-                    label = model_detection["label"]
-                    track_id = model_detection["trackId"]
-                    violation_type = _violation_for_label(label)
-                    detection = {
-                        **model_detection,
-                        "confidence": round(model_detection["confidence"], 4),
-                        "box": [round(value, 6) for value in model_detection["box"]],
+            for model_detection in model_detections:
+                mpath = model_detection["model_path"]
+                model_detection["trackId"] = session["tracker"].assign(
+                    mpath.name,
+                    model_detection["label"],
+                    model_detection["box"],
+                    timestamp,
+                )
+
+            for model_detection in model_detections:
+                mpath = model_detection["model_path"]
+                label = model_detection["label"]
+                track_id = model_detection["trackId"]
+                violation_type = _violation_for_label(label)
+                detection = {
+                    "label": label,
+                    "confidence": round(model_detection["confidence"], 4),
+                    "box": [round(value, 6) for value in model_detection["box"]],
+                    "trackId": track_id,
+                    "model": mpath.name,
+                    "sourceId": source_id or session_id,
+                    "violationType": violation_type,
+                }
+                if _is_plate_label(label):
+                    detection.update(self._plate_details(
+                        image,
+                        model_detection,
+                        model_detections,
+                        mpath.name,
+                        track_id,
+                        session["plateOcr"],
+                    ))
+                detections.append(detection)
+                object_identifier = f"{mpath.name}:{track_id}"
+                detected_object = session["objects"].setdefault(object_identifier, {
+                    "objectId": object_identifier,
+                    "label": label,
+                    "isVehicle": _is_vehicle_label(label),
+                    "trackingAvailable": True,
+                    "firstSeenSeconds": timestamp,
+                    "lastSeenSeconds": timestamp,
+                    "confidence": detection["confidence"],
+                    "violationTypes": [],
+                    "violation": False,
+                    "model": mpath.name,
+                    "sourceId": source_id or session_id,
+                })
+                for key in ("plateNumber", "plateStatus", "vehicleId"):
+                    if key in detection:
+                        detected_object[key] = detection[key]
+                if detection.get("ocrConfidence") is not None:
+                    detected_object["ocrConfidence"] = max(
+                        detected_object.get("ocrConfidence") or 0,
+                        detection["ocrConfidence"],
+                    )
+                detected_object["lastSeenSeconds"] = timestamp
+                detected_object["confidence"] = max(
+                    detected_object["confidence"], detection["confidence"]
+                )
+                if violation_type and violation_type not in detected_object["violationTypes"]:
+                    detected_object["violationTypes"].append(violation_type)
+                    detected_object["violation"] = True
+                    session["violationEvents"].append({
+                        "timeSeconds": round(timestamp, 3),
+                        "type": violation_type,
+                        "object": label,
                         "trackId": track_id,
-                        "model": model_path.name,
-                        "sourceId": source_id or session_id,
-                        "violationType": violation_type,
-                    }
-                    if _is_plate_label(label):
-                        detection.update(self._plate_details(
-                            image,
-                            model_detection,
-                            model_detections,
-                            model_path.name,
-                            track_id,
-                            session["plateOcr"],
-                        ))
-                    detections.append(detection)
-                    object_identifier = f"{model_path.name}:{track_id}"
-                    detected_object = session["objects"].setdefault(object_identifier, {
-                        "objectId": object_identifier,
-                        "label": label,
-                        "isVehicle": _is_vehicle_label(label),
+                        "confidence": detection["confidence"],
+                        "model": mpath.name,
+                    })
+
+                if _is_vehicle_label(label):
+                    vehicle = session["vehicles"].setdefault(object_identifier, {
+                        "vehicleId": object_identifier,
+                        "type": label,
                         "trackingAvailable": True,
                         "firstSeenSeconds": timestamp,
                         "lastSeenSeconds": timestamp,
                         "confidence": detection["confidence"],
                         "violationTypes": [],
                         "violation": False,
-                        "model": model_path.name,
-                        "sourceId": source_id or session_id,
                     })
-                    for key in ("plateNumber", "plateStatus", "vehicleId"):
-                        if key in detection:
-                            detected_object[key] = detection[key]
-                    if detection.get("ocrConfidence") is not None:
-                        detected_object["ocrConfidence"] = max(
-                            detected_object.get("ocrConfidence") or 0,
-                            detection["ocrConfidence"],
-                        )
-                    detected_object["lastSeenSeconds"] = timestamp
-                    detected_object["confidence"] = max(
-                        detected_object["confidence"], detection["confidence"]
-                    )
-                    if violation_type and violation_type not in detected_object["violationTypes"]:
-                        detected_object["violationTypes"].append(violation_type)
-                        detected_object["violation"] = True
-                        session["violationEvents"].append({
-                            "timeSeconds": round(timestamp, 3),
-                            "type": violation_type,
-                            "object": label,
-                            "trackId": track_id,
-                            "confidence": detection["confidence"],
-                            "model": model_path.name,
-                        })
-
-                    if _is_vehicle_label(label):
-                        vehicle = session["vehicles"].setdefault(object_identifier, {
-                            "vehicleId": object_identifier,
-                            "type": label,
-                            "trackingAvailable": True,
-                            "firstSeenSeconds": timestamp,
-                            "lastSeenSeconds": timestamp,
-                            "confidence": detection["confidence"],
-                            "violationTypes": [],
-                            "violation": False,
-                        })
-                        vehicle["lastSeenSeconds"] = timestamp
-                        vehicle["confidence"] = max(vehicle["confidence"], detection["confidence"])
-                        if violation_type and violation_type not in vehicle["violationTypes"]:
-                            vehicle["violationTypes"].append(violation_type)
-                            vehicle["violation"] = True
+                    vehicle["lastSeenSeconds"] = timestamp
+                    vehicle["confidence"] = max(vehicle["confidence"], detection["confidence"])
+                    if violation_type and violation_type not in vehicle["violationTypes"]:
+                        vehicle["violationTypes"].append(violation_type)
+                        vehicle["violation"] = True
 
             session["sampledFrames"] = session.get("sampledFrames", 0) + 1
             categories = {}
@@ -726,9 +784,17 @@ class VideoDetectionService:
         top = max(0, min(height, int(y * height)))
         right = max(left, min(width, int((x + box_width) * width)))
         bottom = max(top, min(height, int((y + box_height) * height)))
-        crop = image[top:bottom, left:right]
-        reading, confidence = ocr["read"](ocr["reader"], crop)
-        details["ocrConfidence"] = round(confidence, 4) if confidence is not None else None
+        try:
+            read_res = ocr["read"](ocr["reader"], crop)
+            if isinstance(read_res, tuple) and len(read_res) >= 2:
+                reading, confidence = read_res[0], read_res[1]
+            else:
+                reading = read_res if isinstance(read_res, str) else (read_res[0] if read_res else "")
+                confidence = 0.90 if reading else None
+        except Exception:
+            reading = ""
+            confidence = None
+        details["ocrConfidence"] = round(float(confidence), 4) if confidence is not None else None
         confirmed = ocr["voter"].add(f"{model_name}:{track_id}", reading)
         if confirmed:
             details["plateNumber"] = confirmed
@@ -812,7 +878,8 @@ class VideoDetectionService:
                     else:
                         predict_options = {
                             "source": image,
-                            "conf": 0.25,
+                            "conf": 0.35,
+                            "iou": 0.45,
                             "verbose": False,
                         }
                         if model_path.resolve() == self.vehicle_model_path.resolve():

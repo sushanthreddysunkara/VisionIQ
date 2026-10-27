@@ -82,8 +82,10 @@ def _configured_path(name, default):
 
 def _default_model_directory():
     candidates = [
+        BASE_DIR.parent / "AI-Models",
         BASE_DIR.parent / "AIModel",
         BASE_DIR.parent / "ai_model",
+        BASE_DIR.parent / "backend" / "AI-Models",
         BASE_DIR.parent / "backend" / "AIModel",
         BASE_DIR.parent / "backend" / "ai_model",
     ]
@@ -91,7 +93,7 @@ def _default_model_directory():
         if candidate.exists():
             return candidate.resolve()
     # Fall back to the default project directory name, preserving the configured env override behavior.
-    return (BASE_DIR.parent / "AIModel").resolve()
+    return (BASE_DIR.parent / "AI-Models").resolve()
 
 
 DATA_DIRECTORY = _configured_path("DATA_DIRECTORY", BASE_DIR / "data")

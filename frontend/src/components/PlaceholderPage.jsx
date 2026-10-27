@@ -34,6 +34,7 @@ import { cameraFeeds, getCameraFeed } from '../data/cameraFeeds'
 import MediaPreviewModal from './MediaPreviewModal'
 import CameraFeedModal from './CameraFeedModal'
 import CorridorHighwayMap from './vehicle/CorridorHighwayMap'
+import { getCorridorById } from '../data/corridorsData'
 
 export default function PlaceholderPage({
   cameraCount = 0,
@@ -118,6 +119,17 @@ export default function PlaceholderPage({
     setCameraFeedOpen(true)
   }
 
+  const currentCorridor = useMemo(() => getCorridorById(activeCorridorId), [activeCorridorId])
+
+  const travelTimeFormatted = useMemo(() => {
+    if (currentCorridor.lengthKm && currentCorridor.avgSpeed) {
+      const hours = Math.floor(currentCorridor.lengthKm / currentCorridor.avgSpeed)
+      const mins = Math.round(((currentCorridor.lengthKm / currentCorridor.avgSpeed) % 1) * 60)
+      return `${hours > 0 ? `${hours} h ` : ''}${mins} m`
+    }
+    return '45 m'
+  }, [currentCorridor])
+
   // Fallback for non-home pages
   if (!isHomePage) {
     const page = navigation.find(({ path }) => path === pathname) ?? navigation[0]
@@ -141,7 +153,9 @@ export default function PlaceholderPage({
       <div className="corridor-top-header">
         <div className="corridor-title-group">
           <h1 className="corridor-page-title">Corridor Command View</h1>
-          <p className="corridor-page-subtitle">NH-44 · Hyderabad to Bengaluru · 570 km</p>
+          <p className="corridor-page-subtitle">
+            {currentCorridor.code} · {currentCorridor.routeTitle || currentCorridor.name} · {currentCorridor.lengthKm} km ({currentCorridor.highway || 'NH-44'})
+          </p>
         </div>
 
         <div className="corridor-header-actions">
@@ -171,10 +185,12 @@ export default function PlaceholderPage({
             <AlertTriangle size={20} strokeWidth={2.4} />
           </div>
           <div className="corridor-kpi-body">
-            <div className="corridor-kpi-number">12</div>
-            <div className="corridor-kpi-label">Active Incidents</div>
+            <div className="corridor-kpi-number">
+              {currentCorridor.activeIncidentsCount ?? (currentCorridor.incidents?.length || 0)}
+            </div>
+            <div className="corridor-kpi-label">Active Hazards</div>
             <div className="corridor-kpi-trend red">
-              <span className="trend-arrow">↑</span> +3 vs. yesterday
+              <span className="trend-arrow">●</span> {currentCorridor.riskBand || 'Active'} Risk Band
             </div>
           </div>
         </div>
@@ -185,8 +201,8 @@ export default function PlaceholderPage({
             <Car size={20} strokeWidth={2.4} />
           </div>
           <div className="corridor-kpi-body">
-            <div className="corridor-kpi-number">{formattedTotal}</div>
-            <div className="corridor-kpi-label">Vehicles (last 1 hour)</div>
+            <div className="corridor-kpi-number">{currentCorridor.dailyVolume || formattedTotal}</div>
+            <div className="corridor-kpi-label">Corridor Volume ({currentCorridor.code})</div>
             <div className="corridor-kpi-trend green">
               <span className="trend-arrow">↑</span> +8% vs. yesterday
             </div>
@@ -199,10 +215,10 @@ export default function PlaceholderPage({
             <Clock size={20} strokeWidth={2.4} />
           </div>
           <div className="corridor-kpi-body">
-            <div className="corridor-kpi-number">8 h 22 m</div>
+            <div className="corridor-kpi-number">{travelTimeFormatted}</div>
             <div className="corridor-kpi-label">Corridor Travel Time</div>
             <div className="corridor-kpi-trend orange">
-              <span className="trend-arrow">↑</span> +1 h 12 m vs normal
+              <span className="trend-arrow">Avg {currentCorridor.avgSpeed || 65} km/h</span> (Limit {currentCorridor.speedLimit || 80})
             </div>
           </div>
         </div>
@@ -213,7 +229,7 @@ export default function PlaceholderPage({
             <span className="rupee-icon">₹</span>
           </div>
           <div className="corridor-kpi-body">
-            <div className="corridor-kpi-number">₹ 1.28 Cr</div>
+            <div className="corridor-kpi-number">{currentCorridor.tollRevenue || '₹ 1.28 Cr'}</div>
             <div className="corridor-kpi-label">Toll Revenue (today)</div>
             <div className="corridor-kpi-trend green">
               <span className="trend-arrow">↑</span> +4% vs. yesterday
@@ -227,10 +243,10 @@ export default function PlaceholderPage({
             <Wrench size={20} strokeWidth={2.4} />
           </div>
           <div className="corridor-kpi-body">
-            <div className="corridor-kpi-number">5</div>
-            <div className="corridor-kpi-label">Asset Alerts</div>
+            <div className="corridor-kpi-number">{currentCorridor.camerasCount || 4}</div>
+            <div className="corridor-kpi-label">Monitored Cameras</div>
             <div className="corridor-kpi-trend amber">
-              <span className="trend-arrow">↑</span> 2 new today
+              <span className="trend-arrow">●</span> All Active
             </div>
           </div>
         </div>
@@ -241,18 +257,28 @@ export default function PlaceholderPage({
             <Leaf size={20} strokeWidth={2.4} />
           </div>
           <div className="corridor-kpi-body">
-            <div className="corridor-kpi-number">Fair</div>
+            <div className="corridor-kpi-number">{currentCorridor.statusType === 'critical' ? 'High Alert' : 'Normal Flow'}</div>
             <div className="corridor-kpi-label">Corridor Conditions</div>
-            <div className="corridor-kpi-subtext">
-              Rain Km 425–470 · fog near Devanahalli
+            <div className="corridor-kpi-subtext" style={{ fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {currentCorridor.keyLocations || 'Fair flow along highway checkpoints'}
             </div>
           </div>
         </div>
       </div>
 
-      {/* 3. HERO MAP: Live Highway View (Full Width, Live Feed Removed per request) */}
+      {/* 3. HERO MAP: Live Highway View & Respective Incidents Map */}
       <div className="corridor-map-section">
-        <CorridorHighwayMap selectedCorridorId={activeCorridorId} onOpenLiveCamera={handleOpenLiveFeed} />
+        <CorridorHighwayMap
+          selectedCorridorId={activeCorridorId}
+          onSelectCorridor={(id) => {
+            setActiveCorridorId(id)
+            try {
+              localStorage.setItem('visioniq-active-corridor', id)
+              window.dispatchEvent(new CustomEvent('visioniq:set-corridor', { detail: id }))
+            } catch {}
+          }}
+          onOpenLiveCamera={handleOpenLiveFeed}
+        />
       </div>
 
       {/* 4. REMAINING ANALYTICS & DATA MOVED DOWN: Clean Multi-Grid Layout */}

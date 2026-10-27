@@ -711,7 +711,7 @@ export default function CorridorHighwayMap({
   }, [onSelectIncident, activeWaypoints])
 
   return (
-    <div className="corridor-map-grid-container">
+    <div className="corridor-map-grid-container" id="corridor-highway-map-section">
       {/* ──────────────────────────────────────────────────────────────────────
           LEFT CARD: REAL LEAFLET LIVE HIGHWAY VIEW (MAP CONTAINER, ZOOM & PAN)
           ────────────────────────────────────────────────────────────────────── */}
