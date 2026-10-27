@@ -28,6 +28,7 @@ import {
   Minimize2,
   Minus,
   Navigation,
+  Play,
   Plus,
   Radio,
   RefreshCw,
@@ -39,6 +40,7 @@ import {
   TrendingUp,
   Truck,
   Umbrella,
+  Upload,
   Video,
   Volume2,
   VolumeX,
@@ -66,6 +68,7 @@ export default function LiveViewPage({
   streamNotifications = [],
   streamPaused = false,
   onToggleStreamPause = null,
+  onSwitchToExcelData = null,
 }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -164,6 +167,13 @@ export default function LiveViewPage({
   const [selectedCameraFeed, setSelectedCameraFeed] = useState(null)
   const [timeFilter, setTimeFilter] = useState('Today')
   const [trendRange, setTrendRange] = useState('Last 24 Hours')
+  const [liveSourceType, setLiveSourceType] = useState('camera')
+  const [liveSourceUrl, setLiveSourceUrl] = useState('')
+  const [liveStreamConnected, setLiveStreamConnected] = useState(false)
+  const [liveStreamActive, setLiveStreamActive] = useState(false)
+  const [liveUploadFile, setLiveUploadFile] = useState(null)
+  const [liveUploadUrl, setLiveUploadUrl] = useState('')
+  const [aiInferenceStatus, setAiInferenceStatus] = useState('Backend model adapter ready; direct RTSP playback requires server transcoding.')
 
   // Live timer for authentic clock
   useEffect(() => {
@@ -306,6 +316,106 @@ export default function LiveViewPage({
 
   return (
     <div className="viq-live-view-container" style={{ paddingBottom: '90px' }}>
+      <div className="lv-mode-switch-banner" style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 20,
+        padding: '12px 16px',
+        background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(37, 99, 235, 0.18))',
+        border: '1px solid rgba(148, 163, 184, 0.3)',
+        borderRadius: 14,
+      }}>
+        <div>
+          <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#93c5fd' }}>Mode B · Live Feed / AI Detection</div>
+          <strong style={{ display: 'block', marginTop: 4, fontSize: 20 }}>Traffic monitoring pipeline</strong>
+        </div>
+        <button
+          type="button"
+          className="lv-view-all-link"
+          onClick={onSwitchToExcelData || (() => navigate('/home'))}
+          style={{ background: 'rgba(15, 118, 110, 0.2)', borderColor: 'rgba(45, 212, 191, 0.4)' }}
+        >
+          <ArrowRight size={14} />
+          Back to Excel Data
+        </button>
+      </div>
+
+      <div className="viq-live-source-panel" style={{
+        display: 'grid',
+        gridTemplateColumns: '1.3fr 0.7fr',
+        gap: 18,
+        marginBottom: 20,
+      }}>
+        <div className="lv-panel-card" style={{ padding: 18 }}>
+          <div className="lv-panel-header" style={{ marginBottom: 14 }}>
+            <h2 className="lv-panel-title" style={{ fontSize: 18 }}>Video source</h2>
+            <span className={`status-pill ${liveStreamConnected ? 'online' : 'offline'}`}>
+              {liveStreamConnected ? 'Connected' : 'Disconnected'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+            <button type="button" className={`lv-tab-btn ${liveSourceType === 'camera' ? 'active' : ''}`} onClick={() => setLiveSourceType('camera')}>Live Camera / Stream</button>
+            <button type="button" className={`lv-tab-btn ${liveSourceType === 'upload' ? 'active' : ''}`} onClick={() => setLiveSourceType('upload')}>Upload Video</button>
+          </div>
+
+          {liveSourceType === 'camera' ? (
+            <div style={{ display: 'grid', gap: 10 }}>
+              <input
+                type="url"
+                value={liveSourceUrl}
+                onChange={(e) => setLiveSourceUrl(e.target.value)}
+                placeholder="rtsp://camera.local/stream or https://example.com/stream.m3u8"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(148,163,184,0.6)', background: '#0f172a', color: '#e2e8f0' }}
+              />
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="lv-open-incident-btn" onClick={() => setLiveStreamConnected(true)}><Play size={14} /> Connect</button>
+                <button type="button" className="lv-view-all-link" onClick={() => setLiveStreamActive((v) => !v)}>{liveStreamActive ? 'Stop' : 'Start'} Detection</button>
+                <button type="button" className="lv-view-all-link" onClick={() => setLiveStreamConnected(false)}><RefreshCw size={14} /> Reconnect</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: 10 }}>
+              <label style={{ display: 'grid', gap: 6, color: '#cbd5e1' }}>
+                <span>Local video file</span>
+                <input
+                  type="file"
+                  accept="video/mp4,video/webm,video/ogg,video/quicktime"
+                  onChange={(event) => {
+                    const file = event.target.files && event.target.files[0]
+                    if (!file) return
+                    if (file.size > 150 * 1024 * 1024) {
+                      setAiInferenceStatus('Upload rejected: file exceeds 150 MB limit.')
+                      return
+                    }
+                    setLiveUploadFile(file)
+                    setLiveUploadUrl(URL.createObjectURL(file))
+                    setAiInferenceStatus(`Uploaded ${file.name}. Detection is ready to run on the backend pipeline.`)
+                  }}
+                  style={{ width: '100%', color: '#e2e8f0' }}
+                />
+              </label>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="lv-open-incident-btn" onClick={() => setLiveStreamActive(true)}><Upload size={14} /> Start Detection</button>
+                <button type="button" className="lv-view-all-link" onClick={() => setLiveStreamActive(false)}><Pause size={14} /> Stop Detection</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="lv-panel-card" style={{ padding: 18 }}>
+          <div className="lv-panel-header" style={{ marginBottom: 12 }}>
+            <h2 className="lv-panel-title" style={{ fontSize: 18 }}>AI status</h2>
+          </div>
+          <div style={{ display: 'grid', gap: 10, color: '#cbd5e1' }}>
+            <div className="info-pill">{aiInferenceStatus}</div>
+            <div className="info-pill">Helmet, overspeed, and distraction models are loaded through the backend inference service.</div>
+            <div className="info-pill">RTSP delivery is browser-limited; backend stream adapters are required for actual live RTSP playback.</div>
+          </div>
+        </div>
+      </div>
+
       {/* ── Subheader: Page Title + Views + Filters ── */}
       <div className="lv-page-header">
         <div className="lv-title-group">

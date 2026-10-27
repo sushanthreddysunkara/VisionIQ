@@ -1,5 +1,6 @@
 node_modules/
 dist/
+AIModel/
 .vite/
 .venv/
 __pycache__/

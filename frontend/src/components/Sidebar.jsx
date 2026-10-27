@@ -1,8 +1,9 @@
 import React from 'react'
+import { ArrowLeft, Video } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { navigation } from '../data/navigation'
 
-export default function Sidebar() {
+export default function Sidebar({ liveMode = false, onSwitchToExcelData }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
@@ -11,7 +12,7 @@ export default function Sidebar() {
       {/* ── 1. Top Brand Lockup (VIZIONIQ) ── */}
       <div
         className="viq-sidebar-brand"
-        onClick={() => navigate('/home')}
+        onClick={() => navigate(liveMode ? '/live-view' : '/home')}
         title="VisionIQ Home"
       >
         <div className="viq-sidebar-logo-lockup">
@@ -23,7 +24,25 @@ export default function Sidebar() {
 
       {/* ── 2. Primary Navigation List ── */}
       <nav aria-label="Primary navigation" className="viq-nav-list">
-        {navigation.map(({ label, path, icon: Icon, exact }) => {
+        {liveMode ? (
+          <>
+            <NavLink className="viq-nav-item active" to="/live-view">
+              <Video className="viq-nav-icon" size={18} strokeWidth={2} />
+              <span className="viq-nav-label">Live Feed</span>
+            </NavLink>
+            <button
+              className="viq-nav-item"
+              onClick={() => {
+                onSwitchToExcelData?.()
+                navigate('/home')
+              }}
+              type="button"
+            >
+              <ArrowLeft className="viq-nav-icon" size={18} strokeWidth={2} />
+              <span className="viq-nav-label">Back to Excel Data</span>
+            </button>
+          </>
+        ) : navigation.map(({ label, path, icon: Icon, exact }) => {
           const isActive = pathname === path || (path === '/live-view' && pathname === '/')
 
           return (

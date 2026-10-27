@@ -23,6 +23,7 @@ import ProjectsPage from './components/projects/ProjectsPage'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import LiveViewPage from './components/LiveViewPage'
+import LiveDetectionDashboard from './components/LiveDetectionDashboard'
 import BottomCorridorBar from './components/BottomCorridorBar'
 import LoginPage from './components/auth/LoginPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
@@ -78,6 +79,14 @@ function normalizeStreamRows(rows) {
 export default function App() {
   const { isAuthenticated, loading } = useAuth()
   const { pathname } = useLocation()
+  const [liveMode, setLiveMode] = useState(() => {
+    try {
+      return pathname === '/live-view' || localStorage.getItem('visioniq-live-mode') === 'true'
+    } catch {
+      return pathname === '/live-view'
+    }
+  })
+  const isLiveFeed = liveMode || pathname === '/live-view'
   const [searchOpen, setSearchOpen] = useState(false)
   const [projectList, setProjectList] = useState(() => {
     try {
@@ -183,6 +192,21 @@ export default function App() {
 
   const [streamPaused, setStreamPaused] = useState(false)
   const streamPausedRef = useRef(false)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('visioniq-live-mode', liveMode ? 'true' : 'false')
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [liveMode])
+
+  useEffect(() => {
+    if (pathname === '/live-view' && !liveMode) {
+      setLiveMode(true)
+    }
+  }, [liveMode, pathname])
+
   const [latestBatchInfo, setLatestBatchInfo] = useState({
     batchCount: 0,
     timestamp: null,
@@ -201,7 +225,7 @@ export default function App() {
   })
 
   useEffect(() => {
-    if (!isAuthenticated) return
+    if (!isAuthenticated || isLiveFeed) return
     fetch(`${apiBaseUrl}/api/vehicles/stats`)
       .then((res) => res.json())
       .then((data) => {
@@ -210,7 +234,7 @@ export default function App() {
         }
       })
       .catch(() => undefined)
-  }, [isAuthenticated])
+  }, [isAuthenticated, isLiveFeed])
 
   const userUploadedFileRef = useRef(false)
 
@@ -264,7 +288,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!isAuthenticated) return undefined
+    if (!isAuthenticated || isLiveFeed) return undefined
 
     let isCancelled = false
     const lastBatchTimeRef = { current: Date.now() }
@@ -420,7 +444,7 @@ export default function App() {
       clearInterval(heartbeatInterval)
       socket.disconnect()
     }
-  }, [isAuthenticated])
+  }, [isAuthenticated, isLiveFeed])
 
   useEffect(() => {
     try {
@@ -706,6 +730,8 @@ export default function App() {
       <ErrorBoundary>
         <div className="app-shell">
           <Sidebar
+            liveMode={isLiveFeed}
+            onSwitchToExcelData={() => setLiveMode(false)}
             connectedProject={connectedProject}
             onCreateProject={handleCreateProject}
             onSelectProject={handleSelectProject}
@@ -715,8 +741,10 @@ export default function App() {
 
           <main className="main-content">
             <Topbar
+              liveMode={isLiveFeed}
               notificationSoundEnabled={notificationSoundEnabled}
               onToggleStreamPause={handleToggleStreamPause}
+              onToggleLiveMode={setLiveMode}
               searchOpen={searchOpen}
               setNotificationSoundEnabled={setNotificationSoundEnabled}
               setSearchOpen={setSearchOpen}
@@ -725,13 +753,17 @@ export default function App() {
             />
 
             <section className="content-wrap">
-              <Routes>
+              {isLiveFeed && !['/live-view', '/home', '/'].includes(pathname) ? (
+                <Navigate replace to="/live-view" />
+              ) : <Routes>
                 {/* HOME */}
-                <Route path="/" element={<Navigate replace to="/live-view" />} />
+                <Route path="/" element={<Navigate replace to={isLiveFeed ? '/live-view' : '/home'} />} />
                 <Route
                   path="/home"
                   element={
-                    !connectedProject ? (
+                    isLiveFeed ? (
+                      <LiveDetectionDashboard onSwitchToExcelData={() => setLiveMode(false)} />
+                    ) : !connectedProject ? (
                       <ProjectConnectionRequired />
                     ) : (
                       <PlaceholderPage
@@ -753,7 +785,9 @@ export default function App() {
                 <Route
                   path="/live-view"
                   element={
-                    <LiveViewPage
+                    isLiveFeed ? (
+                      <LiveDetectionDashboard onSwitchToExcelData={() => setLiveMode(false)} />
+                    ) : <LiveViewPage
                       dbStats={dbStats}
                       fileName={fileName}
                       latestBatchInfo={latestBatchInfo}
@@ -975,10 +1009,10 @@ export default function App() {
 
                 {/* UNKNOWN URL */}
                 <Route path="*" element={<Navigate replace to="/live-view" />} />
-              </Routes>
+              </Routes>}
             </section>
           </main>
-          <BottomCorridorBar />
+          {!isLiveFeed && <BottomCorridorBar />}
         </div>
       </ErrorBoundary>
     </ProtectedRoute>

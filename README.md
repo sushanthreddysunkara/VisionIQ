@@ -56,7 +56,8 @@ Edit `backend\.env` and provide:
 - `FRONTEND_URL`: exact React origin(s), comma-separated if needed.
 - `DJANGO_ALLOWED_HOSTS`: hostnames/IPs used to reach Django, comma-separated.
 - Optional `MYSQL_SSL`, `DJANGO_DEBUG`, `HOST`, `PORT`, `OLLAMA_HOST`,
-  `OLLAMA_MODEL`, `STREAM_INTERVAL`, `DATA_DIRECTORY`, and `AI_MODEL_PATH`.
+  `OLLAMA_MODEL`, `STREAM_INTERVAL`, `DATA_DIRECTORY`, `AI_MODEL_PATH`, and
+  `AI_VEHICLE_MODEL_PATH`.
 
 Do not commit `backend\.env`. It contains local secrets and is ignored by Git.
 Use only `backend\.env.example` as the placeholder template.
@@ -142,6 +143,10 @@ the existing bearer-token flow. Login continues to return `{token, user}`.
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Backend health |
+| `GET` | `/api/live-feed/models` | NH5, OpenCV, Ultralytics, and optional plate-OCR readiness |
+| `POST` | `/api/live-feed/analyze-image` | Run NH5 inference and optional plate OCR on an uploaded image |
+| `POST` | `/api/live-feed/analyze-video` | Analyze an uploaded video with supported local YOLO models; returns frame detections, tracked vehicle rows, and violation summaries |
+| `POST` | `/api/live-feed/analyze-frame` | Analyze one JPEG/PNG/WebP frame from local playback and return incremental detections, tracked objects, and chart summaries |
 | `POST` | `/api/vehicles/upload` | Store browser-parsed CSV/XLSX row batches |
 | `GET` | `/api/vehicles` | List telemetry rows |
 | `GET` | `/api/vehicles/search` | Search vehicle records and dossier details |
@@ -200,8 +205,31 @@ backend returns/logs an explicit error or uses the documented deterministic
 query fallback; it does not silently replace the configured database or claim
 to have generated AI predictions.
 
-Future image/video-frame inference is isolated behind
-`backend/visioniq/services/inference.py`. It validates JPEG/PNG/WebP frame
-content and size and reports that inference is unavailable until a model
-adapter is configured. No model is created, loaded, or trained as part of this
-migration.
+The separate Live Feed mode plays the selected video locally in the browser and
+sends a resized frame to `POST /api/live-feed/analyze-frame` every 0.5 seconds.
+Detection boxes, tracked vehicle rows, and chart summaries update as playback
+continues; the entire video is not uploaded or held until processing finishes.
+The endpoint keeps short-lived tracking state per browser-generated session ID.
+It uses the supplied NH5 Ultralytics model at
+`AIModel/nh5_yolov8n_960.pt` by default; override it with
+`AI_VEHICLE_MODEL_PATH` if needed. Model weights are not downloaded or
+duplicated automatically. Install the backend requirements to enable OpenCV
+decoding and Ultralytics inference. The browser overlay and API use normalized
+x/y/width/height boxes. The supplied `plate_ocr/` package is loaded directly
+from `AI_MODEL_PATH`; install `rapidocr` and `onnxruntime` (included in the
+backend requirements) to enable OCR. A plate reading is returned only after the
+supplied voter confirms the same valid Indian registration at least five
+times; this is not official registration verification. `GET
+/api/live-feed/models` reports weight and dependency readiness without loading
+large models. Video results remain separate from Excel/CSV telemetry and are
+not written to MySQL. The frontend overlays detections on the selected video
+and updates tracked vehicle records and video-derived charts during playback.
+
+The NH5 detector provides vehicle and plate localization, but those detections
+do not establish helmet violations or speeding. The supplied Darknet
+`obj.names` contains only `helmet`, so it cannot establish a missing-helmet
+violation or associate that helmet with a vehicle. No calibrated speed model
+is present. The driver-distraction `.pth` checkpoint is a bare state
+dictionary without its exact architecture or class mapping; it is not run
+against arbitrary full frames. The live dashboard reports these limitations
+instead of fabricating speed or violation results.
