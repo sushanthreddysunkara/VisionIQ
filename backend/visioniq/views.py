@@ -1,7 +1,10 @@
 import asyncio
 import logging
+import math
 import mimetypes
 import re
+import tempfile
+import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,6 +20,12 @@ from rest_framework.response import Response
 from .database import DatabaseUnavailable, fetch_all, fetch_one
 from .services import query as query_service
 from .services import stream
+from .services.inference import (
+    InferenceUnavailable,
+    VideoDetectionService,
+    VideoValidationError,
+    model_readiness,
+)
 from .services.vehicles import (
     incidents as get_incidents,
     list_vehicles as get_vehicles,
@@ -57,6 +66,153 @@ def _user_payload(row):
 @permission_classes([AllowAny])
 def health(request):
     return Response({"success": True, "message": "VisionIQ Django API is running."})
+
+
+@api_view(["POST"])
+def analyze_video(request):
+    uploaded_video = request.FILES.get("video")
+    if uploaded_video is None:
+        return Response(
+            {"success": False, "message": "Attach the video file using the 'video' form field."},
+            status=400,
+        )
+    allowed_extensions = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}
+    if Path(uploaded_video.name).suffix.lower() not in allowed_extensions:
+        return Response(
+            {"success": False, "message": "Supported video types are MP4, WebM, MOV, M4V, AVI, and MKV."},
+            status=400,
+        )
+    if uploaded_video.size <= 0:
+        return Response({"success": False, "message": "The uploaded video is empty."}, status=400)
+    if uploaded_video.size > 150 * 1024 * 1024:
+        return Response({"success": False, "message": "Video exceeds the 150 MB upload limit."}, status=413)
+    if uploaded_video.content_type and not uploaded_video.content_type.startswith("video/"):
+        return Response({"success": False, "message": "The uploaded file must be a video."}, status=400)
+
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=Path(uploaded_video.name).suffix.lower(),
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            for chunk in uploaded_video.chunks():
+                temporary_file.write(chunk)
+
+        result = VideoDetectionService(
+            settings.AI_MODEL_PATH,
+            settings.AI_VEHICLE_MODEL_PATH,
+        ).analyze_video(temporary_path, source_id=Path(uploaded_video.name).name)
+        return Response({"success": True, **result})
+    except VideoValidationError as error:
+        return Response({"success": False, "message": str(error)}, status=400)
+    except InferenceUnavailable as error:
+        logger.error("Video analysis unavailable: %s", error)
+        return Response({"success": False, "message": str(error)}, status=503)
+    except Exception:
+        logger.exception("Video analysis failed for uploaded file %s.", uploaded_video.name)
+        return Response(
+            {"success": False, "message": "Video analysis failed. Check the backend logs for details."},
+            status=500,
+        )
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+@api_view(["POST"])
+def analyze_video_frame(request):
+    uploaded_frame = request.FILES.get("frame")
+    if uploaded_frame is None:
+        return Response(
+            {"success": False, "message": "Attach a JPEG, PNG, or WebP frame using the 'frame' form field."},
+            status=400,
+        )
+    session_id = request.data.get("sessionId", "")
+    try:
+        session_id = str(uuid.UUID(str(session_id)))
+    except (ValueError, TypeError, AttributeError):
+        return Response({"success": False, "message": "A valid video analysis sessionId is required."}, status=400)
+    try:
+        timestamp = float(request.data.get("timeSeconds", 0))
+        duration = max(0.0, float(request.data.get("durationSeconds", 0)))
+    except (TypeError, ValueError):
+        return Response({"success": False, "message": "Video time and duration must be valid numbers."}, status=400)
+    if not math.isfinite(timestamp) or not math.isfinite(duration) or timestamp < 0:
+        return Response({"success": False, "message": "Video time and duration must be finite non-negative numbers."}, status=400)
+    if uploaded_frame.size <= 0 or uploaded_frame.size > 20 * 1024 * 1024:
+        return Response({"success": False, "message": "Frame size must be between 1 byte and 20 MB."}, status=413)
+
+    try:
+        result = VideoDetectionService(
+            settings.AI_MODEL_PATH,
+            settings.AI_VEHICLE_MODEL_PATH,
+        ).analyze_frame(
+            uploaded_frame.read(),
+            uploaded_frame.content_type,
+            session_id,
+            timestamp,
+            duration,
+            source_id=str(request.data.get("sourceId") or session_id)[:200],
+        )
+        return Response(result)
+    except (ValueError, VideoValidationError) as error:
+        return Response({"success": False, "message": str(error)}, status=400)
+    except InferenceUnavailable as error:
+        logger.error("Live frame analysis unavailable: %s", error)
+        return Response({"success": False, "message": str(error)}, status=503)
+    except Exception:
+        logger.exception("Live frame analysis failed for session %s.", session_id)
+        return Response(
+            {"success": False, "message": "Live frame analysis failed. Check the backend logs for details."},
+            status=500,
+        )
+
+
+@api_view(["POST"])
+def analyze_live_image(request):
+    uploaded_image = request.FILES.get("image")
+    if uploaded_image is None:
+        return Response(
+            {"success": False, "message": "Attach an image using the 'image' form field."},
+            status=400,
+        )
+    if uploaded_image.size <= 0 or uploaded_image.size > 20 * 1024 * 1024:
+        return Response({"success": False, "message": "Image size must be between 1 byte and 20 MB."}, status=413)
+    session_id = str(uuid.uuid4())
+    try:
+        result = VideoDetectionService(
+            settings.AI_MODEL_PATH,
+            settings.AI_VEHICLE_MODEL_PATH,
+        ).analyze_frame(
+            uploaded_image.read(),
+            uploaded_image.content_type,
+            session_id,
+            0,
+            0,
+            source_id=str(request.data.get("sourceId") or Path(uploaded_image.name).name)[:200],
+        )
+        return Response(result)
+    except (ValueError, VideoValidationError) as error:
+        return Response({"success": False, "message": str(error)}, status=400)
+    except InferenceUnavailable as error:
+        logger.error("Image analysis unavailable: %s", error)
+        return Response({"success": False, "message": str(error)}, status=503)
+    except Exception:
+        logger.exception("Live image analysis failed for source %s.", uploaded_image.name)
+        return Response(
+            {"success": False, "message": "Image analysis failed. Check the backend logs for details."},
+            status=500,
+        )
+
+
+@api_view(["GET"])
+def live_model_status(request):
+    return Response({
+        "success": True,
+        **model_readiness(settings.AI_MODEL_PATH, settings.AI_VEHICLE_MODEL_PATH),
+    })
 
 
 @api_view(["GET"])

@@ -21,12 +21,8 @@ export default function Topbar({
   setNotificationSoundEnabled,
   streamPaused = false,
   onToggleStreamPause = null,
-  sidebarOpen = false,
-  setSidebarOpen = null,
-  isSidebarPinned = false,
-  toggleSidebarPin = null,
-  handleSidebarMouseEnter = null,
-  handleSidebarMouseLeave = null,
+  liveMode = false,
+  onToggleLiveMode = null,
 }) {
   const { user, logout } = useAuth()
   const { pathname } = useLocation()
@@ -157,20 +153,45 @@ export default function Topbar({
         </div>
       </div>
 
+      <div className="topbar-mode-switcher" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button
+          className={`topbar-mode-btn ${!liveMode ? 'active' : ''}`}
+          onClick={() => {
+            onToggleLiveMode?.(false)
+            navigate('/home')
+          }}
+          type="button"
+        >
+          Excel Data
+        </button>
+        <button
+          className={`topbar-mode-btn ${liveMode ? 'active' : ''}`}
+          onClick={() => {
+            onToggleLiveMode?.(true)
+            navigate('/live-view')
+          }}
+          type="button"
+        >
+          Live Feed
+        </button>
+      </div>
+
       {/* 2. Center Pill Search Bar */}
-      <form className="topbar-center-search-form" onSubmit={handleSearchSubmit}>
-        <Search className="topbar-search-icon" size={16} strokeWidth={2.2} />
-        <input
-          aria-label="Search location, camera, incident or asset..."
-          className="topbar-search-input"
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search location, camera, incident or asset..."
-          ref={searchInputRef}
-          type="text"
-          value={searchQuery}
-        />
-        <span className="topbar-search-kbd" title="Press / to search">/</span>
-      </form>
+      {!liveMode && (
+        <form className="topbar-center-search-form" onSubmit={handleSearchSubmit}>
+          <Search className="topbar-search-icon" size={16} strokeWidth={2.2} />
+          <input
+            aria-label="Search location, camera, incident or asset..."
+            className="topbar-search-input"
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search location, camera, incident or asset..."
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+          />
+          <span className="topbar-search-kbd" title="Press / to search">/</span>
+        </form>
+      )}
 
       {/* 3. Right Status Actions */}
       <div className="topbar-right-meta">
@@ -196,10 +217,10 @@ export default function Topbar({
           <strong>{formattedTime}</strong>
         </div>
 
-        <span className="topbar-divider-pipe">|</span>
+        {!liveMode && <span className="topbar-divider-pipe">|</span>}
 
         {/* Stream pause toggle (optional discrete icon) */}
-        {onToggleStreamPause && (
+        {!liveMode && onToggleStreamPause && (
           <button
             type="button"
             className={`topbar-mini-stream-btn ${streamPaused ? 'paused' : 'live'}`}
@@ -211,7 +232,7 @@ export default function Topbar({
         )}
 
         {/* Notification Bell with Badge */}
-        <div className="notification-wrap" ref={notificationWrapRef}>
+        {!liveMode && <div className="notification-wrap" ref={notificationWrapRef}>
           <button
             aria-expanded={notificationsOpen}
             aria-haspopup="menu"
@@ -301,7 +322,7 @@ export default function Topbar({
               </button>
             </div>
           )}
-        </div>
+        </div>}
 
         {/* User Avatar Circle */}
         <div className="topbar-user-wrap" ref={accountWrapRef}>

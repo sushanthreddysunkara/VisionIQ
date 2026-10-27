@@ -4,6 +4,10 @@ from . import views
 
 urlpatterns = [
     path("api/health", views.health, name="health"),
+    path("api/live-feed/analyze-video", views.analyze_video, name="live-feed-analyze-video"),
+    path("api/live-feed/analyze-frame", views.analyze_video_frame, name="live-feed-analyze-frame"),
+    path("api/live-feed/analyze-image", views.analyze_live_image, name="live-feed-analyze-image"),
+    path("api/live-feed/models", views.live_model_status, name="live-feed-model-status"),
     path("api/vehicles/upload", views.upload_vehicles, name="vehicle-upload"),
     path("api/vehicles", views.list_vehicles, name="vehicle-list"),
     path("api/vehicles/search", views.search_vehicles, name="vehicle-search"),
