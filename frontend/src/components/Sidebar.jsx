@@ -22,7 +22,17 @@ export default function Sidebar({ liveMode = false, onSwitchToExcelData }) {
         <div className="viq-sidebar-subtext">Highway Intelligence Platform</div>
       </div>
 
-      {/* ── 2. Primary Navigation List ── */}
+  const isExpanded = isSidebarPinned || isSidebarHovered || sidebarOpen
+
+  return (
+    <aside
+      className={`viq-dark-sidebar ${isExpanded ? 'is-open' : 'is-closed'} ${
+        isSidebarPinned ? 'is-pinned' : 'is-unpinned'
+      }`}
+      onMouseEnter={handleSidebarMouseEnter}
+      onMouseLeave={handleSidebarMouseLeave}
+    >
+      {/* ── Primary Navigation List ── */}
       <nav aria-label="Primary navigation" className="viq-nav-list">
         {liveMode ? (
           <>
@@ -50,6 +60,8 @@ export default function Sidebar({ liveMode = false, onSwitchToExcelData }) {
               className={`viq-nav-item ${isActive ? 'active' : ''}`}
               end={exact}
               key={path}
+              onClick={handleNavClick}
+              title={label}
               to={path}
             >
               {Icon === 'rupee' ? (
@@ -63,7 +75,7 @@ export default function Sidebar({ liveMode = false, onSwitchToExcelData }) {
         })}
       </nav>
 
-      {/* ── 3. Bottom Highway Graphic with "Smarter Highways Brighter India" ── */}
+      {/* ── Bottom Highway Graphic with "Smarter Highways Brighter India" ── */}
       <div className="viq-sidebar-bottom-graphic">
         <img
           src="/images/sidebar_highway_bg.jpg"

@@ -2,6 +2,7 @@ import {
   Bell,
   ChevronDown,
   LogOut,
+  Menu,
   Play,
   Search,
   Settings2,
@@ -104,8 +105,33 @@ export default function Topbar({
 
   return (
     <header className="viq-global-topbar">
-      {/* 1. Brand Logo + Slogan */}
-      <div className="topbar-brand-section">
+      {/* 1. Brand Logo + Single 3-Bar Toggle Button */}
+      <div
+        className="topbar-brand-section"
+        onMouseEnter={handleSidebarMouseEnter}
+        onMouseLeave={handleSidebarMouseLeave}
+      >
+        <button
+          type="button"
+          className={`topbar-menu-toggle-btn ${isSidebarPinned ? 'is-pinned' : ''} ${sidebarOpen ? 'is-active' : ''}`}
+          onClick={toggleSidebarPin}
+          aria-label={
+            isSidebarPinned
+              ? 'Sidebar is Fixed (Click to unpin and close)'
+              : sidebarOpen
+              ? 'Close sidebar'
+              : 'Toggle or Fix sidebar'
+          }
+          title={
+            isSidebarPinned
+              ? 'Sidebar is Fixed (Click to unpin & close)'
+              : 'Hover to preview · Click to Fix/Pin sidebar'
+          }
+        >
+          <Menu size={20} strokeWidth={2.5} />
+          {isSidebarPinned && <span className="pin-active-dot" />}
+        </button>
+
         <div
           className="topbar-brand-lockup"
           onClick={() => navigate('/home')}

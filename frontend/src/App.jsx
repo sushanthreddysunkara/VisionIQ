@@ -728,18 +728,49 @@ export default function App() {
   return (
     <ProtectedRoute>
       <ErrorBoundary>
-        <div className="app-shell">
+        <div
+          className={`app-shell ${
+            isSidebarPinned ? 'sidebar-pinned' : 'sidebar-unpinned'
+          } ${isSidebarHovered ? 'sidebar-hovered' : ''}`}
+        >
+          {/* Subtle edge hover zone to expand unpinned sidebar on desktop */}
+          {!isSidebarPinned && !isSidebarHovered && (
+            <div
+              className="sidebar-edge-hover-zone"
+              onMouseEnter={handleSidebarMouseEnter}
+              aria-hidden="true"
+            />
+          )}
+
+          {/* Mobile backdrop overlay */}
+          {sidebarOpen && (
+            <div
+              className="viq-sidebar-backdrop"
+              onClick={() => {
+                setSidebarOpen(false)
+                setIsSidebarHovered(false)
+              }}
+              aria-hidden="true"
+            />
+          )}
+
           <Sidebar
             liveMode={isLiveFeed}
             onSwitchToExcelData={() => setLiveMode(false)}
             connectedProject={connectedProject}
+            handleSidebarMouseEnter={handleSidebarMouseEnter}
+            handleSidebarMouseLeave={handleSidebarMouseLeave}
+            isSidebarHovered={isSidebarHovered}
+            isSidebarPinned={isSidebarPinned}
             onCreateProject={handleCreateProject}
             onSelectProject={handleSelectProject}
             projectList={projectList}
             selectedProject={selectedProject}
+            setSidebarOpen={setSidebarOpen}
+            sidebarOpen={sidebarOpen}
           />
 
-          <main className="main-content">
+          <main className="main-content" onClick={handleMainContentClick}>
             <Topbar
               liveMode={isLiveFeed}
               notificationSoundEnabled={notificationSoundEnabled}
@@ -748,8 +779,11 @@ export default function App() {
               searchOpen={searchOpen}
               setNotificationSoundEnabled={setNotificationSoundEnabled}
               setSearchOpen={setSearchOpen}
+              setSidebarOpen={setSidebarOpen}
+              sidebarOpen={sidebarOpen}
               streamNotifications={streamNotifications}
               streamPaused={streamPaused}
+              toggleSidebarPin={toggleSidebarPin}
             />
 
             <section className="content-wrap">
