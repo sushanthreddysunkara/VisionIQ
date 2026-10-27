@@ -655,7 +655,12 @@ export default function CorridorsComparisonDashboard({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <button
               type="button"
-              onClick={() => navigate(`/live-view?tab=map&corridor=${encodeURIComponent(activeCorridorId)}`)}
+              onClick={() => {
+                const mapEl = document.getElementById('active-corridor-map-section')
+                if (mapEl) {
+                  mapEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }
+              }}
               style={{
                 background: '#ffffff',
                 color: '#1e293b',
@@ -670,10 +675,10 @@ export default function CorridorsComparisonDashboard({
                 gap: '6px',
                 transition: 'all 0.15s',
               }}
-              title="Open full screen live map and camera telemetry"
+              title="Scroll to corridor highway map and camera telemetry"
             >
-              <span>Full Screen Live Map</span>
-              <span style={{ fontSize: '13px' }}>↗</span>
+              <span>Corridor Highway Map</span>
+              <span style={{ fontSize: '13px' }}>↓</span>
             </button>
 
             <button

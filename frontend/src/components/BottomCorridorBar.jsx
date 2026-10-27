@@ -58,12 +58,14 @@ export default function BottomCorridorBar() {
     try {
       localStorage.setItem('visioniq-active-corridor', corridorId)
       window.dispatchEvent(new CustomEvent('visioniq:set-corridor', { detail: corridorId }))
-      window.dispatchEvent(new CustomEvent('visioniq:switch-tab', { detail: 'map' }))
+      if (pathname === '/live-view') {
+        window.dispatchEvent(new CustomEvent('visioniq:switch-tab', { detail: 'map' }))
+      }
     } catch {
       // ignore
     }
 
-    // Open respective map and output view
+    // Open respective map and output view without navigating away from the page
     if (pathname === '/live-view') {
       window.dispatchEvent(new CustomEvent('visioniq:switch-tab', { detail: 'map' }))
       setTimeout(() => {
@@ -77,12 +79,18 @@ export default function BottomCorridorBar() {
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }, 50)
     } else {
-      navigate(`/live-view?tab=map&corridor=${encodeURIComponent(corridorId)}`)
-      window.dispatchEvent(new CustomEvent('visioniq:switch-tab', { detail: 'map' }))
+      // Stay on the Excel dashboard (/home, /dashboards, etc.) and scroll to the respective corridor map & incidents
+      setTimeout(() => {
+        const el = document.getElementById('corridor-highway-map-section')
+          || document.querySelector('.corridor-map-grid-container')
+          || document.querySelector('.corridor-highway-card')
+          || document.querySelector('.vi-corridor-overview-banner')
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 50)
     }
   }
 
-  // Global 'M' shortcut to quickly open active corridor map
+  // Global 'M' shortcut to quickly scroll to active corridor map without leaving current page
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (
@@ -92,18 +100,21 @@ export default function BottomCorridorBar() {
         return
       }
       if (e.key === 'm' || e.key === 'M') {
-        if (pathname !== '/live-view') {
-          navigate(`/live-view?tab=map&corridor=${encodeURIComponent(activeCorridorId)}`)
-        } else {
+        if (pathname === '/live-view') {
           window.dispatchEvent(new CustomEvent('visioniq:switch-tab', { detail: 'map' }))
           const el = document.querySelector('.corridor-map-section')
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        } else {
+          const el = document.getElementById('corridor-highway-map-section')
+            || document.querySelector('.corridor-map-grid-container')
+            || document.querySelector('.corridor-highway-card')
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [pathname, activeCorridorId, navigate])
+  }, [pathname, activeCorridorId])
 
   const handlePrev = () => {
     const prevIdx = (safeIndex - 1 + CORRIDORS_LIST.length) % CORRIDORS_LIST.length
@@ -236,15 +247,18 @@ export default function BottomCorridorBar() {
           type="button"
           className="bottom-map-toggle-btn"
           onClick={() => {
-            if (pathname !== '/live-view') {
-              navigate(`/live-view?tab=map&corridor=${encodeURIComponent(activeCorridorId)}`)
-            } else {
+            if (pathname === '/live-view') {
               window.dispatchEvent(new CustomEvent('visioniq:switch-tab', { detail: 'map' }))
               const el = document.querySelector('.corridor-map-section')
               if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            } else {
+              const el = document.getElementById('corridor-highway-map-section')
+                || document.querySelector('.corridor-map-grid-container')
+                || document.querySelector('.corridor-highway-card')
+              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
             }
           }}
-          title="Open respective corridor map (Shortcut M)"
+          title="Scroll to active corridor map (Shortcut M)"
         >
           <Map size={13} />
           <span>Map</span>

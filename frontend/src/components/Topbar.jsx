@@ -23,6 +23,13 @@ export default function Topbar({
   onToggleStreamPause = null,
   liveMode = false,
   onToggleLiveMode = null,
+  sidebarOpen = false,
+  setSidebarOpen = null,
+  isSidebarPinned = false,
+  toggleSidebarPin = null,
+  handleSidebarMouseEnter = null,
+  handleSidebarMouseLeave = null,
+  setIsSidebarHovered = null,
 }) {
   const { user, logout } = useAuth()
   const { pathname } = useLocation()
@@ -119,8 +126,8 @@ export default function Topbar({
             isSidebarPinned
               ? 'Sidebar is Fixed (Click to unpin and close)'
               : sidebarOpen
-              ? 'Close sidebar'
-              : 'Toggle or Fix sidebar'
+                ? 'Close sidebar'
+                : 'Toggle or Fix sidebar'
           }
           title={
             isSidebarPinned
@@ -200,12 +207,12 @@ export default function Topbar({
           <span>For a Safer, Smarter, Stronger India.</span>
           <span className="topbar-flag" title="India">
             <svg width="22" height="15" viewBox="0 0 900 600" xmlns="http://www.w3.org/2000/svg">
-              <path fill="#FF9933" d="M0 0h900v200H0z"/>
-              <path fill="#FFFFFF" d="M0 200h900v200H0z"/>
-              <path fill="#128807" d="M0 400h900v200H0z"/>
-              <circle fill="#000088" cx="450" cy="300" r="80"/>
-              <circle fill="#FFFFFF" cx="450" cy="300" r="68"/>
-              <circle fill="#000088" cx="450" cy="300" r="16"/>
+              <path fill="#FF9933" d="M0 0h900v200H0z" />
+              <path fill="#FFFFFF" d="M0 200h900v200H0z" />
+              <path fill="#128807" d="M0 400h900v200H0z" />
+              <circle fill="#000088" cx="450" cy="300" r="80" />
+              <circle fill="#FFFFFF" cx="450" cy="300" r="68" />
+              <circle fill="#000088" cx="450" cy="300" r="16" />
             </svg>
           </span>
         </div>
