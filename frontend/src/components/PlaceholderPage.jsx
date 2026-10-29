@@ -275,7 +275,7 @@ export default function PlaceholderPage({
             try {
               localStorage.setItem('visioniq-active-corridor', id)
               window.dispatchEvent(new CustomEvent('visioniq:set-corridor', { detail: id }))
-            } catch {}
+            } catch { }
           }}
           onOpenLiveCamera={handleOpenLiveFeed}
         />

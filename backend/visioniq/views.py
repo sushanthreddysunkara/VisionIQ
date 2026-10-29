@@ -129,11 +129,11 @@ def analyze_video_frame(request):
             {"success": False, "message": "Attach a JPEG, PNG, or WebP frame using the 'frame' form field."},
             status=400,
         )
-    session_id = request.data.get("sessionId", "")
+    raw_session_id = str(request.data.get("sessionId") or "").strip()
     try:
-        session_id = str(uuid.UUID(str(session_id)))
+        session_id = str(uuid.UUID(raw_session_id))
     except (ValueError, TypeError, AttributeError):
-        return Response({"success": False, "message": "A valid video analysis sessionId is required."}, status=400)
+        session_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, raw_session_id)) if raw_session_id else str(uuid.uuid4())
     try:
         timestamp = float(request.data.get("timeSeconds", 0))
         duration = max(0.0, float(request.data.get("durationSeconds", 0)))

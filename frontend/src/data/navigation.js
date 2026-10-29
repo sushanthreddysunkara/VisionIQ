@@ -17,7 +17,6 @@ import {
 
 export const navigation = [
   { label: 'Dashboard', path: '/home', icon: Home, exact: true },
-  { label: 'Live Feed', path: '/live-view', icon: Video },
   { label: 'Toll & Revenue', path: '/toll-revenue', icon: CircleDollarSign },
   { label: 'Query', path: '/query', icon: Search },
   { label: 'Knowledge Graph', path: '/knowledge-graph', icon: Network },

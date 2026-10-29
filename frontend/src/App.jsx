@@ -24,6 +24,7 @@ import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import LiveViewPage from './components/LiveViewPage'
 import LiveDetectionDashboard from './components/LiveDetectionDashboard'
+import LiveInterface from './interfaces/live/LiveInterface'
 import BottomCorridorBar from './components/BottomCorridorBar'
 import LoginPage from './components/auth/LoginPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
@@ -79,14 +80,28 @@ function normalizeStreamRows(rows) {
 export default function App() {
   const { isAuthenticated, loading } = useAuth()
   const { pathname } = useLocation()
+  const isLiveFeed = pathname.startsWith('/live') || pathname === '/live-view'
   const [liveMode, setLiveMode] = useState(() => {
     try {
-      return pathname === '/live-view' || localStorage.getItem('visioniq-live-mode') === 'true'
+      return isLiveFeed || localStorage.getItem('visioniq-live-mode') === 'true'
     } catch {
-      return pathname === '/live-view'
+      return isLiveFeed
     }
   })
-  const isLiveFeed = pathname === '/live-view'
+
+  useEffect(() => {
+    if (pathname.startsWith('/live') || pathname === '/live-view') {
+      setLiveMode(true)
+      try {
+        localStorage.setItem('visioniq-live-mode', 'true')
+      } catch { }
+    } else {
+      setLiveMode(false)
+      try {
+        localStorage.setItem('visioniq-live-mode', 'false')
+      } catch { }
+    }
+  }, [pathname])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isSidebarPinned, setIsSidebarPinned] = useState(() => {
     try {
@@ -130,7 +145,7 @@ export default function App() {
       const next = !prev
       try {
         localStorage.setItem('visioniq-sidebar-pinned', JSON.stringify(next))
-      } catch {}
+      } catch { }
       if (!next) {
         setIsSidebarHovered(false)
         justUnpinnedRef.current = true
@@ -160,7 +175,7 @@ export default function App() {
           setIsSidebarPinned(false)
           try {
             localStorage.setItem('visioniq-sidebar-pinned', 'false')
-          } catch {}
+          } catch { }
         }
       }
     }
@@ -390,7 +405,7 @@ export default function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'resume' }),
-    }).catch(() => {})
+    }).catch(() => { })
 
     async function loadInitialVehicles() {
       try {
@@ -821,9 +836,8 @@ export default function App() {
     <ProtectedRoute>
       <ErrorBoundary>
         <div
-          className={`app-shell ${
-            isSidebarPinned ? 'sidebar-pinned' : 'sidebar-unpinned'
-          } ${isSidebarHovered ? 'sidebar-hovered' : ''}`}
+          className={`app-shell ${isSidebarPinned ? 'sidebar-pinned' : 'sidebar-unpinned'
+            } ${isSidebarHovered ? 'sidebar-hovered' : ''}`}
         >
           {/* Subtle edge hover zone to expand unpinned sidebar on desktop */}
           {!isSidebarPinned && !isSidebarHovered && (
@@ -907,18 +921,9 @@ export default function App() {
                   }
                 />
 
-                {/* LIVE VIEW - EXACT TARGET SCREEN */}
-                <Route
-                  path="/live-view"
-                  element={
-                    <LiveDetectionDashboard
-                      onSwitchToExcelData={() => {
-                        setLiveMode(false)
-                        navigate('/home')
-                      }}
-                    />
-                  }
-                />
+                {/* ── SEPARATE LIVE FEED INTERFACE (11 INDEPENDENT LIVE PAGES) ── */}
+                <Route path="/live/*" element={<LiveInterface />} />
+                <Route path="/live-view" element={<Navigate replace to="/live/home" />} />
 
                 {/* PROJECTS MANAGEMENT */}
                 <Route

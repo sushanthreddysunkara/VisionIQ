@@ -346,543 +346,543 @@ export default function DashboardDetail({
         </div>
       ) : (
         <>
-      {/* KPI METRIC CARDS */}
-      <div className="nh44-kpi-grid">
-        <div className="nh44-kpi-card">
-          <div className="kpi-icon-wrap" style={{ background: '#eff6ff', color: '#2563eb' }}>
-            <TrendingUp size={22} />
-          </div>
-          <div className="kpi-content">
-            <span className="kpi-label">Cumulative Ingested Data</span>
-            <div className="kpi-value-row">
-              <strong className="kpi-number">{safeRows.length}</strong>
-              <span className="kpi-delta-tag success">▲ Increasing</span>
-            </div>
-            <span className="kpi-subtext">Accumulating random batches (1–20) live</span>
-          </div>
-        </div>
-
-        <div className="nh44-kpi-card">
-          <div className="kpi-icon-wrap" style={{ background: '#fef2f2', color: '#ef4444' }}>
-            <AlertTriangle size={22} />
-          </div>
-          <div className="kpi-content">
-            <span className="kpi-label">Speeding Violations</span>
-            <div className="kpi-value-row">
-              <strong className="kpi-number" style={{ color: '#dc2626' }}>
-                {overspeedCount}
-              </strong>
-              <span className="kpi-delta-tag alert">{overspeedPercent}%</span>
-            </div>
-            <span className="kpi-subtext">Exceeding 60 km/h radar limit</span>
-          </div>
-        </div>
-
-        <div className="nh44-kpi-card">
-          <div className="kpi-icon-wrap" style={{ background: '#fffbeb', color: '#d97706' }}>
-            <Gauge size={22} />
-          </div>
-          <div className="kpi-content">
-            <span className="kpi-label">Average Speed</span>
-            <div className="kpi-value-row">
-              <strong className="kpi-number">{averageSpeed}</strong>
-              <span className="kpi-unit">km/h</span>
-            </div>
-            <span className="kpi-subtext">Monitored along NH-44 corridor</span>
-          </div>
-        </div>
-
-        <div className="nh44-kpi-card">
-          <div className="kpi-icon-wrap" style={{ background: '#ecfdf5', color: '#059669' }}>
-            <Camera size={22} />
-          </div>
-          <div className="kpi-content">
-            <span className="kpi-label">Active Checkpoints</span>
-            <div className="kpi-value-row">
-              <strong className="kpi-number">{summary.uniqueLocations || 4}</strong>
-              <span className="kpi-unit">gates</span>
-            </div>
-            <span className="kpi-subtext">Shamshabad, Shadnagar, Medchal</span>
-          </div>
-        </div>
-      </div>
-
-      {/* TRAFFIC FLOW SPECIFIC SECTION */}
-      {kind === 'traffic' && (
-        <section className="alternate-dashboard-layout traffic-flow-layout">
-          <div className="flow-command-panel">
-            <div className="flow-command-copy">
-              <p className="section-kicker">LIVE FLOW PULSE</p>
-              <h2>Corridor Radar Activity</h2>
-              <span>Calculated across {safeRows.length} active detections</span>
-            </div>
-            <div className="flow-pulse">
-              <Activity size={19} />
-              <strong>{summary.total.toLocaleString()}</strong>
-              <span>active detections</span>
-            </div>
-            <div className="flow-pulse warm">
-              <Gauge size={19} />
-              <strong>
-                {averageSpeed} <small>km/h</small>
-              </strong>
-              <span>average speed</span>
-            </div>
-            <div className="flow-pulse alert">
-              <Radio size={19} />
-              <strong>{overspeedCount}</strong>
-              <span>speed alerts</span>
-            </div>
-          </div>
-          <div className="flow-location-board">
-            <div className="alternate-section-heading">
-              <div>
-                <p className="section-kicker">PRESSURE DISTRIBUTION</p>
-                <h2>Corridor Segments</h2>
+          {/* KPI METRIC CARDS */}
+          <div className="nh44-kpi-grid">
+            <div className="nh44-kpi-card">
+              <div className="kpi-icon-wrap" style={{ background: '#eff6ff', color: '#2563eb' }}>
+                <TrendingUp size={22} />
               </div>
-              <span className="nh44-live-indicator">
-                <span className="pulse-dot" /> LIVE
-              </span>
+              <div className="kpi-content">
+                <span className="kpi-label">Cumulative Ingested Data</span>
+                <div className="kpi-value-row">
+                  <strong className="kpi-number">{safeRows.length}</strong>
+                  <span className="kpi-delta-tag success">▲ Increasing</span>
+                </div>
+                <span className="kpi-subtext">Accumulating random batches (1–20) live</span>
+              </div>
             </div>
-            {topLocations.length ? (
-              topLocations.map((location, index) => (
-                <div className="flow-location-row" key={location.name}>
-                  <span className="flow-location-rank">0{index + 1}</span>
+
+            <div className="nh44-kpi-card">
+              <div className="kpi-icon-wrap" style={{ background: '#fef2f2', color: '#ef4444' }}>
+                <AlertTriangle size={22} />
+              </div>
+              <div className="kpi-content">
+                <span className="kpi-label">Speeding Violations</span>
+                <div className="kpi-value-row">
+                  <strong className="kpi-number" style={{ color: '#dc2626' }}>
+                    {overspeedCount}
+                  </strong>
+                  <span className="kpi-delta-tag alert">{overspeedPercent}%</span>
+                </div>
+                <span className="kpi-subtext">Exceeding 60 km/h radar limit</span>
+              </div>
+            </div>
+
+            <div className="nh44-kpi-card">
+              <div className="kpi-icon-wrap" style={{ background: '#fffbeb', color: '#d97706' }}>
+                <Gauge size={22} />
+              </div>
+              <div className="kpi-content">
+                <span className="kpi-label">Average Speed</span>
+                <div className="kpi-value-row">
+                  <strong className="kpi-number">{averageSpeed}</strong>
+                  <span className="kpi-unit">km/h</span>
+                </div>
+                <span className="kpi-subtext">Monitored along NH-44 corridor</span>
+              </div>
+            </div>
+
+            <div className="nh44-kpi-card">
+              <div className="kpi-icon-wrap" style={{ background: '#ecfdf5', color: '#059669' }}>
+                <Camera size={22} />
+              </div>
+              <div className="kpi-content">
+                <span className="kpi-label">Active Checkpoints</span>
+                <div className="kpi-value-row">
+                  <strong className="kpi-number">{summary.uniqueLocations || 4}</strong>
+                  <span className="kpi-unit">gates</span>
+                </div>
+                <span className="kpi-subtext">Shamshabad, Shadnagar, Medchal</span>
+              </div>
+            </div>
+          </div>
+
+          {/* TRAFFIC FLOW SPECIFIC SECTION */}
+          {kind === 'traffic' && (
+            <section className="alternate-dashboard-layout traffic-flow-layout">
+              <div className="flow-command-panel">
+                <div className="flow-command-copy">
+                  <p className="section-kicker">LIVE FLOW PULSE</p>
+                  <h2>Corridor Radar Activity</h2>
+                  <span>Calculated across {safeRows.length} active detections</span>
+                </div>
+                <div className="flow-pulse">
+                  <Activity size={19} />
+                  <strong>{summary.total.toLocaleString()}</strong>
+                  <span>active detections</span>
+                </div>
+                <div className="flow-pulse warm">
+                  <Gauge size={19} />
+                  <strong>
+                    {averageSpeed} <small>km/h</small>
+                  </strong>
+                  <span>average speed</span>
+                </div>
+                <div className="flow-pulse alert">
+                  <Radio size={19} />
+                  <strong>{overspeedCount}</strong>
+                  <span>speed alerts</span>
+                </div>
+              </div>
+              <div className="flow-location-board">
+                <div className="alternate-section-heading">
                   <div>
-                    <strong>{location.name}</strong>
-                    <span>{location.value} detections</span>
+                    <p className="section-kicker">PRESSURE DISTRIBUTION</p>
+                    <h2>Corridor Segments</h2>
                   </div>
-                  <b>{Math.round((location.value / (summary.total || 1)) * 100)}%</b>
-                  <i>
-                    <em
-                      style={{
-                        width: `${Math.min(100, (location.value / (topLocations[0]?.value || 1)) * 100)}%`,
-                      }}
-                    />
-                  </i>
+                  <span className="nh44-live-indicator">
+                    <span className="pulse-dot" /> LIVE
+                  </span>
                 </div>
-              ))
-            ) : (
-              <p className="alternate-empty">Waiting for traffic records...</p>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* CAMERA COVERAGE SPECIFIC SECTION */}
-      {kind === 'cameras' && (
-        <section className="alternate-dashboard-layout camera-coverage-layout">
-          <div className="camera-coverage-hero">
-            <div>
-              <p className="section-kicker">NETWORK MANAGEMENT</p>
-              <h2>NH-44 Checkpoint Feeds</h2>
-              <span>Active optical cameras capturing live highway events</span>
-            </div>
-            <div className="coverage-ring">
-              <strong>{cameraRecords.length}</strong>
-              <span>sources</span>
-            </div>
-            <div className="camera-control-actions">
-              <button
-                className="primary-action camera-add-button"
-                onClick={() => setCameraDialogOpen(true)}
-                type="button"
-              >
-                <Camera size={15} />
-                Add new camera
-              </button>
-              <button
-                className="camera-remove-button"
-                onClick={() => setCameraRemoveDialogOpen(true)}
-                type="button"
-              >
-                <Trash2 size={15} />
-                Remove camera
-              </button>
-            </div>
-          </div>
-          <CameraFeedPanel cameras={cameraFeedOptions} camera={inlineCameraFeed} onSelectCamera={setInlineCameraFeed} />
-          <div className="camera-source-grid">
-            {topCameras.length ? (
-              topCameras.map((camera, index) => (
-                <div className="camera-source-card" key={camera.id || camera.name}>
-                  <div className="camera-source-icon">
-                    <Camera size={17} />
-                  </div>
-                  <div>
-                    <strong>{camera.name}</strong>
-                    <span>
-                      {camera.value || 0} records captured
-                      {camera.location ? ` · ${camera.location}` : ''}
-                    </span>
-                  </div>
-                  <div className="camera-source-actions">
-                    <b className={camera.status === 'Active' || index === 0 ? 'active' : ''}>
-                      {camera.status || (index === 0 ? 'LIVE' : 'ACTIVE')}
-                    </b>
-                    <button className="camera-feed-open-button" onClick={() => openCameraFeed(camera)} type="button">
-                      <Play size={11} /> View Feed
-                    </button>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="alternate-empty">Waiting for camera records...</p>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* VISUAL ANALYTICS CHARTS */}
-      <div className="detail-chart-grid">
-        <div className="dashboard-panel chart-panel nh44-chart-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">DATA REPRESENTATION</p>
-              <h2>{config.chartTitle}</h2>
-            </div>
-            <button className="nh44-live-pill nh44-live-button" onClick={() => openCameraFeed(topCameras[0] || cameraFeedOptions[0])} type="button">
-              <span className="pulse-dot" /> Live Stream
-            </button>
-          </div>
-          <div className="chart-frame" style={{ height: '260px' }}>
-            <ResponsiveContainer height="100%" width="100%">
-              <BarChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 4 }}>
-                <CartesianGrid stroke="#f1f5f9" vertical={false} />
-                <XAxis
-                  axisLine={false}
-                  dataKey="name"
-                  tick={{ fill: '#64748b', fontSize: 10 }}
-                  tickLine={false}
-                />
-                <YAxis axisLine={false} tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} />
-                <Tooltip cursor={{ fill: '#f8fafc' }} />
-                <Bar dataKey="value" radius={[5, 5, 0, 0]}>
-                  {chartData.map((entry) => {
-                    const barColor =
-                      config.chartKey === 'type' ? getVehicleMeta(entry.name).color : config.color
-                    return <Cell fill={barColor} key={entry.name} />
-                  })}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Vehicles by Classification Bar Chart (Combined Vehicle Analytics) */}
-        {kind === 'traffic' && (
-          <div className="dashboard-panel chart-panel nh44-chart-panel">
-            <div className="panel-heading">
-              <div>
-                <p className="section-kicker">VEHICLE CLASSIFICATION</p>
-                <h2>Vehicles by Classification</h2>
-              </div>
-              <span className="nh44-live-pill">Live Stream</span>
-            </div>
-            <div className="chart-frame" style={{ height: '260px' }}>
-              <ResponsiveContainer height="100%" width="100%">
-                <BarChart data={pieData} margin={{ top: 8, right: 8, left: -20, bottom: 4 }}>
-                  <CartesianGrid stroke="#f1f5f9" vertical={false} />
-                  <XAxis
-                    axisLine={false}
-                    dataKey="name"
-                    tick={{ fill: '#64748b', fontSize: 10 }}
-                    tickLine={false}
-                  />
-                  <YAxis axisLine={false} tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} />
-                  <Tooltip cursor={{ fill: '#f8fafc' }} />
-                  <Bar dataKey="value" radius={[5, 5, 0, 0]}>
-                    {pieData.map((entry) => (
-                      <Cell fill={getVehicleMeta(entry.name).color} key={entry.name} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-
-        <div className="dashboard-panel chart-panel nh44-chart-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">COMPOSITION</p>
-              <h2>Vehicle Classification Mix</h2>
-            </div>
-            <span className="nh44-live-pill">{pieData.length} Categories</span>
-          </div>
-          <div className="chart-frame pie-chart-frame" style={{ height: '200px' }}>
-            <ResponsiveContainer height="100%" width="100%">
-              <PieChart>
-                <Pie
-                  cx="50%"
-                  cy="50%"
-                  data={pieData}
-                  dataKey="value"
-                  innerRadius={50}
-                  outerRadius={78}
-                  paddingAngle={3}
-                >
-                  {pieData.map((entry) => (
-                    <Cell fill={getVehicleMeta(entry.name).color} key={entry.name} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="chart-legend">
-            {pieData.map((entry) => {
-              const meta = getVehicleMeta(entry.name)
-              return (
-                <span key={entry.name}>
-                  <i style={{ background: meta.color }} />
-                  {entry.name} <strong>{entry.value}</strong>
-                </span>
-              )
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* CAMERA SETUP MODAL */}
-      {cameraDialogOpen &&
-        createPortal(
-          <div className="modal-backdrop" onMouseDown={() => setCameraDialogOpen(false)}>
-            <form
-              className="camera-dialog"
-              onMouseDown={(event) => event.stopPropagation()}
-              onSubmit={submitCamera}
-            >
-              <div className="panel-heading">
-                <div>
-                  <p className="section-kicker">CHECKPOINT SETUP</p>
-                  <h2>Add NH-44 Camera Feed</h2>
-                </div>
-                <button className="modal-close" onClick={() => setCameraDialogOpen(false)} type="button">
-                  ×
-                </button>
-              </div>
-              <label>
-                Camera checkpoint name
-                <input
-                  autoFocus
-                  onChange={(event) => setCameraForm({ ...cameraForm, name: event.target.value })}
-                  placeholder="e.g. NH44-Shamshabad-South"
-                  value={cameraForm.name}
-                />
-              </label>
-              <label>
-                Highway Location
-                <input
-                  onChange={(event) => setCameraForm({ ...cameraForm, location: event.target.value })}
-                  placeholder="e.g. NH-44 KM 24.5 South Toll"
-                  value={cameraForm.location}
-                />
-              </label>
-              <label>
-                Stream URL <span>(optional)</span>
-                <input
-                  onChange={(event) => setCameraForm({ ...cameraForm, streamUrl: event.target.value })}
-                  placeholder="rtsp:// or https://"
-                  value={cameraForm.streamUrl}
-                />
-              </label>
-              <button className="primary-action" type="submit">
-                <Camera size={15} />
-                Add checkpoint
-              </button>
-            </form>
-          </div>,
-          document.body,
-        )}
-
-      {/* CAMERA REMOVAL MODAL */}
-      {cameraRemoveDialogOpen &&
-        createPortal(
-          <div className="modal-backdrop" onMouseDown={() => setCameraRemoveDialogOpen(false)}>
-            <div
-              className="camera-dialog camera-remove-dialog"
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              <div className="panel-heading">
-                <div>
-                  <p className="section-kicker">CAMERA ADMINISTRATION</p>
-                  <h2>Remove Camera Feed</h2>
-                </div>
-                <button
-                  className="modal-close"
-                  onClick={() => setCameraRemoveDialogOpen(false)}
-                  type="button"
-                >
-                  ×
-                </button>
-              </div>
-              <p className="camera-dialog-copy">
-                Select a checkpoint to remove it from surveillance monitoring.
-              </p>
-              <div className="camera-remove-list">
-                {cameraRecords.length ? (
-                  cameraRecords.map((camera) => (
-                    <div className="camera-remove-row" key={camera.id}>
+                {topLocations.length ? (
+                  topLocations.map((location, index) => (
+                    <div className="flow-location-row" key={location.name}>
+                      <span className="flow-location-rank">0{index + 1}</span>
                       <div>
-                        <strong>{camera.name}</strong>
-                        <span>
-                          {camera.location || `${camera.value || 0} records captured`} ·{' '}
-                          {camera.status || 'ACTIVE'}
-                        </span>
+                        <strong>{location.name}</strong>
+                        <span>{location.value} detections</span>
                       </div>
-                      <button
-                        className="camera-remove-confirm"
-                        onClick={() => {
-                          onRemoveCamera?.(camera.id)
-                          setCameraRemoveDialogOpen(false)
-                        }}
-                        type="button"
-                      >
-                        <Trash2 size={14} />
-                        Remove
-                      </button>
+                      <b>{Math.round((location.value / (summary.total || 1)) * 100)}%</b>
+                      <i>
+                        <em
+                          style={{
+                            width: `${Math.min(100, (location.value / (topLocations[0]?.value || 1)) * 100)}%`,
+                          }}
+                        />
+                      </i>
                     </div>
                   ))
                 ) : (
-                  <p className="alternate-empty">No cameras are currently available.</p>
+                  <p className="alternate-empty">Waiting for traffic records...</p>
                 )}
               </div>
-            </div>
-          </div>,
-          document.body,
-        )}
+            </section>
+          )}
 
-      {/* SOURCE RECORDS TABLE */}
-      {safeRows.length > 0 && (
-        <div className="dashboard-panel traffic-table-panel nh44-table-panel" style={{ marginTop: '24px' }}>
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">SOURCE RECORDS</p>
-              <h2>Latest Detections ({config.title})</h2>
-            </div>
-            <div className="table-heading-right">
-              <span className="nh44-live-indicator">
-                <span className="pulse-dot" />
-                Live Feed
-              </span>
-              <span className="record-count">
-                Displaying latest {latestTenRows.length} of {safeRows.length} records
-              </span>
-            </div>
-          </div>
+          {/* CAMERA COVERAGE SPECIFIC SECTION */}
+          {kind === 'cameras' && (
+            <section className="alternate-dashboard-layout camera-coverage-layout">
+              <div className="camera-coverage-hero">
+                <div>
+                  <p className="section-kicker">NETWORK MANAGEMENT</p>
+                  <h2>NH-44 Checkpoint Feeds</h2>
+                  <span>Active optical cameras capturing live highway events</span>
+                </div>
+                <div className="coverage-ring">
+                  <strong>{cameraRecords.length}</strong>
+                  <span>sources</span>
+                </div>
+                <div className="camera-control-actions">
+                  <button
+                    className="primary-action camera-add-button"
+                    onClick={() => setCameraDialogOpen(true)}
+                    type="button"
+                  >
+                    <Camera size={15} />
+                    Add new camera
+                  </button>
+                  <button
+                    className="camera-remove-button"
+                    onClick={() => setCameraRemoveDialogOpen(true)}
+                    type="button"
+                  >
+                    <Trash2 size={15} />
+                    Remove camera
+                  </button>
+                </div>
+              </div>
+              <CameraFeedPanel cameras={cameraFeedOptions} camera={inlineCameraFeed} onSelectCamera={setInlineCameraFeed} />
+              <div className="camera-source-grid">
+                {topCameras.length ? (
+                  topCameras.map((camera, index) => (
+                    <div className="camera-source-card" key={camera.id || camera.name}>
+                      <div className="camera-source-icon">
+                        <Camera size={17} />
+                      </div>
+                      <div>
+                        <strong>{camera.name}</strong>
+                        <span>
+                          {camera.value || 0} records captured
+                          {camera.location ? ` · ${camera.location}` : ''}
+                        </span>
+                      </div>
+                      <div className="camera-source-actions">
+                        <b className={camera.status === 'Active' || index === 0 ? 'active' : ''}>
+                          {camera.status || (index === 0 ? 'LIVE' : 'ACTIVE')}
+                        </b>
+                        <button className="camera-feed-open-button" onClick={() => openCameraFeed(camera)} type="button">
+                          <Play size={11} /> View Feed
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="alternate-empty">Waiting for camera records...</p>
+                )}
+              </div>
+            </section>
+          )}
 
-          <div className="traffic-table-wrapper">
-            <table className="traffic-table nh44-table">
-              <thead>
-                <tr>
-                  <th>SURVEILLANCE SNAPSHOT</th>
-                  <th>TIMESTAMP (IST)</th>
-                  <th>VEHICLE TYPE</th>
-                  <th>NUMBER PLATE (HSRP)</th>
-                  <th>SPEED / LIMIT</th>
-                  <th>RADAR STATUS</th>
-                  <th>ANPR OCR</th>
-                  <th>HIGHWAY CHECKPOINT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {latestTenRows.map((row, index) => {
-                  const isOver = row.overSpeed === 'Yes' || row.isOverSpeed
-                  const speedNum = Number(row.speed || 0)
-                  const speedLimit = Number(row.speedLimit || 60)
-                  const plateText = row.vehicleNumberPlate || row.numberPlate
-                  const confidenceVal = Math.round(
-                    (row.plateConfidence || row.confidence) > 1
-                      ? (row.plateConfidence || row.confidence)
-                      : ((row.plateConfidence || row.confidence || 0.94) * 100),
-                  )
+          {/* VISUAL ANALYTICS CHARTS */}
+          <div className="detail-chart-grid">
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">DATA REPRESENTATION</p>
+                  <h2>{config.chartTitle}</h2>
+                </div>
+                <button className="nh44-live-pill nh44-live-button" onClick={() => openCameraFeed(topCameras[0] || cameraFeedOptions[0])} type="button">
+                  <span className="pulse-dot" /> Live Stream
+                </button>
+              </div>
+              <div className="chart-frame" style={{ height: '260px' }}>
+                <ResponsiveContainer height="100%" width="100%">
+                  <BarChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 4 }}>
+                    <CartesianGrid stroke="#f1f5f9" vertical={false} />
+                    <XAxis
+                      axisLine={false}
+                      dataKey="name"
+                      tick={{ fill: '#64748b', fontSize: 10 }}
+                      tickLine={false}
+                    />
+                    <YAxis axisLine={false} tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} />
+                    <Tooltip cursor={{ fill: '#f8fafc' }} />
+                    <Bar dataKey="value" radius={[5, 5, 0, 0]}>
+                      {chartData.map((entry) => {
+                        const barColor =
+                          config.chartKey === 'type' ? getVehicleMeta(entry.name).color : config.color
+                        return <Cell fill={barColor} key={entry.name} />
+                      })}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
 
-                  return (
-                    <tr
-                      key={`${row.id || row.csvRecordId || row.observationId}-${index}`}
-                      className={index === 0 && latestBatchInfo?.batchCount ? 'row-new-arrival' : ''}
+            {/* Vehicles by Classification Bar Chart (Combined Vehicle Analytics) */}
+            {kind === 'traffic' && (
+              <div className="dashboard-panel chart-panel nh44-chart-panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="section-kicker">VEHICLE CLASSIFICATION</p>
+                    <h2>Vehicles by Classification</h2>
+                  </div>
+                  <span className="nh44-live-pill">Live Stream</span>
+                </div>
+                <div className="chart-frame" style={{ height: '260px' }}>
+                  <ResponsiveContainer height="100%" width="100%">
+                    <BarChart data={pieData} margin={{ top: 8, right: 8, left: -20, bottom: 4 }}>
+                      <CartesianGrid stroke="#f1f5f9" vertical={false} />
+                      <XAxis
+                        axisLine={false}
+                        dataKey="name"
+                        tick={{ fill: '#64748b', fontSize: 10 }}
+                        tickLine={false}
+                      />
+                      <YAxis axisLine={false} tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} />
+                      <Tooltip cursor={{ fill: '#f8fafc' }} />
+                      <Bar dataKey="value" radius={[5, 5, 0, 0]}>
+                        {pieData.map((entry) => (
+                          <Cell fill={getVehicleMeta(entry.name).color} key={entry.name} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            <div className="dashboard-panel chart-panel nh44-chart-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">COMPOSITION</p>
+                  <h2>Vehicle Classification Mix</h2>
+                </div>
+                <span className="nh44-live-pill">{pieData.length} Categories</span>
+              </div>
+              <div className="chart-frame pie-chart-frame" style={{ height: '200px' }}>
+                <ResponsiveContainer height="100%" width="100%">
+                  <PieChart>
+                    <Pie
+                      cx="50%"
+                      cy="50%"
+                      data={pieData}
+                      dataKey="value"
+                      innerRadius={50}
+                      outerRadius={78}
+                      paddingAngle={3}
                     >
-                      <td style={{ minWidth: '130px' }}>
-                        <VehicleImageThumbnail
-                          onClick={() => {
-                            setInitialModalTab('vehicle')
-                            setPreviewModalRow(row)
-                          }}
-                          onPlayVideo={() => {
-                            setInitialModalTab('video')
-                            setPreviewModalRow(row)
-                          }}
-                          row={row}
-                          size="table"
-                        />
-                      </td>
-                      <td>
-                        <div className="timestamp-cell">
-                          <strong>{row.timestampIst || row.timestamp || 'Live'}</strong>
-                          {index === 0 && <span className="new-tag">NEW</span>}
-                        </div>
-                      </td>
-                      <td>
-                        <VehicleBadge type={row.vehicleType || row.type} />
-                      </td>
-                      <td>
-                        {plateText ? (
-                          <div className="hsrp-plate-badge" title="High Security Registration Plate">
-                            <span className="hsrp-country">
-                              <span className="chakra-dot">☸</span>
-                              IND
-                            </span>
-                            <span className="hsrp-code">{plateText}</span>
-                          </div>
-                        ) : (
-                          <span className="query-plate-na">—</span>
-                        )}
-                      </td>
-                      <td>
-                        <div className="speed-metric-cell">
-                          <strong className={isOver ? 'speed-val alert' : 'speed-val'}>
-                            {speedNum}
-                          </strong>
-                          <span className="speed-denom">/ {speedLimit} km/h</span>
-                        </div>
-                      </td>
-                      <td>
-                        {isOver ? (
-                          <span className="nh44-status-pill danger">
-                            <AlertTriangle size={12} />
-                            +{speedNum - speedLimit} km/h Over
-                          </span>
-                        ) : (
-                          <span className="nh44-status-pill normal">
-                            <CheckCircle2 size={12} />
-                            Normal
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <span
-                          className="nh44-confidence-badge"
-                          style={{ color: confidenceVal >= 90 ? '#059669' : '#d97706' }}
-                        >
-                          {confidenceVal}%
-                        </span>
-                      </td>
-                      <td>
-                        <span className="nh44-location-cell">
-                          <MapPin size={13} />
-                          {row.location || row.camera || 'NH-44 Corridor'}
-                        </span>
-                      </td>
-                    </tr>
+                      {pieData.map((entry) => (
+                        <Cell fill={getVehicleMeta(entry.name).color} key={entry.name} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="chart-legend">
+                {pieData.map((entry) => {
+                  const meta = getVehicleMeta(entry.name)
+                  return (
+                    <span key={entry.name}>
+                      <i style={{ background: meta.color }} />
+                      {entry.name} <strong>{entry.value}</strong>
+                    </span>
                   )
                 })}
-              </tbody>
-            </table>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
-      </>
+
+          {/* CAMERA SETUP MODAL */}
+          {cameraDialogOpen &&
+            createPortal(
+              <div className="modal-backdrop" onMouseDown={() => setCameraDialogOpen(false)}>
+                <form
+                  className="camera-dialog"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onSubmit={submitCamera}
+                >
+                  <div className="panel-heading">
+                    <div>
+                      <p className="section-kicker">CHECKPOINT SETUP</p>
+                      <h2>Add NH-44 Camera Feed</h2>
+                    </div>
+                    <button className="modal-close" onClick={() => setCameraDialogOpen(false)} type="button">
+                      ×
+                    </button>
+                  </div>
+                  <label>
+                    Camera checkpoint name
+                    <input
+                      autoFocus
+                      onChange={(event) => setCameraForm({ ...cameraForm, name: event.target.value })}
+                      placeholder="e.g. NH44-Shamshabad-South"
+                      value={cameraForm.name}
+                    />
+                  </label>
+                  <label>
+                    Highway Location
+                    <input
+                      onChange={(event) => setCameraForm({ ...cameraForm, location: event.target.value })}
+                      placeholder="e.g. NH-44 KM 24.5 South Toll"
+                      value={cameraForm.location}
+                    />
+                  </label>
+                  <label>
+                    Stream URL <span>(optional)</span>
+                    <input
+                      onChange={(event) => setCameraForm({ ...cameraForm, streamUrl: event.target.value })}
+                      placeholder="rtsp:// or https://"
+                      value={cameraForm.streamUrl}
+                    />
+                  </label>
+                  <button className="primary-action" type="submit">
+                    <Camera size={15} />
+                    Add checkpoint
+                  </button>
+                </form>
+              </div>,
+              document.body,
+            )}
+
+          {/* CAMERA REMOVAL MODAL */}
+          {cameraRemoveDialogOpen &&
+            createPortal(
+              <div className="modal-backdrop" onMouseDown={() => setCameraRemoveDialogOpen(false)}>
+                <div
+                  className="camera-dialog camera-remove-dialog"
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="panel-heading">
+                    <div>
+                      <p className="section-kicker">CAMERA ADMINISTRATION</p>
+                      <h2>Remove Camera Feed</h2>
+                    </div>
+                    <button
+                      className="modal-close"
+                      onClick={() => setCameraRemoveDialogOpen(false)}
+                      type="button"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <p className="camera-dialog-copy">
+                    Select a checkpoint to remove it from surveillance monitoring.
+                  </p>
+                  <div className="camera-remove-list">
+                    {cameraRecords.length ? (
+                      cameraRecords.map((camera) => (
+                        <div className="camera-remove-row" key={camera.id}>
+                          <div>
+                            <strong>{camera.name}</strong>
+                            <span>
+                              {camera.location || `${camera.value || 0} records captured`} ·{' '}
+                              {camera.status || 'ACTIVE'}
+                            </span>
+                          </div>
+                          <button
+                            className="camera-remove-confirm"
+                            onClick={() => {
+                              onRemoveCamera?.(camera.id)
+                              setCameraRemoveDialogOpen(false)
+                            }}
+                            type="button"
+                          >
+                            <Trash2 size={14} />
+                            Remove
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="alternate-empty">No cameras are currently available.</p>
+                    )}
+                  </div>
+                </div>
+              </div>,
+              document.body,
+            )}
+
+          {/* SOURCE RECORDS TABLE */}
+          {safeRows.length > 0 && (
+            <div className="dashboard-panel traffic-table-panel nh44-table-panel" style={{ marginTop: '24px' }}>
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">SOURCE RECORDS</p>
+                  <h2>Latest Detections ({config.title})</h2>
+                </div>
+                <div className="table-heading-right">
+                  <span className="nh44-live-indicator">
+                    <span className="pulse-dot" />
+                    Live Feed
+                  </span>
+                  <span className="record-count">
+                    Displaying latest {latestTenRows.length} of {safeRows.length} records
+                  </span>
+                </div>
+              </div>
+
+              <div className="traffic-table-wrapper">
+                <table className="traffic-table nh44-table">
+                  <thead>
+                    <tr>
+                      <th>SURVEILLANCE SNAPSHOT</th>
+                      <th>TIMESTAMP (IST)</th>
+                      <th>VEHICLE TYPE</th>
+                      <th>NUMBER PLATE (HSRP)</th>
+                      <th>SPEED / LIMIT</th>
+                      <th>RADAR STATUS</th>
+                      <th>ANPR OCR</th>
+                      <th>HIGHWAY CHECKPOINT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {latestTenRows.map((row, index) => {
+                      const isOver = row.overSpeed === 'Yes' || row.isOverSpeed
+                      const speedNum = Number(row.speed || 0)
+                      const speedLimit = Number(row.speedLimit || 60)
+                      const plateText = row.vehicleNumberPlate || row.numberPlate
+                      const confidenceVal = Math.round(
+                        (row.plateConfidence || row.confidence) > 1
+                          ? (row.plateConfidence || row.confidence)
+                          : ((row.plateConfidence || row.confidence || 0.94) * 100),
+                      )
+
+                      return (
+                        <tr
+                          key={`${row.id || row.csvRecordId || row.observationId}-${index}`}
+                          className={index === 0 && latestBatchInfo?.batchCount ? 'row-new-arrival' : ''}
+                        >
+                          <td style={{ minWidth: '130px' }}>
+                            <VehicleImageThumbnail
+                              onClick={() => {
+                                setInitialModalTab('vehicle')
+                                setPreviewModalRow(row)
+                              }}
+                              onPlayVideo={() => {
+                                setInitialModalTab('video')
+                                setPreviewModalRow(row)
+                              }}
+                              row={row}
+                              size="table"
+                            />
+                          </td>
+                          <td>
+                            <div className="timestamp-cell">
+                              <strong>{row.timestampIst || row.timestamp || 'Live'}</strong>
+                              {index === 0 && <span className="new-tag">NEW</span>}
+                            </div>
+                          </td>
+                          <td>
+                            <VehicleBadge type={row.vehicleType || row.type} />
+                          </td>
+                          <td>
+                            {plateText ? (
+                              <div className="hsrp-plate-badge" title="High Security Registration Plate">
+                                <span className="hsrp-country">
+                                  <span className="chakra-dot">☸</span>
+                                  IND
+                                </span>
+                                <span className="hsrp-code">{plateText}</span>
+                              </div>
+                            ) : (
+                              <span className="query-plate-na">—</span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="speed-metric-cell">
+                              <strong className={isOver ? 'speed-val alert' : 'speed-val'}>
+                                {speedNum}
+                              </strong>
+                              <span className="speed-denom">/ {speedLimit} km/h</span>
+                            </div>
+                          </td>
+                          <td>
+                            {isOver ? (
+                              <span className="nh44-status-pill danger">
+                                <AlertTriangle size={12} />
+                                +{speedNum - speedLimit} km/h Over
+                              </span>
+                            ) : (
+                              <span className="nh44-status-pill normal">
+                                <CheckCircle2 size={12} />
+                                Normal
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <span
+                              className="nh44-confidence-badge"
+                              style={{ color: confidenceVal >= 90 ? '#059669' : '#d97706' }}
+                            >
+                              {confidenceVal}%
+                            </span>
+                          </td>
+                          <td>
+                            <span className="nh44-location-cell">
+                              <MapPin size={13} />
+                              {row.location || row.camera || 'NH-44 Corridor'}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* MEDIA PREVIEW MODAL */}
