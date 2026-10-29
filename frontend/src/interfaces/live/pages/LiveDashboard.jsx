@@ -35,6 +35,7 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveFeed } from '../context/LiveFeedContext'
+import { adaptModelDetectionBatch } from '../../../utils/liveTrafficAdapter'
 
 function formatClassLabel(label = '') {
   if (!label) return 'Vehicle'
@@ -42,6 +43,60 @@ function formatClassLabel(label = '') {
   if (l === 'motorcycle' || l === 'motorbike' || l === 'bicycle') return 'Bike'
   if (l === 'rickshaw') return 'Auto'
   return l.charAt(0).toUpperCase() + l.slice(1)
+}
+
+function isVehicleDetection(label = '') {
+  return /\b(car|suv|jeep|taxi|van|truck|lorry|bus|motorcycle|motorbike|bicycle|bike|scooter|auto|rickshaw|lcv|tractor|train|ambulance)\b/i.test(label)
+}
+
+function mapFrameDetectionsToBoxes(detections = []) {
+  const boxes = []
+  const seenTrackIds = new Set()
+
+  for (const [index, detection] of detections.entries()) {
+    if (!isVehicleDetection(detection.label) || !Array.isArray(detection.box) || detection.box.length < 4) {
+      continue
+    }
+
+    const [x, y, width, height] = detection.box
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) continue
+
+    const trackId = detection.trackId != null ? String(detection.trackId) : null
+    if (trackId && seenTrackIds.has(trackId)) continue
+
+    const duplicateBox = boxes.some((box) => {
+      if (box.label !== formatClassLabel(detection.label)) return false
+      const overlapX = Math.max(0, Math.min(x + width, box.x + box.width) - Math.max(x, box.x))
+      const overlapY = Math.max(0, Math.min(y + height, box.y + box.height) - Math.max(y, box.y))
+      const intersection = overlapX * overlapY
+      const union = width * height + box.width * box.height - intersection
+      return union > 0 && intersection / union > 0.65
+    })
+    if (duplicateBox) continue
+
+    if (trackId) seenTrackIds.add(trackId)
+    const label = formatClassLabel(detection.label)
+    const isUnrecognized = !detection.plateNumber || detection.plateNumber === 'Not Recognized'
+    const isOverSpeed = (detection.speed || 68) > 80
+    boxes.push({
+      id: trackId ? `frame-${trackId}` : `det-${index}`,
+      trackId: trackId || index + 1,
+      label,
+      confidence: detection.confidence || 0.9,
+      plate: detection.plateNumber || (isUnrecognized ? 'Not Recognized' : 'TS 09 EA 4129'),
+      speed: detection.speed || 68,
+      lane: detection.lane || 'Lane 1',
+      color: getBoxColor(label, isUnrecognized, isOverSpeed),
+      x: Number((x * 100).toFixed(2)),
+      y: Number((y * 100).toFixed(2)),
+      width: Number((width * 100).toFixed(2)),
+      height: Number((height * 100).toFixed(2)),
+      isUnrecognized,
+      isOverSpeed,
+    })
+  }
+
+  return boxes
 }
 
 function getBoxColor(label = '', isUnrecognized = false, isOverSpeed = false) {
@@ -52,6 +107,13 @@ function getBoxColor(label = '', isUnrecognized = false, isOverSpeed = false) {
   if (l.includes('bus')) return '#8b5cf6'
   if (l.includes('bike') || l.includes('motorcycle')) return '#10b981'
   return '#22c55e' // Neon green for cars / clean recognition
+}
+
+function createVideoSessionId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return `video-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 export default function LiveDashboard() {
@@ -73,7 +135,6 @@ export default function LiveDashboard() {
     handleUploadVideo,
     handleSetSampleVideo,
     clearUploadedVideo,
-    analyzeUploadedVideo,
   } = useLiveFeed()
 
   const [selectedCamera, setSelectedCamera] = useState(cameras[0] || null)
@@ -84,6 +145,7 @@ export default function LiveDashboard() {
   const [selectedVehicle, setSelectedVehicle] = useState(null)
   const [dynamicBoxes, setDynamicBoxes] = useState([])
   const [videoAspect, setVideoAspect] = useState('16 / 9')
+  const [inferenceError, setInferenceError] = useState('')
 
   const videoElementRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -91,26 +153,67 @@ export default function LiveDashboard() {
   const animationFrameRef = useRef(null)
   const lastSampleTimeRef = useRef(0)
   const requestInFlightRef = useRef(false)
-  const sessionIdRef = useRef(`sess-${Date.now()}`)
+  const lastDetectionTimeRef = useRef(0)
+  const hasDynamicBoxesRef = useRef(false)
+  const sessionIdRef = useRef(createVideoSessionId())
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0]
     if (file) {
+      sessionIdRef.current = createVideoSessionId()
+      lastSampleTimeRef.current = 0
+      lastDetectionTimeRef.current = 0
+      hasDynamicBoxesRef.current = false
+      setInferenceError('')
+      setCurrentTime(0)
+      setDuration(0)
+      setVideoAspect('16 / 9')
       handleUploadVideo(file)
       setDynamicBoxes([])
       setIsPlaying(false)
     }
+    e.target.value = ''
+  }
+
+  const handleSampleVideo = () => {
+    sessionIdRef.current = createVideoSessionId()
+    lastSampleTimeRef.current = 0
+    lastDetectionTimeRef.current = 0
+    hasDynamicBoxesRef.current = false
+    setInferenceError('')
+    setCurrentTime(0)
+    setDuration(0)
+    setVideoAspect('16 / 9')
+    setDynamicBoxes([])
+    handleSetSampleVideo('/videos/traffic_sample1.mp4', 'NH-44 Sample Traffic Feed')
   }
 
   const handleTogglePlay = () => {
     if (!videoElementRef.current) return
     if (videoElementRef.current.paused) {
-      videoElementRef.current.play().catch(() => {})
+      videoElementRef.current.play().catch((error) => {
+        setInferenceError(`Video playback could not start: ${error.message || 'Check the video format and try again.'}`)
+      })
       setIsPlaying(true)
     } else {
       videoElementRef.current.pause()
       setIsPlaying(false)
     }
+  }
+
+  const handleVideoEnded = () => {
+    const video = videoElementRef.current
+    if (!video || !isAnalyzed) return
+
+    sessionIdRef.current = createVideoSessionId()
+    lastSampleTimeRef.current = 0
+    setLiveRecords([])
+    setDynamicBoxes([])
+    setInferenceError('')
+    video.currentTime = 0
+    video.play().catch((error) => {
+      setInferenceError(`Video replay could not start: ${error.message || 'Press Play to try again.'}`)
+    })
   }
 
   // --------------------------------------------------------------------------
@@ -134,6 +237,7 @@ export default function LiveDashboard() {
     const sampleBackendFrame = async (timeSec) => {
       if (requestInFlightRef.current || !video || video.videoWidth <= 0) return
       requestInFlightRef.current = true
+      const requestSessionId = sessionIdRef.current
 
       try {
         const canvas = offscreenCanvasRef.current
@@ -151,7 +255,7 @@ export default function LiveDashboard() {
 
         const formData = new FormData()
         formData.append('frame', blob, 'frame.jpg')
-        formData.append('sessionId', sessionIdRef.current)
+        formData.append('sessionId', requestSessionId)
         formData.append('sourceId', uploadedVideoFile?.name || 'live-video')
         formData.append('timeSeconds', String(timeSec))
         formData.append('durationSeconds', String(video.duration || 0))
@@ -161,39 +265,45 @@ export default function LiveDashboard() {
           body: formData,
         })
 
-        if (res.ok) {
-          const data = await res.json()
-          if (data.success && data.frame?.detections?.length) {
-            const boxes = data.frame.detections
-              .filter((det) => Array.isArray(det.box) && det.box.length >= 4)
-              .map((det, idx) => {
-                const [nx, ny, nw, nh] = det.box
-                const label = formatClassLabel(det.label)
-                const isUnrec = !det.plateNumber || det.plateNumber === 'Not Recognized'
-                const isOver = (det.speed || 68) > 80
-                const boxColor = getBoxColor(label, isUnrec, isOver)
-                return {
-                  id: det.trackId ? `live-${det.trackId}` : `live-${idx}`,
-                  trackId: det.trackId || idx + 1,
-                  label,
-                  confidence: det.confidence || 0.9,
-                  plate: det.plateNumber || (isUnrec ? 'Not Recognized' : 'TS 09 EA 4129'),
-                  speed: det.speed || 68,
-                  lane: det.lane || (idx % 2 === 0 ? 'Lane 2' : 'Lane 1'),
-                  color: boxColor,
-                  x: Number((nx * 100).toFixed(2)),
-                  y: Number((ny * 100).toFixed(2)),
-                  width: Number((nw * 100).toFixed(2)),
-                  height: Number((nh * 100).toFixed(2)),
-                  isUnrecognized: isUnrec,
-                  isOverSpeed: isOver,
-                }
-              })
-            setDynamicBoxes(boxes)
-          }
+        let data
+        try {
+          data = await res.json()
+        } catch {
+          throw new Error(`Live frame analysis returned an invalid response (${res.status}).`)
         }
-      } catch {
-        // Backend frame sample error handled gracefully
+        if (!res.ok || !data.success) {
+          throw new Error(data.message || `Live frame analysis failed (${res.status}).`)
+        }
+        if (!isRunning || requestSessionId !== sessionIdRef.current) return
+        if (Array.isArray(data.vehicles)) {
+          const trackedVehicles = data.vehicles.map((vehicle) => ({
+            ...vehicle,
+            trackId: vehicle.vehicleId || vehicle.trackId,
+            class: vehicle.type || vehicle.class,
+          }))
+          setLiveRecords(adaptModelDetectionBatch(trackedVehicles, {
+            cameraId: 'CAM-LIVE-UPLOAD',
+            location: 'Uploaded Video AI Ingestion',
+          }))
+        }
+
+        if (video.currentTime - timeSec > 0.75) {
+          hasDynamicBoxesRef.current = false
+          setDynamicBoxes([])
+          return
+        }
+
+        const boxes = mapFrameDetectionsToBoxes(data.frame?.detections || [])
+        setDynamicBoxes(boxes)
+        hasDynamicBoxesRef.current = boxes.length > 0
+        lastDetectionTimeRef.current = timeSec
+        setInferenceError('')
+      } catch (error) {
+        if (isRunning && requestSessionId === sessionIdRef.current) {
+          hasDynamicBoxesRef.current = false
+          setDynamicBoxes([])
+          setInferenceError(error.message || 'Live frame analysis failed.')
+        }
       } finally {
         requestInFlightRef.current = false
       }
@@ -207,107 +317,23 @@ export default function LiveDashboard() {
         const timeSec = video.currentTime || 0
         setCurrentTime(timeSec)
         if (video.duration) setDuration(video.duration)
+        if (hasDynamicBoxesRef.current && timeSec - lastDetectionTimeRef.current > 0.75) {
+          hasDynamicBoxesRef.current = false
+          setDynamicBoxes([])
+        }
 
         if (analyzedFrames && analyzedFrames.length > 0) {
           // Find surrounding frames for exact timestamp
-          let prev = analyzedFrames[0]
-          let next = analyzedFrames[0]
-          for (let i = 0; i < analyzedFrames.length; i++) {
-            const f = analyzedFrames[i]
-            if (f.timeSeconds <= timeSec) {
-              prev = f
-            }
-            if (f.timeSeconds >= timeSec && next === analyzedFrames[0]) {
-              next = f
-            }
-          }
-          if (!next || next.timeSeconds < prev.timeSeconds) {
-            next = prev
-          }
-
-          const timeSpan = Math.max(0.001, next.timeSeconds - prev.timeSeconds)
-          const ratio = Math.max(0, Math.min(1, (timeSec - prev.timeSeconds) / timeSpan))
-
-          const nextDetsByTrack = new Map()
-          if (Array.isArray(next.detections)) {
-            next.detections.forEach((d) => {
-              if (d.trackId) nextDetsByTrack.set(d.trackId, d)
-            })
-          }
-
-          const computed = []
-          const processedTracks = new Set()
-
-          if (Array.isArray(prev.detections)) {
-            prev.detections.forEach((d, idx) => {
-              if (!Array.isArray(d.box) || d.box.length < 4) return
-              const matchNext = d.trackId ? nextDetsByTrack.get(d.trackId) : null
-              if (d.trackId) processedTracks.add(d.trackId)
-
-              let [bx, by, bw, bh] = d.box
-              if (matchNext && Array.isArray(matchNext.box) && matchNext.box.length >= 4) {
-                // Smooth interpolation between frames
-                bx = bx + (matchNext.box[0] - bx) * ratio
-                by = by + (matchNext.box[1] - by) * ratio
-                bw = bw + (matchNext.box[2] - bw) * ratio
-                bh = bh + (matchNext.box[3] - bh) * ratio
-              }
-
-              const label = formatClassLabel(d.label)
-              const isUnrec = !d.plateNumber || d.plateNumber === 'Not Recognized' || d.plateNumber === '—'
-              const isOver = (d.speed || 68) > 80
-              const boxColor = getBoxColor(label, isUnrec, isOver)
-
-              computed.push({
-                id: d.trackId ? `frame-${d.trackId}` : `det-${idx}`,
-                trackId: d.trackId || idx + 1,
-                label,
-                confidence: d.confidence || 0.9,
-                plate: d.plateNumber || (isUnrec ? 'Not Recognized' : 'TS 09 EA 4129'),
-                speed: d.speed || 68,
-                lane: d.lane || 'Lane 1',
-                color: boxColor,
-                x: Number((bx * 100).toFixed(2)),
-                y: Number((by * 100).toFixed(2)),
-                width: Number((bw * 100).toFixed(2)),
-                height: Number((bh * 100).toFixed(2)),
-                isUnrecognized: isUnrec,
-                isOverSpeed: isOver,
-              })
-            })
-          }
-
-          // Also include any newly appeared track in next frame if ratio > 0.6
-          if (ratio > 0.6 && Array.isArray(next.detections)) {
-            next.detections.forEach((d, idx) => {
-              if (d.trackId && !processedTracks.has(d.trackId) && Array.isArray(d.box) && d.box.length >= 4) {
-                const label = formatClassLabel(d.label)
-                const isUnrec = !d.plateNumber || d.plateNumber === 'Not Recognized' || d.plateNumber === '—'
-                const isOver = (d.speed || 68) > 80
-                computed.push({
-                  id: `frame-${d.trackId}`,
-                  trackId: d.trackId,
-                  label,
-                  confidence: d.confidence || 0.9,
-                  plate: d.plateNumber || (isUnrec ? 'Not Recognized' : 'TS 09 EA 4129'),
-                  speed: d.speed || 68,
-                  lane: d.lane || 'Lane 1',
-                  color: getBoxColor(label, isUnrec, isOver),
-                  x: Number((d.box[0] * 100).toFixed(2)),
-                  y: Number((d.box[1] * 100).toFixed(2)),
-                  width: Number((d.box[2] * 100).toFixed(2)),
-                  height: Number((d.box[3] * 100).toFixed(2)),
-                  isUnrecognized: isUnrec,
-                  isOverSpeed: isOver,
-                })
-              }
-            })
-          }
+          const previousFrame = [...analyzedFrames].reverse().find((frame) => frame.timeSeconds <= timeSec)
+          const frameIsCurrent = previousFrame && timeSec - previousFrame.timeSeconds <= 0.75
+          const computed = frameIsCurrent ? mapFrameDetectionsToBoxes(previousFrame.detections || []) : []
 
           setDynamicBoxes(computed)
+          hasDynamicBoxesRef.current = computed.length > 0
+          lastDetectionTimeRef.current = frameIsCurrent ? previousFrame.timeSeconds : 0
         } else {
-          // If pre-analyzed frames are not cached, sample backend frame every 350ms
-          if (timeSec - lastSampleTimeRef.current >= 0.35 || lastSampleTimeRef.current === 0) {
+          // Sample asynchronously so model inference never blocks video playback.
+          if (timeSec - lastSampleTimeRef.current >= 0.5 || lastSampleTimeRef.current === 0) {
             lastSampleTimeRef.current = timeSec
             sampleBackendFrame(timeSec)
           }
@@ -335,11 +361,11 @@ export default function LiveDashboard() {
   const lcvCount = (liveRecords || []).filter((r) => r.vehicleClass === 'LCV' || r.vehicleClass === 'Auto' || r.vehicleType === 'LCV').length
 
   // Dynamic detections take precedence during video playback; otherwise fallback to telemetry baseline
-  const activeCars = dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'Car').length : carsCount
-  const activeTrucks = dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'Truck').length : trucksCount
-  const activeBuses = dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'Bus').length : busesCount
-  const activeBikes = dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'Bike').length : bikesCount
-  const activeLCVs = dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'LCV' || b.label === 'Auto').length : lcvCount
+  const activeCars = isAnalyzed ? carsCount : dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'Car').length : carsCount
+  const activeTrucks = isAnalyzed ? trucksCount : dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'Truck').length : trucksCount
+  const activeBuses = isAnalyzed ? busesCount : dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'Bus').length : busesCount
+  const activeBikes = isAnalyzed ? bikesCount : dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'Bike').length : bikesCount
+  const activeLCVs = isAnalyzed ? lcvCount : dynamicBoxes.length > 0 ? dynamicBoxes.filter((b) => b.label === 'LCV' || b.label === 'Auto').length : lcvCount
 
   const maxType = Math.max(1, activeCars, activeTrucks, activeBuses, activeBikes, activeLCVs)
 
@@ -372,14 +398,14 @@ export default function LiveDashboard() {
                 style={{
                   fontSize: '11px',
                   fontWeight: 650,
-                  color: '#16a34a',
-                  background: 'rgba(22, 163, 74, 0.12)',
+                  color: inferenceError ? '#dc2626' : '#16a34a',
+                  background: inferenceError ? 'rgba(220, 38, 38, 0.1)' : 'rgba(22, 163, 74, 0.12)',
                   padding: '2px 8px',
                   borderRadius: '4px',
-                  border: '1px solid rgba(22, 163, 74, 0.3)',
+                  border: `1px solid ${inferenceError ? 'rgba(220, 38, 38, 0.3)' : 'rgba(22, 163, 74, 0.3)'}`,
                 }}
               >
-                ● Dynamic Moving Bounding Boxes Active
+                {inferenceError ? '● Live AI feed error' : dynamicBoxes.length ? '● Live detection active' : '● Connecting live AI feed'}
               </span>
             ) : isDemoMode ? (
               <span
@@ -493,10 +519,10 @@ export default function LiveDashboard() {
             <Car size={18} color="#3b82f6" />
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: '#0f172a' }}>
-            {dynamicBoxes.length > 0 ? dynamicBoxes.length : stats.total}
+            {isAnalyzed ? stats.total : dynamicBoxes.length > 0 ? dynamicBoxes.length : stats.total}
           </div>
           <div style={{ fontSize: '12px', color: '#16a34a', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <TrendingUp size={13} /> {isAnalyzed ? `${dynamicBoxes.length} vehicles actively tracked in frame` : 'Active session stream'}
+            <TrendingUp size={13} /> {isAnalyzed ? 'Unique vehicles detected in this video' : 'Active session stream'}
           </div>
         </div>
 
@@ -705,7 +731,7 @@ export default function LiveDashboard() {
 
                 <button
                   type="button"
-                  onClick={() => handleSetSampleVideo('/videos/traffic_sample1.mp4', 'NH-44 Sample Traffic Feed')}
+                  onClick={handleSampleVideo}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -782,7 +808,7 @@ export default function LiveDashboard() {
                 {uploadedVideoFile?.name || 'Highway Traffic Video Loaded'}
               </h3>
               <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 16px', maxWidth: 440 }}>
-                Video is loaded in memory. Per requirements, the video remains paused and will not play until you press Analyze.
+                Video is ready. Playback and vehicle detection start automatically as soon as the video is available.
               </p>
 
               {isAnalyzing ? (
@@ -798,13 +824,7 @@ export default function LiveDashboard() {
               ) : (
                 <button
                   type="button"
-                  onClick={async () => {
-                    await analyzeUploadedVideo()
-                    if (videoElementRef.current) {
-                      videoElementRef.current.play().catch(() => {})
-                      setIsPlaying(true)
-                    }
-                  }}
+                  onClick={handleTogglePlay}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -821,7 +841,7 @@ export default function LiveDashboard() {
                   }}
                 >
                   <Play size={16} fill="currentColor" />
-                  <span>Analyze Video & Predict Detections</span>
+                  <span>Start Live Feed</span>
                 </button>
               )}
             </div>
@@ -844,10 +864,9 @@ export default function LiveDashboard() {
                 ref={videoElementRef}
                 src={uploadedVideoUrl}
                 autoPlay
-                loop
                 muted={isMuted}
                 playsInline
-                style={{ width: '100%', height: '100%', objectFit: 'fill', display: 'block' }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
                 onLoadedMetadata={(e) => {
                   if (e.target.videoWidth && e.target.videoHeight) {
                     setVideoAspect(`${e.target.videoWidth} / ${e.target.videoHeight}`)
@@ -855,6 +874,11 @@ export default function LiveDashboard() {
                 }}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
+                onEnded={handleVideoEnded}
+                onError={() => {
+                  setIsPlaying(false)
+                  setInferenceError('The selected video could not be decoded. Try an MP4 or WebM video.')
+                }}
               />
 
               {/* DYNAMIC VARIABLE BOUNDING BOXES OVERLAY */}
@@ -899,10 +923,6 @@ export default function LiveDashboard() {
                     >
                       <span>{box.label}</span>
                       <span style={{ opacity: 0.85 }}>{Math.round(box.confidence * 100)}%</span>
-                      <span style={{ opacity: 0.6 }}>·</span>
-                      <span style={{ fontFamily: 'monospace', fontWeight: 800 }}>
-                        {box.plate === 'Not Recognized' ? 'Not Recognized' : box.plate}
-                      </span>
                     </div>
                   </div>
                 ))}
@@ -926,9 +946,31 @@ export default function LiveDashboard() {
                   zIndex: 10,
                 }}
               >
-                <span style={{ color: '#4ade80', fontWeight: 700 }}>● INFERENCE ACTIVE</span>
-                <span>YOLOv8 + HSRP OCR</span>
+                <span style={{ color: inferenceError ? '#fca5a5' : '#4ade80', fontWeight: 700 }}>
+                  {inferenceError ? '● AI FEED ERROR' : dynamicBoxes.length ? '● INFERENCE ACTIVE' : '● FEED CONNECTING'}
+                </span>
+                <span>{inferenceError ? 'INFERENCE ERROR' : dynamicBoxes.length ? 'YOLOv8 · LIVE DETECTION' : 'LIVE FEED · CONNECTING AI'}</span>
               </div>
+
+              {inferenceError && (
+                <div
+                  role="alert"
+                  style={{
+                    position: 'absolute',
+                    top: 42,
+                    left: 10,
+                    zIndex: 10,
+                    maxWidth: 'min(520px, calc(100% - 20px))',
+                    padding: '7px 10px',
+                    borderRadius: 6,
+                    color: '#fee2e2',
+                    background: 'rgba(127, 29, 29, 0.9)',
+                    fontSize: 11,
+                  }}
+                >
+                  {inferenceError}
+                </div>
+              )}
 
               {/* Bottom Control Bar */}
               <div
@@ -1003,7 +1045,7 @@ export default function LiveDashboard() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: 700, margin: 0, color: '#0f172a' }}>Live Vehicle Classification</h2>
             <span style={{ fontSize: '11px', color: '#64748b' }}>
-              {isAnalyzed ? 'Model predictions from video' : 'Real-time breakdown'}
+              {isAnalyzed ? 'Unique vehicles detected this video' : 'Real-time breakdown'}
             </span>
           </div>
 
@@ -1077,7 +1119,12 @@ export default function LiveDashboard() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px' }}>
-          {(dynamicBoxes.length > 0 ? dynamicBoxes : liveRecords.slice(0, 6)).map((record) => (
+          {dynamicBoxes.length === 0 && (
+            <div style={{ gridColumn: '1 / -1', padding: '24px', textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+              No vehicles currently visible in this frame.
+            </div>
+          )}
+          {dynamicBoxes.map((record) => (
             <div
               key={record.id}
               onClick={() => setSelectedVehicle(record)}

@@ -83,6 +83,15 @@ function isVehicleLabel(label = '') {
   return /^(car|truck|bus|motorcycle|motorbike|bicycle|bike|van|vehicle|auto|train)$/i.test(label.trim())
 }
 
+function getTrafficCategory(label = '') {
+  const normalized = label.toLowerCase()
+  if (/car|van|suv|jeep|taxi/.test(normalized)) return 'cars'
+  if (/motorcycle|motorbike|bicycle|bike|scooter/.test(normalized)) return 'bikes'
+  if (/auto|rickshaw/.test(normalized)) return 'autos'
+  if (/truck|bus|lorry/.test(normalized)) return 'trucks'
+  return isVehicleLabel(label) ? 'other' : null
+}
+
 function getBoxColor(label = '', violationType = null) {
   if (violationType || /accident|fire|hazard|danger|red_light|overspeed|wrong_lane/i.test(label)) {
     return 'red'
@@ -210,6 +219,8 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const autoStartAfterUploadRef = useRef(false)
+  const [videoAspectRatio, setVideoAspectRatio] = useState(16 / 9)
 
   // Real-time AI Inference State
   const [analysis, setAnalysis] = useState(null)
@@ -507,7 +518,8 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
 
         const body = new FormData()
         body.append('frame', frameBlob, 'live-frame.jpg')
-        body.append('sessionId', sessionIdRef.current || generateUUID())
+        const requestSessionId = sessionIdRef.current || generateUUID()
+        body.append('sessionId', requestSessionId)
         body.append('sourceId', videoFile?.name || 'live-feed')
         body.append('timeSeconds', String(timeSeconds))
         body.append('durationSeconds', String(video.duration || 0))
@@ -517,7 +529,7 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
           body,
         })
         const result = await parseApiResponse(res)
-        if (cancelled) return
+        if (cancelled || sessionIdRef.current !== requestSessionId) return
 
         captureVehicleImages(
           canvas,
@@ -546,10 +558,7 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
 
     function scheduleNextFrame() {
       if (cancelled || (video.paused && !isWebcamActive) || video.ended) return
-      if (fallbackTimer !== null) {
-        window.clearTimeout(fallbackTimer)
-        fallbackTimer = null
-      }
+      if (videoFrameCallback !== null || fallbackTimer !== null) return
       if (video.requestVideoFrameCallback) {
         videoFrameCallback = video.requestVideoFrameCallback(onVideoFrame)
       }
@@ -634,6 +643,29 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
     }
     return closest?.detections || []
   }, [analysis, currentTime, isWebcamActive])
+
+  const liveFlowData = useMemo(() => {
+    if (!analysis) return REFERENCE_FLOW_DATA
+
+    const counts = { cars: 0, bikes: 0, autos: 0, trucks: 0, other: 0 }
+    const vehicles = [...(analysis.vehicles || [])].sort(
+      (left, right) => (left.firstSeenSeconds || 0) - (right.firstSeenSeconds || 0)
+    )
+    const flowPoints = vehicles.map((vehicle) => {
+      const category = getTrafficCategory(vehicle.type)
+      if (category) counts[category] += 1
+      return {
+        time: `${Number(vehicle.firstSeenSeconds || 0).toFixed(1)}s`,
+        ...counts,
+      }
+    })
+
+    return flowPoints.length
+      ? flowPoints.slice(-40)
+      : [{ time: '0.0s', ...counts }]
+  }, [analysis])
+
+  const currentFlowCounts = liveFlowData[liveFlowData.length - 1]
 
   // Deduplicated active frame detections: strictly NO duplicates by Track ID, Plate, or Spatial IoU
   const uniqueFrameDetections = useMemo(() => {
@@ -813,12 +845,51 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
       if (!isWebcamActive && video.paused) {
         await video.play()
       }
-    } catch {
-      // autoplay handled
+    } catch (error) {
+      setIsAnalyzing(false)
+      setIsPlaying(false)
+      setErrorMessage(`Video playback could not start: ${error.message || 'Check the video format and try again.'}`)
+      setStatusMessage('Video playback could not start.')
     }
   }
 
+  const handleVideoEnded = () => {
+    const video = videoRef.current
+    if (!video || !isAnalyzing || isWebcamActive) {
+      setIsPlaying(false)
+      return
+    }
+
+    sessionIdRef.current = generateUUID()
+    vehicleImageGenerationRef.current += 1
+    vehicleImageUrlsRef.current.clear()
+    setVehicleImageUrls({})
+    setAnalysis({
+      video: {
+        durationSeconds: video.duration || 0,
+        sampleIntervalSeconds: LIVE_FRAME_INTERVAL_SECONDS,
+        sampledFrames: 0,
+      },
+      vehicles: [],
+      objects: [],
+      violations: [],
+      frames: [],
+    })
+    setCurrentTime(0)
+    setErrorMessage('')
+    setStatusMessage('Video finished · restarting live analysis from the beginning.')
+    video.currentTime = 0
+    video.play().then(() => {
+      setIsPlaying(true)
+    }).catch((error) => {
+      setIsPlaying(false)
+      setErrorMessage(`Video replay could not start: ${error.message || 'Try pressing Play & Analyze.'}`)
+      setStatusMessage('Video replay could not start.')
+    })
+  }
+
   const stopAnalysis = () => {
+    autoStartAfterUploadRef.current = false
     setIsAnalyzing(false)
     if (videoRef.current) {
       videoRef.current.pause()
@@ -869,6 +940,7 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
   const handleVideoUpload = (e) => {
     const file = e.target.files?.[0]
     if (file) {
+      autoStartAfterUploadRef.current = true
       if (isWebcamActive) {
         webcamStreamRef.current?.getTracks().forEach((t) => t.stop())
         setIsWebcamActive(false)
@@ -883,15 +955,18 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
         violations: [],
         frames: [],
       })
-      // Do not auto-play or auto-analyze until the user presses Play & Analyze
       setIsAnalyzing(false)
       setIsPlaying(false)
       setCurrentTime(0)
+      setDuration(0)
+      setVideoAspectRatio(16 / 9)
+      setIsMuted(true)
+      setErrorMessage('')
       if (videoRef.current) {
         videoRef.current.pause()
         videoRef.current.currentTime = 0
       }
-      setStatusMessage(`Uploaded "${file.name}". Click "Play & Analyze" to start AI vehicle detection.`)
+      setStatusMessage(`Loading "${file.name}" for live AI analysis...`)
     }
     e.target.value = ''
   }
@@ -1473,7 +1548,7 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
                       </div>
                       <h3 className="viq-live-null-title">No Video Feed Loaded</h3>
                       <p className="viq-live-null-desc">
-                        Upload a video file to begin. Video playback and AI vehicle detection will start when you press <strong>Play &amp; Analyze</strong>.
+                        Upload a video file to begin. Playback and AI vehicle detection start automatically and replay from the beginning when the video ends.
                       </p>
                       <button
                         type="button"
@@ -1491,18 +1566,28 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
                     ref={videoRef}
                     className="viq-live-video-element"
                     src={videoUrl || undefined}
-                    loop
                     muted={isMuted}
                     crossOrigin="anonymous"
                     playsInline
                     onTimeUpdate={handleTimeUpdate}
+                    onEnded={handleVideoEnded}
                     onLoadedMetadata={() => {
-                      if (videoRef.current?.duration) {
-                        setDuration(videoRef.current.duration)
+                      const video = videoRef.current
+                      if (video?.duration) {
+                        setDuration(video.duration)
+                      }
+                      if (video?.videoWidth && video?.videoHeight) {
+                        setVideoAspectRatio(video.videoWidth / video.videoHeight)
+                      }
+                      if (autoStartAfterUploadRef.current) {
+                        autoStartAfterUploadRef.current = false
+                        startAnalysis()
                       }
                     }}
                     onError={() => {
-                      // Fallback gracefully
+                      autoStartAfterUploadRef.current = false
+                      setErrorMessage('The selected video could not be loaded. Try a supported MP4, WebM, or MOV file.')
+                      setStatusMessage('Video could not be loaded.')
                     }}
                     style={{
                       position: 'relative',
@@ -1513,7 +1598,21 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
 
                   {/* AI Detection Bounding Boxes Overlay matching Reference Image / Live Inference */}
                   {(videoUrl || isWebcamActive) && isAnalyzing && (
-                    <div className="viq-live-video-overlay" style={{ zIndex: 2 }}>
+                    <div
+                      className="viq-live-video-overlay"
+                      style={{
+                        zIndex: 2,
+                        ...(videoAspectRatio > 16 / 9
+                          ? {
+                              top: `${(1 - (16 / 9) / videoAspectRatio) * 50}%`,
+                              height: `${((16 / 9) / videoAspectRatio) * 100}%`,
+                            }
+                          : {
+                              left: `${(1 - videoAspectRatio / (16 / 9)) * 50}%`,
+                              width: `${(videoAspectRatio / (16 / 9)) * 100}%`,
+                            }),
+                      }}
+                    >
                       {displayedBoxes.map((box) => (
                         <div
                           key={box.id}
@@ -1656,26 +1755,30 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
                   <div className="viq-live-chart-legend">
                     <div className="viq-live-legend-item">
                       <span className="viq-live-legend-line blue" />
-                      <span>Cars</span>
+                      <span>Cars · {currentFlowCounts.cars}</span>
                     </div>
                     <div className="viq-live-legend-item">
                       <span className="viq-live-legend-line green" />
-                      <span>Bikes</span>
+                      <span>Bikes · {currentFlowCounts.bikes}</span>
                     </div>
                     <div className="viq-live-legend-item">
                       <span className="viq-live-legend-line orange" />
-                      <span>Autos</span>
+                      <span>Autos · {currentFlowCounts.autos}</span>
                     </div>
                     <div className="viq-live-legend-item">
                       <span className="viq-live-legend-line purple" />
-                      <span>Trucks</span>
+                      <span>Trucks · {currentFlowCounts.trucks}</span>
+                    </div>
+                    <div className="viq-live-legend-item">
+                      <span className="viq-live-legend-line other" />
+                      <span>Other · {currentFlowCounts.other}</span>
                     </div>
                   </div>
                 </div>
 
                 <div style={{ width: '100%', height: 160 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={REFERENCE_FLOW_DATA} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                <AreaChart data={liveFlowData} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
                       <defs>
                         <linearGradient id="flowCars" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.35} />
@@ -1695,12 +1798,13 @@ export default function LiveDetectionDashboard({ onSwitchToExcelData }) {
                         </linearGradient>
                       </defs>
                       <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={{ stroke: '#e2e8f0' }} tickLine={false} />
-                      <YAxis tick={{ fontSize: 10, fill: '#64748b' }} axisLine={{ stroke: '#e2e8f0' }} tickLine={false} domain={[0, 400]} ticks={[0, 100, 200, 300, 400]} />
+                      <YAxis tick={{ fontSize: 10, fill: '#64748b' }} axisLine={{ stroke: '#e2e8f0' }} tickLine={false} />
                       <Tooltip contentStyle={{ background: '#ffffff', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 11 }} />
                       <Area type="monotone" dataKey="cars" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#flowCars)" />
                       <Area type="monotone" dataKey="bikes" stroke="#22c55e" strokeWidth={2.2} fillOpacity={1} fill="url(#flowBikes)" />
                       <Area type="monotone" dataKey="autos" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#flowAutos)" />
                       <Area type="monotone" dataKey="trucks" stroke="#a855f7" strokeWidth={2} fillOpacity={1} fill="url(#flowTrucks)" />
+                      <Area type="monotone" dataKey="other" stroke="#64748b" strokeWidth={2} fillOpacity={0} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>

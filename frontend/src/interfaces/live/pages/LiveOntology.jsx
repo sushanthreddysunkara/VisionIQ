@@ -28,7 +28,10 @@ export default function LiveOntology() {
   }, [ontologyClasses, searchQuery])
 
   return (
-    <div className="ontology-page" style={{ padding: '24px 32px' }}>
+    <div
+      className="ontology-page live-ontology-page"
+      style={{ width: '100%', maxWidth: 'none', margin: 0, padding: '24px clamp(16px, 2vw, 32px)' }}
+    >
       {/* Topbar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -63,7 +66,7 @@ export default function LiveOntology() {
       </div>
 
       {/* Main Ontology Explorer Layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 20, minHeight: 600 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 320px) minmax(0, 1fr)', gap: 20, minHeight: 600 }}>
         {/* Left: Class Hierarchy & Search */}
         <div style={{ backgroundColor: '#ffffff', borderRadius: 8, border: '1px solid #e2e8f0', padding: 20, boxShadow: '0 2px 4px rgba(0,0,0,0.04)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
