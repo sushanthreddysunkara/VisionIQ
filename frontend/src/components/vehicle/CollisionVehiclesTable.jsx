@@ -171,9 +171,8 @@ export default function CollisionVehiclesTable({
                 return (
                   <tr
                     key={vehicle.vehicleNumber}
-                    className={`collision-row ${isSelected ? 'row-selected' : ''} ${
-                      isNewlyAdded ? 'row-just-added' : ''
-                    }`}
+                    className={`collision-row ${isSelected ? 'row-selected' : ''} ${isNewlyAdded ? 'row-just-added' : ''
+                      }`}
                     onClick={() => handleSelect(vehicle)}
                   >
                     {/* 1. Vehicle Plate */}
@@ -247,10 +246,10 @@ export default function CollisionVehiclesTable({
                         <span>
                           {vehicle.incidentTime
                             ? new Date(vehicle.incidentTime).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                second: '2-digit',
-                              })
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            })
                             : 'Live'}
                         </span>
                       </div>

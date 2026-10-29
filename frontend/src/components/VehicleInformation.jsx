@@ -82,7 +82,7 @@ export default function VehicleInformation() {
       setActiveCorridorId(corridorParam)
       try {
         localStorage.setItem('visioniq-active-corridor', corridorParam)
-      } catch {}
+      } catch { }
     }
   }, [corridorParam])
 
@@ -113,7 +113,7 @@ export default function VehicleInformation() {
     try {
       localStorage.setItem('visioniq-active-corridor', corridorId)
       window.dispatchEvent(new CustomEvent('visioniq:set-corridor', { detail: corridorId }))
-    } catch {}
+    } catch { }
   }
 
   const [mapMode, setMapMode] = useState('corridor') // 'corridor' | 'vehicle'
@@ -153,7 +153,7 @@ export default function VehicleInformation() {
           try {
             localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(activeList))
             localStorage.setItem(STORAGE_KEY_INDEX, '3')
-          } catch {}
+          } catch { }
           nextQueueIndexRef.current = 3
         } else {
           setDisplayedCollisions(activeList)
@@ -187,7 +187,7 @@ export default function VehicleInformation() {
           try {
             localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(updated))
             localStorage.setItem(STORAGE_KEY_INDEX, String(updatedIdx))
-          } catch {}
+          } catch { }
           return updated
         })
 
@@ -217,7 +217,7 @@ export default function VehicleInformation() {
           const updated = [match, ...prev]
           try {
             localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(updated))
-          } catch {}
+          } catch { }
           return updated
         })
       }
@@ -230,7 +230,7 @@ export default function VehicleInformation() {
     setSelectedVehicle(vehicle)
     try {
       localStorage.setItem(STORAGE_KEY_SELECTED, vehicle.vehicleNumber)
-    } catch {}
+    } catch { }
   }
 
   function handleResetStoredData() {
@@ -238,7 +238,7 @@ export default function VehicleInformation() {
       localStorage.removeItem(STORAGE_KEY_RECORDS)
       localStorage.removeItem(STORAGE_KEY_INDEX)
       localStorage.removeItem(STORAGE_KEY_SELECTED)
-    } catch {}
+    } catch { }
     const initialFew = allCollisions.slice(0, 3)
     setDisplayedCollisions(initialFew)
     setSelectedVehicle(initialFew[0] || null)
@@ -440,7 +440,7 @@ export default function VehicleInformation() {
       <section className="clean-incident-impact-section" aria-label="Incident Impact Radius" style={{ marginBottom: '24px' }}>
         <LocationIncidentImpactView
           selectedCorridorId={activeCorridorId}
-          onSelectLocation={() => {}}
+          onSelectLocation={() => { }}
         />
       </section>
 
@@ -460,7 +460,7 @@ export default function VehicleInformation() {
         <div className="track-grid-left">
           <VehiclePathTable
             vehicle={activeSelectedVehicle}
-            onSelectCheckpoint={() => {}}
+            onSelectCheckpoint={() => { }}
           />
         </div>
 

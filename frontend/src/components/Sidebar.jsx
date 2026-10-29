@@ -1,11 +1,9 @@
 import React from 'react'
-import { ArrowLeft, Video } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { navigation } from '../data/navigation'
 
 export default function Sidebar({
   liveMode = false,
-  onSwitchToExcelData,
   sidebarOpen = false,
   setSidebarOpen = null,
   isSidebarPinned = false,
@@ -15,6 +13,8 @@ export default function Sidebar({
 }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
+
+  const isLive = liveMode || pathname.startsWith('/live')
 
   const handleNavClick = () => {
     if (setSidebarOpen) {
@@ -26,64 +26,52 @@ export default function Sidebar({
   }
 
   const isExpanded = isSidebarPinned || isSidebarHovered || sidebarOpen
-  const isLiveView = pathname === '/live-view'
 
   return (
     <aside
-      className={`viq-dark-sidebar ${isExpanded ? 'is-open' : 'is-closed'} ${
-        isSidebarPinned ? 'is-pinned' : 'is-unpinned'
-      }`}
+      className={`viq-dark-sidebar ${isExpanded ? 'is-open' : 'is-closed'} ${isSidebarPinned ? 'is-pinned' : 'is-unpinned'
+        }`}
       onMouseEnter={handleSidebarMouseEnter}
       onMouseLeave={handleSidebarMouseLeave}
     >
-      {/* ── Primary Navigation List ── */}
-      <nav aria-label="Primary navigation" className="viq-nav-list">
-        {isLiveView ? (
-          <>
-            <NavLink
-              className="viq-nav-item active"
-              onClick={handleNavClick}
-              to="/live-view"
-            >
-              <Video className="viq-nav-icon" size={18} strokeWidth={2} />
-              <span className="viq-nav-label">Live Feed</span>
-            </NavLink>
-            <button
-              className="viq-nav-item"
-              onClick={() => {
-                handleNavClick()
-                onSwitchToExcelData?.()
-                navigate('/home')
-              }}
-              type="button"
-            >
-              <ArrowLeft className="viq-nav-icon" size={18} strokeWidth={2} />
-              <span className="viq-nav-label">Back to Excel Data</span>
-            </button>
-          </>
-        ) : (
-          navigation.map(({ label, path, icon: Icon, exact }) => {
-            const isActive = pathname === path
+      {/* ── Mode Subtitle / Live Indicator ── */}
+      {isLive && (
+        <div className="viq-sidebar-mode-indicator" title="Currently viewing Live Feed Interface">
+          <span className="viq-sidebar-live-dot" />
+          <span className="viq-sidebar-mode-text">LIVE FEED TELEMETRY</span>
+        </div>
+      )}
 
-            return (
-              <NavLink
-                className={`viq-nav-item ${isActive ? 'active' : ''}`}
-                end={exact}
-                key={path}
-                onClick={handleNavClick}
-                title={label}
-                to={path}
-              >
-                {Icon === 'rupee' ? (
-                  <span className="viq-nav-rupee-icon" aria-hidden="true">₹</span>
-                ) : (
-                  <Icon className="viq-nav-icon" size={18} strokeWidth={2} />
-                )}
-                <span className="viq-nav-label">{label}</span>
-              </NavLink>
-            )
-          })
-        )}
+      {/* ── Primary Navigation List (Preserving exact 11 items & visual styling) ── */}
+      <nav aria-label="Primary navigation" className="viq-nav-list">
+        {navigation.map(({ label, path, icon: Icon, exact }) => {
+          // In live mode, route to /live${path}
+          const targetPath = isLive ? `/live${path}` : path
+          const isActive = isLive
+            ? pathname === targetPath || (path !== '/home' && pathname.startsWith(targetPath))
+            : pathname === path || (path !== '/home' && !pathname.startsWith('/live') && pathname.startsWith(path))
+
+          return (
+            <NavLink
+              className={`viq-nav-item ${isActive ? 'active' : ''}`}
+              end={exact}
+              key={path}
+              onClick={handleNavClick}
+              title={`${label} (${isLive ? 'Live Feed' : 'Excel Data'})`}
+              to={targetPath}
+            >
+              {Icon === 'rupee' ? (
+                <span className="viq-nav-rupee-icon" aria-hidden="true">₹</span>
+              ) : (
+                <Icon className="viq-nav-icon" size={18} strokeWidth={2} />
+              )}
+              <span className="viq-nav-label">{label}</span>
+              {isLive && label === 'Camera Network' && (
+                <span className="viq-nav-live-subbadge">LIVE</span>
+              )}
+            </NavLink>
+          )
+        })}
       </nav>
 
       {/* ── Bottom Highway Graphic with "Smarter Highways Brighter India" ── */}

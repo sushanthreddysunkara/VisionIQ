@@ -141,7 +141,7 @@ export default function Topbar({
 
         <div
           className="topbar-brand-lockup"
-          onClick={() => navigate('/home')}
+          onClick={() => navigate(liveMode ? '/live/home' : '/home')}
           style={{ cursor: 'pointer' }}
         >
           <div className="topbar-logo-text">
@@ -160,14 +160,20 @@ export default function Topbar({
         </div>
       </div>
 
-      <div className="topbar-mode-switcher" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div className="topbar-mode-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <button
           className={`topbar-mode-btn ${!liveMode ? 'active' : ''}`}
           onClick={() => {
             onToggleLiveMode?.(false)
-            navigate('/home')
+            if (pathname.startsWith('/live')) {
+              const excelTarget = pathname.replace(/^\/live/, '') || '/home'
+              navigate(excelTarget)
+            } else {
+              navigate('/home')
+            }
           }}
           type="button"
+          title="Switch to Excel Data Interface"
         >
           Excel Data
         </button>
@@ -175,10 +181,17 @@ export default function Topbar({
           className={`topbar-mode-btn ${liveMode ? 'active' : ''}`}
           onClick={() => {
             onToggleLiveMode?.(true)
-            navigate('/live-view')
+            if (!pathname.startsWith('/live')) {
+              const liveTarget = `/live${pathname === '/' ? '/home' : pathname}`
+              navigate(liveTarget)
+            } else {
+              navigate('/live/home')
+            }
           }}
           type="button"
+          title="Switch to Live Feed Interface"
         >
+          <span className="viq-topbar-live-dot" />
           Live Feed
         </button>
       </div>
