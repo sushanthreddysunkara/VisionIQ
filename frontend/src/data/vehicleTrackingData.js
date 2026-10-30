@@ -1,3 +1,5 @@
+import { getHighwaySegmentBetweenPoints, snapToNH44Road } from './nh44RouteGeometry.js'
+
 // 6 Optical ANPR & Telemetry Surveillance Cameras along National Highway 44 (NH-44 Corridor)
 export const cameras = [
   {
@@ -137,6 +139,40 @@ export function sortObservationsChronologically(observations = []) {
  * Construct an accurate polyline that hugs the main NH-44 highway between observations.
  */
 export function getHighwayRouteForObservations(observations = []) {
+  const validObs = sortObservationsChronologically(observations).filter(
+    (obs) => Number.isFinite(Number(obs.latitude)) && Number.isFinite(Number(obs.longitude))
+  )
+  if (!validObs.length) return []
+  if (validObs.length === 1) {
+    const pt = snapToNH44Road(Number(validObs[0].latitude), Number(validObs[0].longitude))
+    return [pt]
+  }
+
+  const highwayPoints = []
+  for (let i = 0; i < validObs.length - 1; i++) {
+    const fromObs = validObs[i]
+    const toObs = validObs[i + 1]
+    const segment = getHighwaySegmentBetweenPoints(
+      Number(fromObs.latitude),
+      Number(fromObs.longitude),
+      Number(toObs.latitude),
+      Number(toObs.longitude)
+    )
+    if (segment && segment.length) {
+      if (highwayPoints.length) {
+        highwayPoints.push(...segment.slice(1))
+      } else {
+        highwayPoints.push(...segment)
+      }
+    } else {
+      highwayPoints.push([Number(fromObs.latitude), Number(fromObs.longitude)])
+      highwayPoints.push([Number(toObs.latitude), Number(toObs.longitude)])
+    }
+  }
+  return highwayPoints.length ? highwayPoints : validObs.map((o) => [Number(o.latitude), Number(o.longitude)])
+}
+
+export function getHighwayRouteForObservationsLegacy(observations = []) {
   const validObs = sortObservationsChronologically(observations).filter(
     (obs) => Number.isFinite(Number(obs.latitude)) && Number.isFinite(Number(obs.longitude))
   )

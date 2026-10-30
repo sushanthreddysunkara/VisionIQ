@@ -62,7 +62,7 @@ export function LiveFeedProvider({ children }) {
   const analyzeUploadedVideo = async () => {
     if (!uploadedVideoUrl) return
     setIsAnalyzing(true)
-    setAnalysisProgress(20)
+    setAnalysisProgress(30)
 
     try {
       let serverSuccess = false
@@ -70,18 +70,25 @@ export function LiveFeedProvider({ children }) {
       if (uploadedVideoFile && typeof uploadedVideoFile.arrayBuffer === 'function') {
         const formData = new FormData()
         formData.append('video', uploadedVideoFile)
-        setAnalysisProgress(35)
+        setAnalysisProgress(50)
         try {
+          // Standard request controller with 15s timeout for video AI ingestion
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 15000)
           const res = await fetch('/api/live-feed/analyze-video', {
             method: 'POST',
             body: formData,
+            signal: controller.signal,
           })
+          clearTimeout(timeoutId)
           if (res.ok) {
             const data = await res.json()
             if (data.success) {
               serverSuccess = true
               if (Array.isArray(data.frames) && data.frames.length > 0) {
                 setAnalyzedFrames(data.frames)
+              } else {
+                setAnalyzedFrames([])
               }
               const vehiclesToAdapt = Array.isArray(data.vehicles) && data.vehicles.length > 0 ? data.vehicles : []
               if (vehiclesToAdapt.length > 0) {
@@ -95,32 +102,16 @@ export function LiveFeedProvider({ children }) {
             }
           }
         } catch {
-          // Backend inference fallback
+          // If backend whole-video analysis is unavailable or times out,
+          // the real-time canvas frame inference will analyze video frames on playback.
         }
       }
 
       if (!serverSuccess) {
-        setAnalysisProgress(55)
-        await new Promise((r) => setTimeout(r, 650))
-        setAnalysisProgress(85)
-        await new Promise((r) => setTimeout(r, 350))
-
-        // High-precision model detections adapted specifically to uploaded video
-        const detectedDetections = [
-          { trackId: '101', class: 'Car', plate: 'TS 09 EA 4129', confidence: 0.97, speed: 76, lane: 'Lane 2', box: [28, 38, 22, 26] },
-          { trackId: '102', class: 'Truck', plate: 'Not Recognized', confidence: 0.91, speed: 58, lane: 'Lane 1', violation: 'Unrecognized Plate', box: [56, 32, 28, 36] },
-          { trackId: '103', class: 'Bus', plate: 'AP 28 BV 8901', confidence: 0.94, speed: 64, lane: 'Lane 3', box: [12, 45, 24, 30] },
-          { trackId: '104', class: 'Car', plate: 'KA 03 MG 7721', confidence: 0.98, speed: 92, lane: 'Lane 2', violation: 'Over-speed (92 in 80)', box: [70, 52, 20, 24] },
-          { trackId: '105', class: 'Bike', plate: 'Not Recognized', confidence: 0.86, speed: 49, lane: 'Lane 4', box: [42, 62, 12, 18] },
-          { trackId: '106', class: 'Truck', plate: 'MH 12 QX 4500', confidence: 0.93, speed: 54, lane: 'Lane 1', box: [38, 28, 26, 34] },
-        ]
-
-        const adapted = adaptModelDetectionBatch(detectedDetections, {
-          cameraId: 'CAM-LIVE-UPLOAD',
-          location: 'Uploaded Video AI Feed',
-        })
-        setLiveRecords(adapted)
-        setActivePredictions(detectedDetections)
+        // Absolutely no hardcoded or synthetic fake boxes:
+        // Set analyzedFrames to empty so live frame-by-frame model inference directly drives detections
+        setAnalyzedFrames([])
+        setActivePredictions([])
       }
 
       setAnalysisProgress(100)

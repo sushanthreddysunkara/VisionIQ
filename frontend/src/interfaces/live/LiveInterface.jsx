@@ -1,5 +1,5 @@
 import React from 'react'
-import { Navigate, Route, Routes, Outlet } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { LiveFeedProvider } from './context/LiveFeedContext'
 import LiveDashboard from './pages/LiveDashboard'
 import LiveTollRevenue from './pages/LiveTollRevenue'
@@ -12,11 +12,12 @@ import LiveIncidents from './pages/LiveIncidents'
 import LiveAssetsMaintenance from './pages/LiveAssetsMaintenance'
 import LiveReports from './pages/LiveReports'
 import LiveRulesEvents from './pages/LiveRulesEvents'
+import ModelsPage from '../../components/models/ModelsPage'
 
 /**
  * LiveInterface
  * Root wrapper for the independent Live Feed interface.
- * Hosts the isolated LiveFeedProvider and renders all 11 Live pages.
+ * Hosts the isolated LiveFeedProvider and renders all Live pages.
  */
 export default function LiveInterface() {
   return (
@@ -38,6 +39,7 @@ export default function LiveInterface() {
         <Route path="assets-maintenance" element={<LiveAssetsMaintenance />} />
         <Route path="document-intelligence" element={<LiveReports />} />
         <Route path="rules-events" element={<LiveRulesEvents />} />
+        <Route path="models" element={<ModelsPage isLive={true} />} />
         <Route path="*" element={<Navigate replace to="home" />} />
       </Routes>
     </LiveFeedProvider>
