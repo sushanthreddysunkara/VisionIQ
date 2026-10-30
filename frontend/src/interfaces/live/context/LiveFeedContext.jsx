@@ -11,7 +11,7 @@ import {
 
 const LiveFeedContext = createContext(null)
 
-export function LiveFeedProvider({ children }) {
+export function LiveFeedProvider({ children, excelRows = [], excelFileName = '' }) {
   const [liveRecords, setLiveRecords] = useState(initialLiveTrafficRecords)
   const [isDemoMode, setIsDemoMode] = useState(true)
   const [cameras, setCameras] = useState(liveCameras)
@@ -169,6 +169,8 @@ export function LiveFeedProvider({ children }) {
     maintenanceAssets: liveMaintenanceAssets,
     knowledgeGraph: liveKnowledgeGraph,
     ontologyClasses: liveOntologyClasses,
+    excelRows,
+    excelFileName,
     // Video Upload & AI Model Prediction
     uploadedVideoFile,
     uploadedVideoUrl,

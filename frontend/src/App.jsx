@@ -922,7 +922,7 @@ export default function App() {
                 />
 
                 {/* ── SEPARATE LIVE FEED INTERFACE (11 INDEPENDENT LIVE PAGES) ── */}
-                <Route path="/live/*" element={<LiveInterface />} />
+                <Route path="/live/*" element={<LiveInterface excelRows={trafficData} excelFileName={fileName} />} />
                 <Route path="/live-view" element={<Navigate replace to="/live/home" />} />
 
                 {/* PROJECTS MANAGEMENT */}

@@ -116,6 +116,87 @@ function createVideoSessionId() {
   return `video-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+function formatVideoTime(seconds = 0) {
+  const safeSeconds = Math.max(0, Math.floor(seconds))
+  return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, '0')}`
+}
+
+function areDetectionBoxesEqual(firstBoxes, secondBoxes) {
+  if (firstBoxes.length !== secondBoxes.length) return false
+
+  return firstBoxes.every((box, index) => {
+    const nextBox = secondBoxes[index]
+    return box.id === nextBox.id &&
+      box.label === nextBox.label &&
+      box.plate === nextBox.plate &&
+      box.x === nextBox.x &&
+      box.y === nextBox.y &&
+      box.width === nextBox.width &&
+      box.height === nextBox.height &&
+      box.confidence === nextBox.confidence
+  })
+}
+
+const DETECTION_CARD_RETENTION_MS = 10000
+
+function mergeRecentDetectionCards(previousCards, detections, videoTime, now) {
+  const cards = previousCards.filter((card) => now - card.lastSeenAtMs < DETECTION_CARD_RETENTION_MS)
+  const cardIndices = new Map(cards.map((card, index) => [card.id, index]))
+
+  for (const detection of detections) {
+    const existingIndex = cardIndices.get(detection.id)
+    const existingCard = existingIndex == null ? null : cards[existingIndex]
+    const updatedCard = {
+      ...existingCard,
+      ...detection,
+      firstSeenAt: existingCard?.firstSeenAt || formatVideoTime(videoTime),
+      lastSeenAt: formatVideoTime(videoTime),
+      lastSeenAtMs: now,
+      newUntilMs: existingCard && now - existingCard.lastSeenAtMs < 1500
+        ? existingCard.newUntilMs
+        : now + 1800,
+    }
+
+    if (existingIndex == null) {
+      cardIndices.set(detection.id, cards.length)
+      cards.push(updatedCard)
+    } else {
+      cards[existingIndex] = updatedCard
+    }
+  }
+
+  return cards
+}
+
+function mergeVideoVehicleRecords(previousRecords, incomingRecords, currentTime) {
+  const mergedRecords = [...previousRecords]
+  const recordIndices = new Map(
+    mergedRecords.map((record, index) => [String(record.trackId || record.observationId || record.id), index]),
+  )
+  const observedAt = formatVideoTime(currentTime)
+
+  for (const record of incomingRecords) {
+    const key = String(record.trackId || record.observationId || record.id)
+    const existingIndex = recordIndices.get(key)
+    const existingRecord = existingIndex == null ? null : mergedRecords[existingIndex]
+    const updatedRecord = {
+      ...existingRecord,
+      ...record,
+      firstSeenAt: existingRecord?.firstSeenAt || observedAt,
+      lastSeenAt: observedAt,
+    }
+
+    if (existingIndex == null) {
+      recordIndices.set(key, mergedRecords.length)
+      mergedRecords.push(updatedRecord)
+    } else {
+      mergedRecords[existingIndex] = updatedRecord
+    }
+  }
+
+  return mergedRecords
+}
+
 export default function LiveDashboard() {
   const navigate = useNavigate()
   const {
@@ -144,6 +225,8 @@ export default function LiveDashboard() {
   const [duration, setDuration] = useState(0)
   const [selectedVehicle, setSelectedVehicle] = useState(null)
   const [dynamicBoxes, setDynamicBoxes] = useState([])
+  const [recentDetectionCards, setRecentDetectionCards] = useState([])
+  const [isDetectionStreamPaused, setIsDetectionStreamPaused] = useState(false)
   const [videoAspect, setVideoAspect] = useState('16 / 9')
   const [inferenceError, setInferenceError] = useState('')
 
@@ -155,7 +238,62 @@ export default function LiveDashboard() {
   const requestInFlightRef = useRef(false)
   const lastDetectionTimeRef = useRef(0)
   const hasDynamicBoxesRef = useRef(false)
+  const latestDynamicBoxesRef = useRef([])
+  const recentDetectionCardsRef = useRef([])
+  const isDetectionStreamPausedRef = useRef(false)
   const sessionIdRef = useRef(createVideoSessionId())
+
+  const clearRecentDetectionCards = () => {
+    recentDetectionCardsRef.current = []
+    setRecentDetectionCards([])
+  }
+
+  const updateDynamicBoxes = (boxes) => {
+    const boxesChanged = !areDetectionBoxesEqual(latestDynamicBoxesRef.current, boxes)
+    latestDynamicBoxesRef.current = boxes
+    recentDetectionCardsRef.current = mergeRecentDetectionCards(
+      recentDetectionCardsRef.current,
+      boxes,
+      videoElementRef.current?.currentTime || 0,
+      Date.now(),
+    )
+    if (!isDetectionStreamPausedRef.current) {
+      setRecentDetectionCards(recentDetectionCardsRef.current)
+    }
+    if (boxesChanged && !isDetectionStreamPausedRef.current) {
+      setDynamicBoxes(boxes)
+    }
+  }
+
+  const toggleDetectionStreamPause = () => {
+    const shouldPause = !isDetectionStreamPausedRef.current
+    isDetectionStreamPausedRef.current = shouldPause
+    setIsDetectionStreamPaused(shouldPause)
+    if (!shouldPause) {
+      recentDetectionCardsRef.current = recentDetectionCardsRef.current.filter(
+        (card) => Date.now() - card.lastSeenAtMs < DETECTION_CARD_RETENTION_MS,
+      )
+      setRecentDetectionCards(recentDetectionCardsRef.current)
+      setDynamicBoxes(latestDynamicBoxesRef.current)
+    }
+  }
+
+  useEffect(() => {
+    const cleanupExpiredCards = () => {
+      if (isDetectionStreamPausedRef.current) return
+
+      const recentCards = recentDetectionCardsRef.current.filter(
+        (card) => Date.now() - card.lastSeenAtMs < DETECTION_CARD_RETENTION_MS,
+      )
+      if (recentCards.length !== recentDetectionCardsRef.current.length) {
+        recentDetectionCardsRef.current = recentCards
+        setRecentDetectionCards(recentCards)
+      }
+    }
+
+    const cleanupInterval = window.setInterval(cleanupExpiredCards, 500)
+    return () => window.clearInterval(cleanupInterval)
+  }, [])
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0]
@@ -169,6 +307,10 @@ export default function LiveDashboard() {
       setDuration(0)
       setVideoAspect('16 / 9')
       handleUploadVideo(file)
+      latestDynamicBoxesRef.current = []
+      clearRecentDetectionCards()
+      isDetectionStreamPausedRef.current = false
+      setIsDetectionStreamPaused(false)
       setDynamicBoxes([])
       setIsPlaying(false)
     }
@@ -184,6 +326,10 @@ export default function LiveDashboard() {
     setCurrentTime(0)
     setDuration(0)
     setVideoAspect('16 / 9')
+    latestDynamicBoxesRef.current = []
+    clearRecentDetectionCards()
+    isDetectionStreamPausedRef.current = false
+    setIsDetectionStreamPaused(false)
     setDynamicBoxes([])
     handleSetSampleVideo('/videos/traffic_sample1.mp4', 'NH-44 Sample Traffic Feed')
   }
@@ -208,7 +354,11 @@ export default function LiveDashboard() {
     sessionIdRef.current = createVideoSessionId()
     lastSampleTimeRef.current = 0
     setLiveRecords([])
-    setDynamicBoxes([])
+    latestDynamicBoxesRef.current = []
+    clearRecentDetectionCards()
+    isDetectionStreamPausedRef.current = false
+    setIsDetectionStreamPaused(false)
+    updateDynamicBoxes([])
     setInferenceError('')
     video.currentTime = 0
     video.play().catch((error) => {
@@ -281,27 +431,32 @@ export default function LiveDashboard() {
             trackId: vehicle.vehicleId || vehicle.trackId,
             class: vehicle.type || vehicle.class,
           }))
-          setLiveRecords(adaptModelDetectionBatch(trackedVehicles, {
+          const incomingRecords = adaptModelDetectionBatch(trackedVehicles, {
             cameraId: 'CAM-LIVE-UPLOAD',
             location: 'Uploaded Video AI Ingestion',
-          }))
+          })
+          setLiveRecords((previousRecords) => mergeVideoVehicleRecords(
+            previousRecords,
+            incomingRecords,
+            timeSec,
+          ))
         }
 
         if (video.currentTime - timeSec > 0.75) {
           hasDynamicBoxesRef.current = false
-          setDynamicBoxes([])
+          updateDynamicBoxes([])
           return
         }
 
         const boxes = mapFrameDetectionsToBoxes(data.frame?.detections || [])
-        setDynamicBoxes(boxes)
+        updateDynamicBoxes(boxes)
         hasDynamicBoxesRef.current = boxes.length > 0
         lastDetectionTimeRef.current = timeSec
         setInferenceError('')
       } catch (error) {
         if (isRunning && requestSessionId === sessionIdRef.current) {
           hasDynamicBoxesRef.current = false
-          setDynamicBoxes([])
+          updateDynamicBoxes([])
           setInferenceError(error.message || 'Live frame analysis failed.')
         }
       } finally {
@@ -319,7 +474,7 @@ export default function LiveDashboard() {
         if (video.duration) setDuration(video.duration)
         if (hasDynamicBoxesRef.current && timeSec - lastDetectionTimeRef.current > 0.75) {
           hasDynamicBoxesRef.current = false
-          setDynamicBoxes([])
+          updateDynamicBoxes([])
         }
 
         if (analyzedFrames && analyzedFrames.length > 0) {
@@ -328,7 +483,7 @@ export default function LiveDashboard() {
           const frameIsCurrent = previousFrame && timeSec - previousFrame.timeSeconds <= 0.75
           const computed = frameIsCurrent ? mapFrameDetectionsToBoxes(previousFrame.detections || []) : []
 
-          setDynamicBoxes(computed)
+          updateDynamicBoxes(computed)
           hasDynamicBoxesRef.current = computed.length > 0
           lastDetectionTimeRef.current = frameIsCurrent ? previousFrame.timeSeconds : 0
         } else {
@@ -1104,47 +1259,84 @@ export default function LiveDashboard() {
           boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: '16px' }}>
           <div>
             <h2 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: '#0f172a' }}>
               Real-Time ANPR Optical Detection Stream
             </h2>
             <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748b' }}>
-              Active vehicle observations tracked frame-by-frame from the uploaded video.
+              New vehicles are added as detected and stay visible for 10 seconds. Pause the display to inspect them.
             </p>
           </div>
-          <span style={{ fontSize: '12px', fontWeight: 650, color: '#0284c7' }}>
-            {dynamicBoxes.length > 0 ? `${dynamicBoxes.length} Active Tracks` : 'Awaiting Video Ingestion'}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: '12px', fontWeight: 650, color: '#0284c7' }}>
+              {dynamicBoxes.length} in view · {recentDetectionCards.length} recent
+            </span>
+            <button
+              type="button"
+              onClick={toggleDetectionStreamPause}
+              disabled={!isAnalyzed}
+              aria-pressed={isDetectionStreamPaused}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '7px 10px',
+                border: '1px solid #cbd5e1',
+                borderRadius: 6,
+                background: isDetectionStreamPaused ? '#eff6ff' : '#fff',
+                color: '#1e40af',
+                fontSize: 12,
+                fontWeight: 650,
+                cursor: isAnalyzed ? 'pointer' : 'not-allowed',
+                opacity: isAnalyzed ? 1 : 0.6,
+              }}
+            >
+              {isDetectionStreamPaused ? <Play size={14} /> : <Pause size={14} />}
+              {isDetectionStreamPaused ? 'Resume display' : 'Pause display'}
+            </button>
+          </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px' }}>
-          {dynamicBoxes.length === 0 && (
+          {recentDetectionCards.length === 0 && (
             <div style={{ gridColumn: '1 / -1', padding: '24px', textAlign: 'center', color: '#64748b', fontSize: 13 }}>
-              No vehicles currently visible in this frame.
+              {isDetectionStreamPaused ? 'Display paused. Resume to show new detections.' : 'Detected vehicles will remain visible here for 10 seconds.'}
             </div>
           )}
-          {dynamicBoxes.map((record) => (
+          {recentDetectionCards.map((record) => {
+            const isInCurrentFrame = dynamicBoxes.some((box) => box.id === record.id)
+            const isNewDetection = Date.now() < record.newUntilMs
+
+            return (
             <div
               key={record.id}
               onClick={() => setSelectedVehicle(record)}
               style={{
-                border: '1px solid #e2e8f0',
+                border: `1px solid ${isNewDetection ? '#60a5fa' : '#e2e8f0'}`,
                 borderRadius: '10px',
                 padding: '14px',
                 background: record.isOverSpeed ? '#fffbfa' : '#f8fafc',
                 borderLeft: record.isOverSpeed ? '4px solid #ef4444' : record.isUnrecognized ? '4px solid #f59e0b' : '4px solid #10b981',
                 cursor: 'pointer',
-                transition: 'transform 0.15s ease',
+                boxShadow: isNewDetection ? '0 0 0 2px rgba(59, 130, 246, 0.12)' : 'none',
+                transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b' }}>
                   Track #{record.trackId || 1}
                 </span>
-                <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-                  {currentTime > 0 ? `${Math.floor(currentTime / 60)}:${String(Math.floor(currentTime % 60)).padStart(2, '0')}` : 'Just now'}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  {isNewDetection && (
+                    <span style={{ padding: '2px 6px', borderRadius: 10, background: '#dbeafe', color: '#1d4ed8', fontSize: 10, fontWeight: 750 }}>
+                      NEW
+                    </span>
+                  )}
+                  <span style={{ fontSize: '11px', color: '#64748b' }}>
+                    {record.lastSeenAt || formatVideoTime(currentTime)}
+                  </span>
+                </div>
               </div>
 
               {/* Number Plate with "Not Recognized" Badge */}
@@ -1175,6 +1367,9 @@ export default function LiveDashboard() {
                 <div>Lane: <span>{record.lane || 'Lane 1'}</span></div>
                 <div>Conf: <span>{Math.round((record.confidence || 0.92) * 100)}%</span></div>
               </div>
+              <div style={{ marginTop: 8, fontSize: 10, color: isInCurrentFrame ? '#15803d' : '#64748b', fontWeight: 650 }}>
+                {isInCurrentFrame ? 'Currently in frame' : `Last seen at ${record.lastSeenAt}`}
+              </div>
 
               {record.isOverSpeed && (
                 <div style={{ marginTop: '8px', fontSize: '11px', color: '#dc2626', fontWeight: 650, display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -1182,7 +1377,55 @@ export default function LiveDashboard() {
                 </div>
               )}
             </div>
-          ))}
+            )
+          })}
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+            <div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: '#0f172a' }}>All Vehicles Detected</h3>
+              <p style={{ margin: '3px 0 0', fontSize: 12, color: '#64748b' }}>
+                Unique vehicle tracks retained for review, including vehicles no longer in the current frame.
+              </p>
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 650, color: '#475569' }}>
+              {liveRecords.length} total
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+            <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse', textAlign: 'left', fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', color: '#64748b', fontSize: 11, textTransform: 'uppercase' }}>
+                  {['Track', 'License Plate', 'Vehicle Type', 'Speed', 'Lane', 'Confidence', 'First Seen', 'Last Seen'].map((heading) => (
+                    <th key={heading} style={{ padding: '10px 12px', borderBottom: '1px solid #e2e8f0', whiteSpace: 'nowrap' }}>{heading}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {liveRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ padding: 20, textAlign: 'center', color: '#64748b' }}>
+                      Vehicles detected during playback will appear here.
+                    </td>
+                  </tr>
+                ) : liveRecords.map((record) => (
+                  <tr key={record.trackId || record.observationId || record.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '10px 12px', fontWeight: 700, color: '#475569', whiteSpace: 'nowrap' }}>#{record.trackId || '—'}</td>
+                    <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 650, color: record.vehicleNumberPlate === 'Not Recognized' ? '#b91c1c' : '#0f172a', whiteSpace: 'nowrap' }}>
+                      {record.vehicleNumberPlate || record.numberPlate || 'Not Recognized'}
+                    </td>
+                    <td style={{ padding: '10px 12px', color: '#1e293b' }}>{record.type || record.vehicleType || 'Vehicle'}</td>
+                    <td style={{ padding: '10px 12px', color: '#1e293b', whiteSpace: 'nowrap' }}>{record.speedKmph || record.speed || '—'} km/h</td>
+                    <td style={{ padding: '10px 12px', color: '#475569', whiteSpace: 'nowrap' }}>{record.lane || '—'}</td>
+                    <td style={{ padding: '10px 12px', color: '#475569' }}>{Math.round((record.confidence || 0) * 100)}%</td>
+                    <td style={{ padding: '10px 12px', color: '#64748b', whiteSpace: 'nowrap' }}>{record.firstSeenAt || record.time || '—'}</td>
+                    <td style={{ padding: '10px 12px', color: '#64748b', whiteSpace: 'nowrap' }}>{record.lastSeenAt || record.time || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 

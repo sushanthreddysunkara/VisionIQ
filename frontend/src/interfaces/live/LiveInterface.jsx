@@ -19,9 +19,9 @@ import './live-interface.css'
  * Root wrapper for the independent Live Feed interface.
  * Hosts the isolated LiveFeedProvider and renders all 11 Live pages.
  */
-export default function LiveInterface() {
+export default function LiveInterface({ excelRows = [], excelFileName = '' }) {
   return (
-    <LiveFeedProvider>
+    <LiveFeedProvider excelRows={excelRows} excelFileName={excelFileName}>
       <div className="live-interface-pages">
         <Routes>
           <Route path="/" element={<Navigate replace to="home" />} />
