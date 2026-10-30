@@ -18,6 +18,7 @@ import VehicleInformation from './components/VehicleInformation'
 import AssetsMaintenancePage from './components/AssetsMaintenancePage'
 import TollRevenuePage from './components/tollRevenue/TollRevenuePage'
 import PlaceholderPage from './components/PlaceholderPage'
+import ModelsPage from './components/models/ModelsPage'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import ProjectsPage from './components/projects/ProjectsPage'
 import Sidebar from './components/Sidebar'
@@ -1100,6 +1101,9 @@ export default function App() {
                 {/* RULES & EVENTS: CENTRAL GOVERNMENT TRAFFIC KNOWLEDGE BASE */}
                 <Route path="/rules-events" element={<RulesEventsPage />} />
 
+                {/* MODELS INVENTORY */}
+                <Route path="/models" element={<ModelsPage isLive={false} />} />
+
                 {/* PROFILE & SETTINGS */}
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route
@@ -1125,6 +1129,7 @@ export default function App() {
                       path !== '/vehicle-information' &&
                       path !== '/assets-maintenance' &&
                       path !== '/rules-events' &&
+                      path !== '/models' &&
                       path !== '/profile' &&
                       path !== '/settings' &&
                       path !== '/live-view'

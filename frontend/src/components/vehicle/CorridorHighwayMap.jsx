@@ -28,6 +28,13 @@ import {
 } from 'lucide-react'
 import 'leaflet/dist/leaflet.css'
 import { CORRIDORS_LIST, getCorridorById } from '../../data/corridorsData'
+import {
+  getCorridorExactPath,
+  getHighwaySegmentBetweenPoints,
+  NH44_MASTER_ROAD_POLYLINE,
+  NH44_ALTERNATE_ROUTE_POLYLINE,
+  snapToNH44Road,
+} from '../../data/nh44RouteGeometry'
 
 // 1. Waypoint data with exact GPS coordinates along the NH-44 Hyderabad to Bengaluru corridor
 const CORRIDOR_POINTS = [
@@ -38,7 +45,7 @@ const CORRIDOR_POINTS = [
     lat: 17.3950,
     lng: 78.4480,
     isTerminal: true,
-    terminalLabel: '← Hyderabad',
+    terminalLabel: 'Hyderabad, TG',
     speed: 85,
     speedStatus: 'free',
     hasCamera: true,
@@ -364,7 +371,7 @@ const CORRIDOR_POINTS = [
     lat: 12.9716,
     lng: 77.5946,
     isTerminal: true,
-    terminalLabel: 'Bengaluru →',
+    terminalLabel: 'Bengaluru, KA',
     speed: 85,
     speedStatus: 'free',
     hasCamera: true,
@@ -508,24 +515,54 @@ function getCameraDivIcon() {
   return icon
 }
 
-function getTerminalDivIcon(label, isStart) {
-  const cacheKey = `terminal-${label}-${isStart}`
+
+function getGoogleMapsPin(letter, label, color = '#202124') {
+  const cacheKey = 'gmaps-pin-' + letter + '-' + label + '-' + color
   if (iconsCache.has(cacheKey)) return iconsCache.get(cacheKey)
-
   const icon = divIcon({
-    className: 'corridor-leaflet-div-icon',
-    html: `
-      <div class="leaflet-terminal-pin ${isStart ? 'is-start' : 'is-end'}">
-        <div class="terminal-ring"></div>
-        <span class="terminal-name">${label}</span>
-      </div>
-    `,
-    iconSize: [110, 32],
-    iconAnchor: [isStart ? 10 : 90, 16],
+    className: 'gmaps-div-icon',
+    html: [
+      '<div class="gmaps-marker-pin" style="--marker-color: ' + color + ';">',
+      '  <div class="gmaps-pin-head">',
+      '    <span class="gmaps-pin-letter">' + letter + '</span>',
+      '  </div>',
+      '  <div class="gmaps-pin-tip"></div>',
+      label ? '  <div class="gmaps-pin-text-label">' + label + '</div>' : '',
+      '</div>'
+    ].join(''),
+    iconSize: [160, 42],
+    iconAnchor: [15, 36],
   })
-
   iconsCache.set(cacheKey, icon)
   return icon
+}
+
+function getGoogleMapsRouteCard(duration, distance, tag, isFastest = true) {
+  const cacheKey = 'gmaps-card-' + duration + '-' + distance + '-' + isFastest
+  if (iconsCache.has(cacheKey)) return iconsCache.get(cacheKey)
+  const icon = divIcon({
+    className: 'gmaps-route-card-div',
+    html: [
+      '<div class="gmaps-route-card ' + (isFastest ? 'is-fastest' : 'is-alt') + '">',
+      '  <div class="gmaps-route-card-main">',
+      '    <span class="gmaps-car-icon">🚗</span>',
+      '    <span class="gmaps-card-duration">' + duration + '</span>',
+      '  </div>',
+      '  <div class="gmaps-card-sub">' + distance + '</div>',
+      tag ? '  <div class="gmaps-card-tag">' + tag + '</div>' : '',
+      '</div>'
+    ].join(''),
+    iconSize: [130, 60],
+    iconAnchor: [65, 30],
+  })
+  iconsCache.set(cacheKey, icon)
+  return icon
+}
+
+function getTerminalDivIcon(label, isStart) {
+  const letter = isStart ? 'A' : 'B'
+  const color = isStart ? '#202124' : '#ea4335'
+  return getGoogleMapsPin(letter, label, color)
 }
 
 function getCityNodeDivIcon(name, speedColor, isMajorHub) {
@@ -569,10 +606,33 @@ function MapAutoBoundsFit({ allPositions, triggerFit, maxZoom = 11 }) {
   return null
 }
 
-function LeafletCustomControls({ onFitRoute, showSpeedLayers, onToggleLayers }) {
+function LeafletCustomControls({ onFitRoute, showSpeedLayers, onToggleLayers, mapStyle, onChangeMapStyle }) {
   const map = useMap()
   return (
-    <div className="corridor-leaflet-controls-overlay">
+    <div className="corridor-leaflet-controls-overlay" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div className="gmaps-style-pill-group">
+        <button
+          type="button"
+          className={'gmaps-style-pill ' + (mapStyle === 'roadmap' ? 'active' : '')}
+          onClick={() => onChangeMapStyle && onChangeMapStyle('roadmap')}
+        >
+          Google Map
+        </button>
+        <button
+          type="button"
+          className={'gmaps-style-pill ' + (mapStyle === 'satellite' ? 'active' : '')}
+          onClick={() => onChangeMapStyle && onChangeMapStyle('satellite')}
+        >
+          Satellite
+        </button>
+        <button
+          type="button"
+          className={'gmaps-style-pill ' + (mapStyle === 'terrain' ? 'active' : '')}
+          onClick={() => onChangeMapStyle && onChangeMapStyle('terrain')}
+        >
+          Terrain
+        </button>
+      </div>
       <button
         aria-label="Zoom in"
         className="corridor-control-btn"
@@ -623,6 +683,7 @@ export default function CorridorHighwayMap({
 
   // Selected corridor state
   const [internalCorridor, setInternalCorridor] = useState('NH-44')
+  const [mapStyle, setMapStyle] = useState('roadmap')
   const activeCorridorId = controlledCorridorId || internalCorridor
   const currentCorridorData = useMemo(() => getCorridorById(activeCorridorId), [activeCorridorId])
 
@@ -674,6 +735,13 @@ export default function CorridorHighwayMap({
 
   // All corridor GPS positions for polyline and bounds
   const allPositions = useMemo(() => {
+    if (activeCorridorId === 'ALL' || activeCorridorId === 'NH-44') {
+      return NH44_MASTER_ROAD_POLYLINE
+    }
+    const path = getCorridorExactPath(activeCorridorId)
+    if (path && path.length > 0) {
+      return path
+    }
     if (currentCorridorData.pathCoordinates && currentCorridorData.pathCoordinates.length > 0) {
       return currentCorridorData.pathCoordinates
     }
@@ -682,7 +750,7 @@ export default function CorridorHighwayMap({
       return [...pts, pts[0]]
     }
     return pts
-  }, [currentCorridorData, activeWaypoints, isRing])
+  }, [activeCorridorId, currentCorridorData, activeWaypoints, isRing])
 
   // Filtered incidents list based on dropdown
   const filteredIncidents = useMemo(() => {
@@ -789,8 +857,17 @@ export default function CorridorHighwayMap({
           >
             {/* Tile Layer: OpenStreetMap Standard Tiles (same as Vehicle Info page) */}
             <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              key={mapStyle}
+              attribution='&copy; Google Maps'
+              url={
+                mapStyle === 'satellite'
+                  ? 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
+                  : mapStyle === 'terrain'
+                  ? 'https://mt{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}'
+                  : 'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'
+              }
+              subdomains={['0', '1', '2', '3']}
+              maxZoom={20}
             />
 
             {/* Auto fit & fly handlers */}
@@ -806,25 +883,89 @@ export default function CorridorHighwayMap({
               onFitRoute={() => setFitTrigger((prev) => prev + 1)}
               onToggleLayers={() => setShowSpeedLayers((prev) => !prev)}
               showSpeedLayers={showSpeedLayers}
+              mapStyle={mapStyle}
+              onChangeMapStyle={setMapStyle}
             />
 
-            {/* 1. Base Highway Road Polyline (White Border) */}
+            {/* 0. Google Maps Alternate Route (684.7 km via Kadapa / Rayachoty) */}
+            {(activeCorridorId === 'ALL' || activeCorridorId === 'NH-44') && (
+              <>
+                <Polyline
+                  positions={NH44_ALTERNATE_ROUTE_POLYLINE}
+                  pathOptions={{
+                    color: '#bdc1c6',
+                    weight: 8,
+                    opacity: 0.85,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                  }}
+                />
+                <Polyline
+                  positions={NH44_ALTERNATE_ROUTE_POLYLINE}
+                  pathOptions={{
+                    color: '#80868b',
+                    weight: 4.5,
+                    opacity: 0.9,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                  }}
+                />
+                <Marker
+                  position={[14.47, 78.82]}
+                  icon={getGoogleMapsRouteCard('10 hr 45 min', '684.7 km', '', false)}
+                />
+              </>
+            )}
+
+            {/* 1. Base Highway Road Polyline (Google Maps Route Blue with Outer Border) */}
             <Polyline
               pathOptions={{
-                color: '#ffffff',
-                weight: 8,
-                opacity: 0.95,
+                color: '#185abc',
+                weight: 9,
+                opacity: 0.92,
                 lineCap: 'round',
                 lineJoin: 'round',
               }}
               positions={allPositions}
             />
 
+            {/* 1B. Inner Highway Road Line (Google Maps Route Blue) */}
+            <Polyline
+              pathOptions={{
+                color: '#4285F4',
+                weight: 6,
+                opacity: 0.98,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+              positions={allPositions}
+            />
+
+            {/* Floating ETA Card on Primary Route */}
+            {(activeCorridorId === 'ALL' || activeCorridorId === 'NH-44') ? (
+              <Marker
+                position={[14.95, 77.62]}
+                icon={getGoogleMapsRouteCard('8 hr 40 min', '564.9 km · NH 44', 'Fastest route', true)}
+              />
+            ) : (
+              allPositions.length > 0 && (
+                <Marker
+                  position={allPositions[Math.floor(allPositions.length / 2)]}
+                  icon={getGoogleMapsRouteCard(
+                    (currentCorridorData.lengthKm ? Math.round(currentCorridorData.lengthKm * 1.05) + ' min' : '30 min'),
+                    (currentCorridorData.lengthKm || 32) + ' km · NH 44',
+                    currentCorridorData.shortName || 'Fastest route',
+                    true
+                  )}
+                />
+              )
+            )}
+
             {/* 1B. Inner Highway Road Line (Vibrant Highway Blue Accent) */}
             <Polyline
               pathOptions={{
-                color: '#1d4ed8',
-                weight: 4,
+                color: '#1a73e8',
+                weight: 5,
                 opacity: 0.9,
                 lineCap: 'round',
                 lineJoin: 'round',
@@ -839,6 +980,7 @@ export default function CorridorHighwayMap({
                 if (isLast && !isRing) return null
                 const nextPt = isLast ? activeWaypoints[0] : activeWaypoints[index + 1]
                 const segColor = getSpeedColor(pt.speed || 80)
+                const segmentRoadCurve = isRing ? [] : getHighwaySegmentBetweenPoints(pt.lat, pt.lng, nextPt.lat, nextPt.lng)
                 return (
                   <Polyline
                     key={`seg-line-${pt.id || pt.name}-${nextPt.id || nextPt.name}`}
@@ -849,10 +991,7 @@ export default function CorridorHighwayMap({
                       lineCap: 'round',
                       lineJoin: 'round',
                     }}
-                    positions={[
-                      [pt.lat, pt.lng],
-                      [nextPt.lat, nextPt.lng],
-                    ]}
+                    positions={segmentRoadCurve.length > 1 ? segmentRoadCurve : [[pt.lat, pt.lng], [nextPt.lat, nextPt.lng]]}
                   />
                 )
               })}
@@ -913,7 +1052,7 @@ export default function CorridorHighwayMap({
                   }}
                   icon={pinIcon}
                   key={`pt-marker-${ptKey}`}
-                  position={[pt.lat, pt.lng]}
+                  position={isRing ? [pt.lat, pt.lng] : snapToNH44Road(pt.lat, pt.lng)}
                 >
                   {/* Tooltip on hover */}
                   <Tooltip direction="top" offset={[0, -14]} opacity={0.92}>

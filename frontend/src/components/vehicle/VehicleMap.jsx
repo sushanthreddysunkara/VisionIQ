@@ -22,6 +22,7 @@ import {
   NH44_HIGHWAY_WAYPOINTS,
   sortObservationsChronologically,
 } from '../../data/vehicleTrackingData'
+import { snapToNH44Road } from '../../data/nh44RouteGeometry'
 import 'leaflet/dist/leaflet.css'
 
 const cameraPinIcon = divIcon({
@@ -136,7 +137,7 @@ export default function VehicleMap({ vehicle, cameras = [], showCameraJourney = 
   const boundedObservationIndex = Math.min(activeObservationIndex, Math.max(validObservations.length - 1, 0))
   const activeObservation = validObservations[boundedObservationIndex]
   const currentPoint = activeObservation
-    ? [Number(activeObservation.latitude), Number(activeObservation.longitude)]
+    ? snapToNH44Road(Number(activeObservation.latitude), Number(activeObservation.longitude))
     : null
   const collisionObservation = validObservations.find((observation) =>
     /collision|accident/i.test(observation.detectionType || '') || observation.cameraId === vehicle?.collisionCamera
@@ -305,16 +306,18 @@ export default function VehicleMap({ vehicle, cameras = [], showCameraJourney = 
             style={{ height: '100%', minHeight: '480px', width: '100%' }}
           >
             <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              attribution='&copy; Google Maps'
+              url="https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+              subdomains={['0', '1', '2', '3']}
+              maxZoom={20}
             />
             <RouteViewport currentPoint={isFollowing ? currentPoint : null} vehicleKey={vehicle?.vehicleNumber} />
             <MapResizeHandler />
             <MapControls points={routePoints} />
             {routePoints.length > 1 && (
               <>
-                <Polyline positions={routePoints} pathOptions={{ color: '#fff', weight: 10, opacity: 0.9 }} />
-                <Polyline positions={routePoints} pathOptions={{ color: '#16856f', weight: 5, opacity: 0.95 }} />
+                <Polyline positions={routePoints} pathOptions={{ color: '#185abc', weight: 9, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }} />
+                <Polyline positions={routePoints} pathOptions={{ color: '#4285F4', weight: 6, opacity: 0.98, lineCap: 'round', lineJoin: 'round' }} />
               </>
             )}
             {cameraStops.map((camera) => {
@@ -325,7 +328,7 @@ export default function VehicleMap({ vehicle, cameras = [], showCameraJourney = 
               return (
                 <Marker
                   key={camera.id}
-                  position={[latitude, longitude]}
+                  position={snapToNH44Road(latitude, longitude)}
                   icon={isCollision ? incidentCameraPinIcon : camera.observation ? cameraPinIcon : pendingCameraPinIcon}
                 >
                   <Tooltip direction="top" offset={[0, -32]}>

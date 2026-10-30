@@ -1,4 +1,5 @@
 // Master Multi-Corridor Database for VIZIONIQ Highway Intelligence Platform
+import { CORRIDOR_EXACT_GEOMETRIES, NH44_MASTER_ROAD_POLYLINE } from './nh44RouteGeometry.js'
 // Covers ALL 16 NH-44 Highway Corridors + Major Interstate Networks
 
 export const CORRIDORS_LIST = [
@@ -9410,6 +9411,15 @@ export const ALL_CORRIDOR_INCIDENTS = CORRIDORS_LIST.flatMap((corridor) =>
     corridorShortName: corridor.shortName,
   }))
 );
+
+// Automatically attach exact road-snapped geometries to all NH-44 corridors
+CORRIDORS_LIST.forEach((corridor) => {
+  if (corridor.id === 'NH-44') {
+    corridor.pathCoordinates = NH44_MASTER_ROAD_POLYLINE
+  } else if (CORRIDOR_EXACT_GEOMETRIES[corridor.id]) {
+    corridor.pathCoordinates = CORRIDOR_EXACT_GEOMETRIES[corridor.id]
+  }
+})
 
 export function getCorridorById(id) {
   if (!id) return CORRIDORS_LIST[0];

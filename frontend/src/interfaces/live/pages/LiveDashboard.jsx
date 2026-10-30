@@ -37,11 +37,13 @@ import { useNavigate } from 'react-router-dom'
 import { useLiveFeed } from '../context/LiveFeedContext'
 import { adaptModelDetectionBatch } from '../../../utils/liveTrafficAdapter'
 
-function formatClassLabel(label = '') {
+function formatClassLabel(label = '', confidence = 1) {
   if (!label) return 'Vehicle'
   const l = label.toLowerCase().trim()
   if (l === 'motorcycle' || l === 'motorbike' || l === 'bicycle') return 'Bike'
-  if (l === 'rickshaw') return 'Auto'
+  if (l === 'rickshaw' || l === 'auto') return 'Auto'
+  // Suppress false truck classifications on SUVs/MUVs/passenger vehicles (e.g. Toyota Innova, Scorpio, Ertiga)
+  if (l === 'truck' && confidence < 0.72) return 'Car'
   return l.charAt(0).toUpperCase() + l.slice(1)
 }
 
@@ -313,6 +315,10 @@ export default function LiveDashboard() {
       setIsDetectionStreamPaused(false)
       setDynamicBoxes([])
       setIsPlaying(false)
+      // Auto-trigger video AI analysis immediately upon upload
+      setTimeout(() => {
+        analyzeUploadedVideo()
+      }, 50)
     }
     e.target.value = ''
   }
@@ -332,6 +338,61 @@ export default function LiveDashboard() {
     setIsDetectionStreamPaused(false)
     setDynamicBoxes([])
     handleSetSampleVideo('/videos/traffic_sample1.mp4', 'NH-44 Sample Traffic Feed')
+  }
+
+  // Auto-play video with active detections as soon as analysis completes
+  useEffect(() => {
+    if (isAnalyzed && videoElementRef.current) {
+      videoElementRef.current.play().catch(() => {})
+      setIsPlaying(true)
+    }
+  }, [isAnalyzed])
+
+
+  // Capture vehicle crop directly from the live video element into high-res DataURL
+  const captureVehicleCrop = (box) => {
+    const video = videoElementRef.current
+    if (!video || video.videoWidth <= 0 || !box) return null
+    try {
+      const vw = video.videoWidth
+      const vh = video.videoHeight
+      const padX = (box.width / 100) * vw * 0.12
+      const padY = (box.height / 100) * vh * 0.12
+      const left = Math.max(0, Math.floor((box.x / 100) * vw - padX))
+      const top = Math.max(0, Math.floor((box.y / 100) * vh - padY))
+      const right = Math.min(vw, Math.ceil(((box.x + box.width) / 100) * vw + padX))
+      const bottom = Math.min(vh, Math.ceil(((box.y + box.height) / 100) * vh + padY))
+      const cropW = right - left
+      const cropH = bottom - top
+      if (cropW <= 6 || cropH <= 6) return null
+
+      const cropCanvas = document.createElement('canvas')
+      const targetW = Math.min(320, Math.max(160, cropW))
+      const scale = targetW / cropW
+      cropCanvas.width = targetW
+      cropCanvas.height = Math.max(1, Math.round(cropH * scale))
+      const ctx = cropCanvas.getContext('2d')
+      if (!ctx) return null
+      ctx.drawImage(video, left, top, cropW, cropH, 0, 0, cropCanvas.width, cropCanvas.height)
+      return cropCanvas.toDataURL('image/jpeg', 0.85)
+    } catch {
+      return null
+    }
+  }
+
+  const handleSelectVehicle = (box) => {
+    if (!box) {
+      setSelectedVehicle(null)
+      return
+    }
+    const crop = captureVehicleCrop(box) || vehicleCrops[box.trackId] || vehicleCrops[box.id] || box.cropImage || box.image || null
+    if (crop) {
+      setVehicleCrops((prev) => ({ ...prev, [box.trackId]: crop, [box.id]: crop }))
+    }
+    setSelectedVehicle({
+      ...box,
+      cropImage: crop,
+    })
   }
 
   const handleTogglePlay = () => {
@@ -383,7 +444,7 @@ export default function LiveDashboard() {
       offscreenCanvasRef.current = document.createElement('canvas')
     }
 
-    // Capture & analyze video frame on backend YOLOv8 model in real-time when precomputed frames aren't available
+    // Capture & analyze video frame on backend YOLOv8 model in real-time
     const sampleBackendFrame = async (timeSec) => {
       if (requestInFlightRef.current || !video || video.videoWidth <= 0) return
       requestInFlightRef.current = true
@@ -468,7 +529,7 @@ export default function LiveDashboard() {
     const updateMotion = () => {
       if (!isRunning) return
 
-      if (video && !video.paused && !video.ended) {
+      if (video) {
         const timeSec = video.currentTime || 0
         setCurrentTime(timeSec)
         if (video.duration) setDuration(video.duration)
@@ -476,6 +537,14 @@ export default function LiveDashboard() {
           hasDynamicBoxesRef.current = false
           updateDynamicBoxes([])
         }
+
+        // Continuously sample real YOLOv8 backend frame on video playback
+        if (timeSec - lastSampleTimeRef.current >= 0.35 || lastSampleTimeRef.current === 0) {
+          lastSampleTimeRef.current = timeSec
+          sampleBackendFrame(timeSec)
+        }
+
+        let computed = []
 
         if (analyzedFrames && analyzedFrames.length > 0) {
           // Find surrounding frames for exact timestamp
@@ -1041,7 +1110,7 @@ export default function LiveDashboard() {
                 {dynamicBoxes.map((box) => (
                   <div
                     key={box.id}
-                    onClick={() => setSelectedVehicle(box)}
+                    onClick={() => handleSelectVehicle(box)}
                     style={{
                       position: 'absolute',
                       left: `${box.x}%`,
@@ -1053,7 +1122,7 @@ export default function LiveDashboard() {
                       boxShadow: `0 0 10px ${box.color}88, inset 0 0 6px ${box.color}22`,
                       pointerEvents: 'auto',
                       cursor: 'pointer',
-                      transition: 'left 0.08s linear, top 0.08s linear, width 0.08s linear, height 0.08s linear',
+                      transition: 'left 0.25s ease-out, top 0.25s ease-out, width 0.25s ease-out, height 0.25s ease-out',
                     }}
                     title={`Click to inspect ${box.label} (${Math.round(box.confidence * 100)}%)`}
                   >
@@ -1061,7 +1130,7 @@ export default function LiveDashboard() {
                     <div
                       style={{
                         position: 'absolute',
-                        top: -22,
+                        top: box.y < 6 ? 2 : -22,
                         left: -2,
                         backgroundColor: box.color,
                         color: '#ffffff',
@@ -1262,7 +1331,7 @@ export default function LiveDashboard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: '16px' }}>
           <div>
             <h2 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: '#0f172a' }}>
-              Real-Time ANPR Optical Detection Stream
+              Recent Vehicle Captures (Live Optical Detections)
             </h2>
             <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748b' }}>
               New vehicles are added as detected and stay visible for 10 seconds. Pause the display to inspect them.
@@ -1346,20 +1415,20 @@ export default function LiveDashboard() {
                 ) : (
                   <span
                     style={{
-                      fontFamily: 'monospace',
-                      fontWeight: 750,
-                      fontSize: '13px',
-                      background: '#fff',
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      border: '1px solid #cbd5e1',
-                      color: '#0f172a',
+                      position: 'absolute',
+                      bottom: 2,
+                      right: 2,
+                      backgroundColor: 'rgba(0,0,0,0.7)',
+                      color: '#fff',
+                      fontSize: 8,
+                      fontWeight: 700,
+                      padding: '1px 4px',
+                      borderRadius: 3,
                     }}
                   >
-                    {record.plate || record.vehicleNumberPlate}
-                  </span>
-                )}
-              </div>
+                    {record.label || record.type || record.vehicleType || 'Car'}
+                  </div>
+                </div>
 
               <div style={{ fontSize: '12px', color: '#475569', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                 <div>Type: <strong style={{ color: '#0f172a' }}>{record.label || record.type || record.vehicleType}</strong></div>
@@ -1371,9 +1440,16 @@ export default function LiveDashboard() {
                 {isInCurrentFrame ? 'Currently in frame' : `Last seen at ${record.lastSeenAt}`}
               </div>
 
-              {record.isOverSpeed && (
-                <div style={{ marginTop: '8px', fontSize: '11px', color: '#dc2626', fontWeight: 650, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <AlertTriangle size={12} /> Over-speed violation ({record.speed} in 80)
+                  <div style={{ fontSize: '11px', color: '#475569', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px' }}>
+                    <div>Speed: <strong style={{ color: record.speed > 80 ? '#ef4444' : '#0f172a' }}>{record.speed} km/h</strong></div>
+                    <div>Conf: <span>{Math.round((record.confidence || 0.92) * 100)}%</span></div>
+                  </div>
+
+                  {record.isOverSpeed && (
+                    <div style={{ marginTop: '4px', fontSize: '10px', color: '#dc2626', fontWeight: 650, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <AlertTriangle size={11} /> Over-speed ({record.speed} in 80)
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1465,6 +1541,81 @@ export default function LiveDashboard() {
               >
                 <X size={18} />
               </button>
+            </div>
+
+            
+            {/* Vehicle Crop Photo Header */}
+            <div
+              style={{
+                position: 'relative',
+                height: 190,
+                backgroundColor: '#0f172a',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+                borderBottom: '1px solid #e2e8f0',
+              }}
+            >
+              {selectedVehicle.cropImage || vehicleCrops[selectedVehicle.trackId] || vehicleCrops[selectedVehicle.id] ? (
+                <img
+                  src={selectedVehicle.cropImage || vehicleCrops[selectedVehicle.trackId] || vehicleCrops[selectedVehicle.id]}
+                  alt={selectedVehicle.label}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: '#94a3b8' }}>
+                  <Car size={42} />
+                  <span style={{ fontSize: 12, marginTop: 6, color: '#94a3b8' }}>Optical Snapshot · Track #{selectedVehicle.trackId}</span>
+                </div>
+              )}
+              <div style={{
+                position: 'absolute',
+                top: 10,
+                left: 10,
+                backgroundColor: 'rgba(15, 23, 42, 0.85)',
+                backdropFilter: 'blur(4px)',
+                color: '#38bdf8',
+                fontSize: 11,
+                fontWeight: 700,
+                padding: '3px 8px',
+                borderRadius: 6,
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+              }}>
+                <Eye size={12} />
+                <span>Optical Vehicle Crop</span>
+              </div>
+              <div style={{
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                background: 'linear-gradient(transparent, rgba(15, 23, 42, 0.95))',
+                padding: '14px 16px 8px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-end',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#fff', fontWeight: 700, fontSize: 14 }}>
+                  <span>{selectedVehicle.label}</span>
+                  <span style={{ opacity: 0.6 }}>·</span>
+                  <span style={{ color: '#38bdf8' }}>Track #{selectedVehicle.trackId}</span>
+                </div>
+                <span style={{
+                  color: selectedVehicle.speed > 80 ? '#ef4444' : '#22c55e',
+                  fontWeight: 800,
+                  fontSize: 13,
+                  fontFamily: 'monospace',
+                  background: 'rgba(0,0,0,0.5)',
+                  padding: '2px 8px',
+                  borderRadius: 4,
+                }}>
+                  {selectedVehicle.speed} km/h
+                </span>
+              </div>
             </div>
 
             <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>

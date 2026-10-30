@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Camera,
   CircleDollarSign,
+  Cpu,
   Database,
   FileText,
   Home,
@@ -27,6 +28,7 @@ export const navigation = [
   { label: 'Assets & Maintenance', path: '/assets-maintenance', icon: Wrench },
   { label: 'Reports', path: '/document-intelligence', icon: FileText },
   { label: 'Rules & Events', path: '/rules-events', icon: ShieldCheck },
+  { label: 'Models', path: '/models', icon: Cpu },
 ]
 
 export const routePaths = navigation.map(({ path }) => path)
