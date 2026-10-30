@@ -23,6 +23,8 @@ import ProjectsPage from './components/projects/ProjectsPage'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import LiveViewPage from './components/LiveViewPage'
+import LiveDetectionDashboard from './components/LiveDetectionDashboard'
+import LiveInterface from './interfaces/live/LiveInterface'
 import BottomCorridorBar from './components/BottomCorridorBar'
 import LoginPage from './components/auth/LoginPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
@@ -78,6 +80,118 @@ function normalizeStreamRows(rows) {
 export default function App() {
   const { isAuthenticated, loading } = useAuth()
   const { pathname } = useLocation()
+  const isLiveFeed = pathname.startsWith('/live') || pathname === '/live-view'
+  const [liveMode, setLiveMode] = useState(() => {
+    try {
+      return isLiveFeed || localStorage.getItem('visioniq-live-mode') === 'true'
+    } catch {
+      return isLiveFeed
+    }
+  })
+
+  useEffect(() => {
+    if (pathname.startsWith('/live') || pathname === '/live-view') {
+      setLiveMode(true)
+      try {
+        localStorage.setItem('visioniq-live-mode', 'true')
+      } catch { }
+    } else {
+      setLiveMode(false)
+      try {
+        localStorage.setItem('visioniq-live-mode', 'false')
+      } catch { }
+    }
+  }, [pathname])
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [isSidebarPinned, setIsSidebarPinned] = useState(() => {
+    try {
+      const saved = localStorage.getItem('visioniq-sidebar-pinned')
+      return saved === 'true'
+    } catch {
+      return false
+    }
+  })
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false)
+
+  const hoverTimeoutRef = useRef(null)
+  const justUnpinnedRef = useRef(false)
+
+  const handleSidebarMouseEnter = () => {
+    if (justUnpinnedRef.current) return
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+      hoverTimeoutRef.current = null
+    }
+    setIsSidebarHovered(true)
+  }
+
+  const handleSidebarMouseLeave = () => {
+    justUnpinnedRef.current = false
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+    }
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsSidebarHovered(false)
+    }, 220)
+  }
+
+  const toggleSidebarPin = () => {
+    if (window.innerWidth <= 1024) {
+      setSidebarOpen((prev) => !prev)
+      return
+    }
+
+    setIsSidebarPinned((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('visioniq-sidebar-pinned', JSON.stringify(next))
+      } catch { }
+      if (!next) {
+        setIsSidebarHovered(false)
+        justUnpinnedRef.current = true
+        setTimeout(() => {
+          justUnpinnedRef.current = false
+        }, 400)
+      } else {
+        setIsSidebarHovered(true)
+      }
+      return next
+    })
+  }
+
+  // Automatically close sidebar drawer whenever route changes
+  useEffect(() => {
+    setSidebarOpen(false)
+    setIsSidebarHovered(false)
+  }, [pathname])
+
+  // Escape key closes/unpins sidebar immediately
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsSidebarHovered(false)
+        setSidebarOpen(false)
+        if (isSidebarPinned) {
+          setIsSidebarPinned(false)
+          try {
+            localStorage.setItem('visioniq-sidebar-pinned', 'false')
+          } catch { }
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isSidebarPinned])
+
+  const handleMainContentClick = () => {
+    if (sidebarOpen) {
+      setSidebarOpen(false)
+    }
+    if (!isSidebarPinned && isSidebarHovered) {
+      setIsSidebarHovered(false)
+    }
+  }
+
   const [searchOpen, setSearchOpen] = useState(false)
   const [projectList, setProjectList] = useState(() => {
     try {
@@ -183,6 +297,23 @@ export default function App() {
 
   const [streamPaused, setStreamPaused] = useState(false)
   const streamPausedRef = useRef(false)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('visioniq-live-mode', liveMode ? 'true' : 'false')
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [liveMode])
+
+  useEffect(() => {
+    if (pathname === '/live-view') {
+      if (!liveMode) setLiveMode(true)
+    } else {
+      if (liveMode) setLiveMode(false)
+    }
+  }, [pathname, liveMode])
+
   const [latestBatchInfo, setLatestBatchInfo] = useState({
     batchCount: 0,
     timestamp: null,
@@ -201,7 +332,7 @@ export default function App() {
   })
 
   useEffect(() => {
-    if (!isAuthenticated) return
+    if (!isAuthenticated || isLiveFeed) return
     fetch(`${apiBaseUrl}/api/vehicles/stats`)
       .then((res) => res.json())
       .then((data) => {
@@ -210,7 +341,7 @@ export default function App() {
         }
       })
       .catch(() => undefined)
-  }, [isAuthenticated])
+  }, [isAuthenticated, isLiveFeed])
 
   const userUploadedFileRef = useRef(false)
 
@@ -264,7 +395,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!isAuthenticated) return undefined
+    if (!isAuthenticated || isLiveFeed) return undefined
 
     let isCancelled = false
     const lastBatchTimeRef = { current: Date.now() }
@@ -274,7 +405,7 @@ export default function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'resume' }),
-    }).catch(() => {})
+    }).catch(() => { })
 
     async function loadInitialVehicles() {
       try {
@@ -420,7 +551,7 @@ export default function App() {
       clearInterval(heartbeatInterval)
       socket.disconnect()
     }
-  }, [isAuthenticated])
+  }, [isAuthenticated, isLiveFeed])
 
   useEffect(() => {
     try {
@@ -704,30 +835,71 @@ export default function App() {
   return (
     <ProtectedRoute>
       <ErrorBoundary>
-        <div className="app-shell">
+        <div
+          className={`app-shell ${isSidebarPinned ? 'sidebar-pinned' : 'sidebar-unpinned'
+            } ${isSidebarHovered ? 'sidebar-hovered' : ''}`}
+        >
+          {/* Subtle edge hover zone to expand unpinned sidebar on desktop */}
+          {!isSidebarPinned && !isSidebarHovered && (
+            <div
+              className="sidebar-edge-hover-zone"
+              onMouseEnter={handleSidebarMouseEnter}
+              aria-hidden="true"
+            />
+          )}
+
+          {/* Mobile backdrop overlay */}
+          {sidebarOpen && (
+            <div
+              className="viq-sidebar-backdrop"
+              onClick={() => {
+                setSidebarOpen(false)
+                setIsSidebarHovered(false)
+              }}
+              aria-hidden="true"
+            />
+          )}
+
           <Sidebar
+            liveMode={isLiveFeed}
+            onSwitchToExcelData={() => setLiveMode(false)}
             connectedProject={connectedProject}
+            handleSidebarMouseEnter={handleSidebarMouseEnter}
+            handleSidebarMouseLeave={handleSidebarMouseLeave}
+            isSidebarHovered={isSidebarHovered}
+            isSidebarPinned={isSidebarPinned}
             onCreateProject={handleCreateProject}
             onSelectProject={handleSelectProject}
             projectList={projectList}
             selectedProject={selectedProject}
+            setSidebarOpen={setSidebarOpen}
+            sidebarOpen={sidebarOpen}
           />
 
-          <main className="main-content">
+          <main className="main-content" onClick={handleMainContentClick}>
             <Topbar
+              handleSidebarMouseEnter={handleSidebarMouseEnter}
+              handleSidebarMouseLeave={handleSidebarMouseLeave}
+              isSidebarPinned={isSidebarPinned}
+              liveMode={isLiveFeed}
               notificationSoundEnabled={notificationSoundEnabled}
+              onToggleLiveMode={setLiveMode}
               onToggleStreamPause={handleToggleStreamPause}
               searchOpen={searchOpen}
+              setIsSidebarHovered={setIsSidebarHovered}
               setNotificationSoundEnabled={setNotificationSoundEnabled}
               setSearchOpen={setSearchOpen}
+              setSidebarOpen={setSidebarOpen}
+              sidebarOpen={sidebarOpen}
               streamNotifications={streamNotifications}
               streamPaused={streamPaused}
+              toggleSidebarPin={toggleSidebarPin}
             />
 
             <section className="content-wrap">
               <Routes>
                 {/* HOME */}
-                <Route path="/" element={<Navigate replace to="/live-view" />} />
+                <Route path="/" element={<Navigate replace to="/home" />} />
                 <Route
                   path="/home"
                   element={
@@ -749,21 +921,9 @@ export default function App() {
                   }
                 />
 
-                {/* LIVE VIEW - EXACT TARGET SCREEN */}
-                <Route
-                  path="/live-view"
-                  element={
-                    <LiveViewPage
-                      dbStats={dbStats}
-                      fileName={fileName}
-                      latestBatchInfo={latestBatchInfo}
-                      onToggleStreamPause={handleToggleStreamPause}
-                      rows={trafficData}
-                      streamNotifications={streamNotifications}
-                      streamPaused={streamPaused}
-                    />
-                  }
-                />
+                {/* ── SEPARATE LIVE FEED INTERFACE (11 INDEPENDENT LIVE PAGES) ── */}
+                <Route path="/live/*" element={<LiveInterface excelRows={trafficData} excelFileName={fileName} />} />
+                <Route path="/live-view" element={<Navigate replace to="/live/home" />} />
 
                 {/* PROJECTS MANAGEMENT */}
                 <Route
@@ -974,11 +1134,11 @@ export default function App() {
                   ))}
 
                 {/* UNKNOWN URL */}
-                <Route path="*" element={<Navigate replace to="/live-view" />} />
+                <Route path="*" element={<Navigate replace to="/home" />} />
               </Routes>
             </section>
           </main>
-          <BottomCorridorBar />
+          {!isLiveFeed && <BottomCorridorBar />}
         </div>
       </ErrorBoundary>
     </ProtectedRoute>
