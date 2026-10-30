@@ -24,7 +24,9 @@ export function adaptModelDetection(detection, index = 0, meta = {}) {
 
   // Dynamic realistic speed based on vehicle type and track
   const baseSpeed = vehicleClass === 'Truck' ? 52 : vehicleClass === 'Bus' ? 58 : vehicleClass === 'Bike' ? 48 : 72
-  const speed = detection.speed || Math.round(baseSpeed + ((Number(trackId) * 3) % 18))
+  const numericTrackId = Number(trackId)
+  const speedSeed = Number.isFinite(numericTrackId) ? numericTrackId : index + 1
+  const speed = detection.speed || Math.round(baseSpeed + ((speedSeed * 3) % 18))
 
   // Standard Indian toll amounts by vehicle class
   const tollMap = {

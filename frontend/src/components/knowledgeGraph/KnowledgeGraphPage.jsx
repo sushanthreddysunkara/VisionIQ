@@ -113,6 +113,7 @@ export default function KnowledgeGraphPage({
   hideFilters = false,
   isQueryEmbedded = false,
   initialTab = 'graph',
+  isLiveFeed = false,
 }) {
   const location = useLocation()
   const navigate = useNavigate()
@@ -262,7 +263,7 @@ export default function KnowledgeGraphPage({
   }, [focusedCamera])
 
   const [isLayersOpen, setIsLayersOpen] = useState(false)
-  const [recordLimit, setRecordLimit] = useState(350)
+  const [recordLimit, setRecordLimit] = useState(isLiveFeed ? 50 : 350)
 
   // Controls & Options State
   const [searchTerm, setSearchTerm] = useState('')
@@ -575,7 +576,9 @@ export default function KnowledgeGraphPage({
     // 4. Target Rows (Constellation Slice)
     let hasViolation = false
     const limitNum = recordLimit === 'ALL' ? activeRows.length : Math.max(50, Number(recordLimit) || 350)
-    const targetRows = activeRows.slice(0, Math.min(limitNum, activeRows.length))
+    const targetRows = isLiveFeed
+      ? activeRows.slice(-Math.min(limitNum, activeRows.length))
+      : activeRows.slice(0, Math.min(limitNum, activeRows.length))
 
     targetRows.forEach((row, i) => {
       const obsId = row.observationId ? `obs-${row.observationId}` : `obs-${row.id || i + 1}`
@@ -584,7 +587,10 @@ export default function KnowledgeGraphPage({
         : (row.observationId || row.id || `Record #${i + 1}`)
       const loc = row.location || row.roadName
       const domain = getCanonicalVehicleDomain(row.vehicleType || row.type)
-      const isOver = row.overSpeed === 'Yes' || row.isOverSpeed || (row.speed && row.speedLimit && Number(row.speed) > Number(row.speedLimit))
+      const isOver = row.overSpeed === 'Yes'
+        || row.isOverSpeed
+        || (isLiveFeed && Boolean(row.violation))
+        || (row.speed && row.speedLimit && Number(row.speed) > Number(row.speedLimit))
       if (isOver) hasViolation = true
 
       const isSouth = isSouthCorridor(row.camera, loc)
@@ -684,7 +690,7 @@ export default function KnowledgeGraphPage({
     })
 
     return { currentNodes: nodes, currentEdges: edges }
-  }, [activeRows, focusMode, frozenVehicle, focusedCamera, recordLimit])
+  }, [activeRows, focusMode, frozenVehicle, focusedCamera, recordLimit, isLiveFeed])
 
   const visibleNodes = useMemo(() => {
     if (focusMode === 'VEHICLE') return currentNodes
@@ -757,7 +763,7 @@ export default function KnowledgeGraphPage({
     return {
       name: 'cose',
       animate: true,
-      animationDuration: 750,
+      animationDuration: isLiveFeed ? 350 : 750,
       randomize: false,
       padding: 50,
       componentSpacing: 140,
@@ -766,8 +772,8 @@ export default function KnowledgeGraphPage({
       edgeElasticity: (edge) => (edge.data('isInterCluster') ? 18 : 65),
       nestingFactor: 1.2,
       gravity: 0.22,
-      numIter: 1200,
-      initialTemp: 250,
+      numIter: isLiveFeed ? 240 : 1200,
+      initialTemp: isLiveFeed ? 120 : 250,
       coolingFactor: 0.95,
       stop: () => {
         if (cyRef.current && typeof cyRef.current.nodes === 'function') {
@@ -782,7 +788,7 @@ export default function KnowledgeGraphPage({
         }
       },
     }
-  }, [focusMode, layoutMode])
+  }, [focusMode, layoutMode, isLiveFeed])
 
   // Cytoscape Canvas Initialization
   useEffect(() => {
@@ -1032,7 +1038,9 @@ export default function KnowledgeGraphPage({
         duration: 350,
       })
       setZoomPercent(Math.round(cy.zoom() * 100))
+    if (!isLiveFeed) {
       animId = requestAnimationFrame(floatNodesLikeWater)
+    }
     })
 
     cy.on('zoom pan', () => {
@@ -1197,7 +1205,7 @@ export default function KnowledgeGraphPage({
         // ignore
       }
     }
-  }, [visibleNodes, visibleEdges, layoutConfig, showLabels, showEdgeLabels])
+  }, [visibleNodes, visibleEdges, layoutConfig, showLabels, showEdgeLabels, isLiveFeed])
 
   // Toggle Category visibility
   useEffect(() => {

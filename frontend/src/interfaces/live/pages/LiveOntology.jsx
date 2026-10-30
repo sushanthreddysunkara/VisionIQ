@@ -2,8 +2,8 @@ import React, { useState, useMemo } from 'react'
 import {
   ChevronDown,
   Database,
-  Layers,
   Maximize,
+  Layers,
   Minus,
   Network,
   Plus,
@@ -14,11 +14,48 @@ import {
   Zap,
 } from 'lucide-react'
 import { useLiveFeed } from '../context/LiveFeedContext'
+import OntologyGraph from '../../../components/ontology/OntologyGraph'
+import OntologyDetails from '../../../components/ontology/OntologyDetails'
+import { generateOntologyFromRows } from '../../../data/ontologyData'
 
 export default function LiveOntology() {
-  const { ontologyClasses, liveRecords } = useLiveFeed()
+  const { ontologyClasses, liveRecords, excelRows, excelFileName } = useLiveFeed()
   const [selectedClass, setSelectedClass] = useState(ontologyClasses[0] || null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [graphSearch, setGraphSearch] = useState('')
+  const [graphCategory, setGraphCategory] = useState('')
+  const [selectedGraphNode, setSelectedGraphNode] = useState(null)
+  const [graphControls, setGraphControls] = useState(null)
+
+  const ontologyModel = useMemo(() => generateOntologyFromRows(excelRows), [excelRows])
+  const graphCategories = useMemo(
+    () => Array.from(new Set(ontologyModel.nodes.map((node) => node.category))).sort(),
+    [ontologyModel.nodes],
+  )
+  const visibleGraphNodes = useMemo(
+    () => graphCategory
+      ? ontologyModel.nodes.filter((node) => node.category === graphCategory)
+      : ontologyModel.nodes,
+    [ontologyModel.nodes, graphCategory],
+  )
+  const visibleGraphRelationships = useMemo(() => {
+    const visibleNodeIds = new Set(visibleGraphNodes.map((node) => node.id))
+    return ontologyModel.relationships.filter(
+      (relationship) => visibleNodeIds.has(relationship.source) && visibleNodeIds.has(relationship.target),
+    )
+  }, [ontologyModel.relationships, visibleGraphNodes])
+  const selectedGraphNodeData = useMemo(
+    () => ontologyModel.nodes.find((node) => node.id === selectedGraphNode) || null,
+    [ontologyModel.nodes, selectedGraphNode],
+  )
+  const vehicleTypeCount = useMemo(
+    () => new Set(excelRows.map((row) => row.vehicleType || row.type).filter(Boolean)).size,
+    [excelRows],
+  )
+  const overSpeedCount = useMemo(
+    () => excelRows.filter((row) => row.isOverSpeed || row.overSpeed === 'Yes').length,
+    [excelRows],
+  )
 
   const filteredClasses = useMemo(() => {
     return ontologyClasses.filter((c) =>
@@ -28,7 +65,10 @@ export default function LiveOntology() {
   }, [ontologyClasses, searchQuery])
 
   return (
-    <div className="ontology-page" style={{ padding: '24px 32px' }}>
+    <div
+      className="ontology-page live-ontology-page"
+      style={{ width: '100%', maxWidth: 'none', margin: 0, padding: '24px clamp(16px, 2vw, 32px)' }}
+    >
       {/* Topbar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -63,7 +103,7 @@ export default function LiveOntology() {
       </div>
 
       {/* Main Ontology Explorer Layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 20, minHeight: 600 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 320px) minmax(0, 1fr)', gap: 20, alignItems: 'start' }}>
         {/* Left: Class Hierarchy & Search */}
         <div style={{ backgroundColor: '#ffffff', borderRadius: 8, border: '1px solid #e2e8f0', padding: 20, boxShadow: '0 2px 4px rgba(0,0,0,0.04)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
@@ -183,6 +223,91 @@ export default function LiveOntology() {
           )}
         </div>
       </div>
+
+      <section
+        aria-labelledby="ontology-diagram-title"
+        style={{
+          marginTop: 20,
+          padding: 20,
+          backgroundColor: '#ffffff',
+          borderRadius: 8,
+          border: '1px solid #e2e8f0',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.04)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+          <div>
+            <h2 id="ontology-diagram-title" style={{ fontSize: 17, fontWeight: 700, color: '#0f172a', margin: 0 }}>
+              Full Excel Traffic Ontology
+            </h2>
+            <p style={{ margin: '4px 0 0', fontSize: 12, color: '#64748b' }}>
+              Explore the complete schema generated from the loaded workbook: entities, vehicle classes, properties, datatypes, and relationships.
+            </p>
+          </div>
+          <span style={{ fontSize: 11, color: '#64748b' }}>
+            Source: {excelFileName || 'Excel dataset'} · {excelRows.length.toLocaleString()} records
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ flex: '1 1 240px', minWidth: 200, display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }}>
+            <Search size={15} color="#64748b" />
+            <input
+              aria-label="Search ontology diagram"
+              type="search"
+              value={graphSearch}
+              onChange={(event) => setGraphSearch(event.target.value)}
+              placeholder="Search nodes and properties..."
+              style={{ width: '100%', border: 0, outline: 0, fontSize: 12 }}
+            />
+          </div>
+          <select
+            aria-label="Filter ontology category"
+            value={graphCategory}
+            onChange={(event) => setGraphCategory(event.target.value)}
+            style={{ padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff', fontSize: 12 }}
+          >
+            <option value="">All categories</option>
+            {graphCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+          </select>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" aria-label="Zoom out" onClick={() => graphControls?.zoomOut()} style={{ padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff', cursor: 'pointer' }}><Minus size={15} /></button>
+            <button type="button" aria-label="Zoom in" onClick={() => graphControls?.zoomIn()} style={{ padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff', cursor: 'pointer' }}><Plus size={15} /></button>
+            <button type="button" aria-label="Fit diagram" onClick={() => graphControls?.fit()} style={{ padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff', cursor: 'pointer' }}><Maximize size={15} /></button>
+            <button type="button" aria-label="Re-layout diagram" onClick={() => graphControls?.relayout()} style={{ padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff', cursor: 'pointer' }}><RefreshCw size={15} /></button>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(240px, 300px)', gap: 12 }}>
+          <div style={{ position: 'relative', height: 'min(72vh, 760px)', minHeight: 520, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+            <OntologyGraph
+              nodes={visibleGraphNodes}
+              relationships={visibleGraphRelationships}
+              selectedNode={selectedGraphNode}
+              searchTerm={graphSearch}
+              onNodeSelect={setSelectedGraphNode}
+              onReady={setGraphControls}
+            />
+            <div style={{ position: 'absolute', right: 12, bottom: 12, padding: '6px 9px', borderRadius: 6, background: 'rgba(255,255,255,.92)', border: '1px solid #e2e8f0', color: '#475569', fontSize: 11 }}>
+              {visibleGraphNodes.length} / {ontologyModel.nodes.length} nodes · {visibleGraphRelationships.length} relationships
+            </div>
+          </div>
+          <aside style={{ minWidth: 0, maxHeight: 'min(72vh, 760px)', overflowY: 'auto', padding: 16, border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff' }}>
+            {selectedGraphNodeData
+              ? <OntologyDetails node={selectedGraphNodeData} relationships={ontologyModel.relationships} />
+              : (
+                <div style={{ color: '#64748b', fontSize: 12, lineHeight: 1.6 }}>
+                  <h3 style={{ margin: '0 0 10px', color: '#0f172a', fontSize: 14 }}>Workbook overview</h3>
+                  <div>{excelRows.length.toLocaleString()} traffic records</div>
+                  <div>{vehicleTypeCount} vehicle categories</div>
+                  <div>{overSpeedCount.toLocaleString()} overspeed observations</div>
+                  <p>Click any node to inspect its definition and incoming or outgoing relationships.</p>
+                  {!excelRows.length && <strong>No Excel records are loaded. Import a workbook from the Excel Data section to generate a dataset-specific ontology.</strong>}
+                </div>
+              )}
+          </aside>
+        </div>
+      </section>
     </div>
   )
 }

@@ -8,11 +8,10 @@ import {
   liveOntologyClasses,
   liveTollPlazas,
 } from '../data/liveData'
-import { adaptModelDetectionBatch } from '../../../utils/liveTrafficAdapter'
 
 const LiveFeedContext = createContext(null)
 
-export function LiveFeedProvider({ children }) {
+export function LiveFeedProvider({ children, excelRows = [], excelFileName = '' }) {
   const [liveRecords, setLiveRecords] = useState(initialLiveTrafficRecords)
   const [isDemoMode, setIsDemoMode] = useState(true)
   const [cameras, setCameras] = useState(liveCameras)
@@ -29,20 +28,32 @@ export function LiveFeedProvider({ children }) {
 
   const handleUploadVideo = (file) => {
     if (!file) return
+    if (uploadedVideoUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(uploadedVideoUrl)
+    }
     const url = URL.createObjectURL(file)
     setUploadedVideoFile(file)
     setUploadedVideoUrl(url)
-    setIsAnalyzed(false)
+    setLiveRecords([])
+    setIsDemoMode(false)
+    setIsAnalyzed(true)
     setIsAnalyzing(false)
+    setAnalysisProgress(0)
     setActivePredictions([])
     setAnalyzedFrames([])
   }
 
   const handleSetSampleVideo = (url, sampleName = 'Sample Highway Feed') => {
+    if (uploadedVideoUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(uploadedVideoUrl)
+    }
     setUploadedVideoFile({ name: sampleName, size: 14200000 })
     setUploadedVideoUrl(url)
-    setIsAnalyzed(false)
+    setLiveRecords([])
+    setIsDemoMode(false)
+    setIsAnalyzed(true)
     setIsAnalyzing(false)
+    setAnalysisProgress(0)
     setActivePredictions([])
     setAnalyzedFrames([])
   }
@@ -53,73 +64,12 @@ export function LiveFeedProvider({ children }) {
     }
     setUploadedVideoFile(null)
     setUploadedVideoUrl(null)
+    setLiveRecords(initialLiveTrafficRecords)
+    setIsDemoMode(true)
     setIsAnalyzed(false)
     setIsAnalyzing(false)
     setActivePredictions([])
     setAnalyzedFrames([])
-  }
-
-  const analyzeUploadedVideo = async () => {
-    if (!uploadedVideoUrl) return
-    setIsAnalyzing(true)
-    setAnalysisProgress(30)
-
-    try {
-      let serverSuccess = false
-
-      if (uploadedVideoFile && typeof uploadedVideoFile.arrayBuffer === 'function') {
-        const formData = new FormData()
-        formData.append('video', uploadedVideoFile)
-        setAnalysisProgress(50)
-        try {
-          // Standard request controller with 15s timeout for video AI ingestion
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => controller.abort(), 15000)
-          const res = await fetch('/api/live-feed/analyze-video', {
-            method: 'POST',
-            body: formData,
-            signal: controller.signal,
-          })
-          clearTimeout(timeoutId)
-          if (res.ok) {
-            const data = await res.json()
-            if (data.success) {
-              serverSuccess = true
-              if (Array.isArray(data.frames) && data.frames.length > 0) {
-                setAnalyzedFrames(data.frames)
-              } else {
-                setAnalyzedFrames([])
-              }
-              const vehiclesToAdapt = Array.isArray(data.vehicles) && data.vehicles.length > 0 ? data.vehicles : []
-              if (vehiclesToAdapt.length > 0) {
-                const adapted = adaptModelDetectionBatch(vehiclesToAdapt, {
-                  cameraId: 'CAM-LIVE-UPLOAD',
-                  location: 'Uploaded Video AI Ingestion',
-                })
-                setLiveRecords(adapted)
-                setActivePredictions(vehiclesToAdapt)
-              }
-            }
-          }
-        } catch {
-          // If backend whole-video analysis is unavailable or times out,
-          // the real-time canvas frame inference will analyze video frames on playback.
-        }
-      }
-
-      if (!serverSuccess) {
-        // Absolutely no hardcoded or synthetic fake boxes:
-        // Set analyzedFrames to empty so live frame-by-frame model inference directly drives detections
-        setAnalyzedFrames([])
-        setActivePredictions([])
-      }
-
-      setAnalysisProgress(100)
-      setIsAnalyzed(true)
-      setIsDemoMode(false)
-    } finally {
-      setIsAnalyzing(false)
-    }
   }
 
   // Ingest incoming frame detections from Live Video AI model
@@ -219,6 +169,8 @@ export function LiveFeedProvider({ children }) {
     maintenanceAssets: liveMaintenanceAssets,
     knowledgeGraph: liveKnowledgeGraph,
     ontologyClasses: liveOntologyClasses,
+    excelRows,
+    excelFileName,
     // Video Upload & AI Model Prediction
     uploadedVideoFile,
     uploadedVideoUrl,
@@ -230,7 +182,6 @@ export function LiveFeedProvider({ children }) {
     handleUploadVideo,
     handleSetSampleVideo,
     clearUploadedVideo,
-    analyzeUploadedVideo,
   }
 
   return <LiveFeedContext.Provider value={value}>{children}</LiveFeedContext.Provider>
