@@ -1415,20 +1415,19 @@ export default function LiveDashboard() {
                 ) : (
                   <span
                     style={{
-                      position: 'absolute',
-                      bottom: 2,
-                      right: 2,
-                      backgroundColor: 'rgba(0,0,0,0.7)',
-                      color: '#fff',
-                      fontSize: 8,
+                      fontFamily: 'monospace',
                       fontWeight: 700,
-                      padding: '1px 4px',
-                      borderRadius: 3,
+                      backgroundColor: '#f1f5f9',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '4px',
+                      padding: '2px 6px',
+                      color: '#0f172a',
                     }}
                   >
-                    {record.label || record.type || record.vehicleType || 'Car'}
-                  </div>
-                </div>
+                    {record.plate || record.vehicleNumberPlate || 'IND'}
+                  </span>
+                )}
+              </div>
 
               <div style={{ fontSize: '12px', color: '#475569', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                 <div>Type: <strong style={{ color: '#0f172a' }}>{record.label || record.type || record.vehicleType}</strong></div>
@@ -1440,16 +1439,9 @@ export default function LiveDashboard() {
                 {isInCurrentFrame ? 'Currently in frame' : `Last seen at ${record.lastSeenAt}`}
               </div>
 
-                  <div style={{ fontSize: '11px', color: '#475569', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px' }}>
-                    <div>Speed: <strong style={{ color: record.speed > 80 ? '#ef4444' : '#0f172a' }}>{record.speed} km/h</strong></div>
-                    <div>Conf: <span>{Math.round((record.confidence || 0.92) * 100)}%</span></div>
-                  </div>
-
-                  {record.isOverSpeed && (
-                    <div style={{ marginTop: '4px', fontSize: '10px', color: '#dc2626', fontWeight: 650, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                      <AlertTriangle size={11} /> Over-speed ({record.speed} in 80)
-                    </div>
-                  )}
+              {record.isOverSpeed && (
+                <div style={{ marginTop: '4px', fontSize: '10px', color: '#dc2626', fontWeight: 650, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <AlertTriangle size={11} /> Over-speed ({record.speed} in 80)
                 </div>
               )}
             </div>
